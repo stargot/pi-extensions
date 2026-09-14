@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { addRunningWorker, removeRunningWorker, runningIndexPath } from "./running-index.ts";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
@@ -68,15 +69,28 @@ export interface BatchResult {
 	errorMessage?: string;
 	step?: number;
 	sessionFile?: string;
+	/** Parallel placeholder whose concurrency slot has not opened yet. */
+	queued?: boolean;
+	/** Unix ms when the child spawn was attempted (drives live elapsed). */
+	startedAt?: number;
+	/** Wall-clock duration of the child run; set on exit. */
+	elapsedMs?: number;
+	/** Unix ms when the child exited (batch wall time = max end − min start). */
+	finishedAt?: number;
 }
 
 export function emptyResult(agent: string, task: string): BatchResult {
 	return { agent, task, exitCode: 0, messages: [], stderr: "", usage: emptyUsage() };
 }
 
-/** Exit code -1 marks a still-running placeholder in parallel progress. */
+/** Exit code -1 marks a placeholder; `queued` distinguishes not-yet-started. */
 export function isRunning(r: BatchResult): boolean {
-	return r.exitCode === -1;
+	return r.exitCode === -1 && r.queued !== true;
+}
+
+/** Parallel placeholder waiting for a concurrency slot (no child spawned yet). */
+export function isQueued(r: BatchResult): boolean {
+	return r.exitCode === -1 && r.queued === true;
 }
 
 export function isFailedResult(r: BatchResult): boolean {
@@ -185,6 +199,51 @@ function formatTokens(count: number): string {
 	return `${(count / 1000000).toFixed(1)}M`;
 }
 
+export { formatTokens };
+
+/** Flatten to one line and cap length: “failed (reason)” material. */
+export function oneline(text: string, max = 60): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length > max ? `${flat.slice(0, Math.max(max - 1, 0))}…` : flat;
+}
+
+/** First non-empty lines, with a “[+N more lines]” marker when trimmed. */
+export function firstLines(text: string, max = 3): string {
+	const lines = text
+		.split("\n")
+		.map((l) => l.trimEnd())
+		.filter((l) => l.trim().length > 0);
+	if (lines.length === 0) return "";
+	const shown = lines.slice(0, max);
+	const rest = lines.length - shown.length;
+	return shown.join("\n") + (rest > 0 ? `\n[+${rest} more lines]` : "");
+}
+
+/** Tool-call summary for a compact task line: “bash ×3, read ×2”. */
+export function summarizeTools(items: DisplayItem[]): string {
+	const counts = new Map<string, number>();
+	for (const item of items) {
+		if (item.type !== "toolCall") continue;
+		const name = item.name ?? "?";
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	return [...counts.entries()].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(", ");
+}
+
+/**
+ * Batch wall time: earliest spawn to latest exit (running batches project to
+ * `now`). Tasks overlap under concurrency — never sum the per-task durations.
+ */
+export function batchWallTime(results: BatchResult[], now: number = Date.now()): number | undefined {
+	const starts = results.map((r) => r.startedAt).filter((t): t is number => typeof t === "number");
+	if (starts.length === 0) return undefined;
+	const ends = results.map((r) => r.finishedAt).filter((t): t is number => typeof t === "number");
+	// Any started-but-unfinished task keeps the batch open: end = now.
+	const hasUnfinished = results.some((r) => r.startedAt !== undefined && r.finishedAt === undefined);
+	const end = hasUnfinished ? Math.max(now, ...ends, 0) : Math.max(...ends);
+	return Math.max(0, end - Math.min(...starts));
+}
+
 export function formatUsageStats(
 	usage: BatchUsage,
 	model?: string,
@@ -197,6 +256,42 @@ export function formatUsageStats(
 	if (usage.contextTokens) parts.push(`ctx:${formatTokens(usage.contextTokens)}`);
 	if (model) parts.push(model);
 	return parts.join(" ");
+}
+
+// ── Live progress: spinner, bar, durations ──
+
+export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Spinner frame for a point in time; renders advance via the batch tick. */
+export function spinnerFrame(now: number = Date.now()): string {
+	return SPINNER_FRAMES[Math.floor(now / 140) % SPINNER_FRAMES.length] ?? "⠋";
+}
+
+/** Fraction bar: progressBar(3, 8, 8) → "▰▰▰▱▱▱▱▱"; clamps out-of-range input. */
+export function progressBar(done: number, total: number, width = 12): string {
+	const safeTotal = Math.max(total, 0);
+	const ratio = safeTotal === 0 ? 0 : Math.min(Math.max(done, 0), safeTotal) / safeTotal;
+	const filled = Math.round(ratio * width);
+	return "▰".repeat(filled) + "▱".repeat(Math.max(width - filled, 0));
+}
+
+/** Compact duration: 400ms → "<1s", 42s → "42s", 64.2s → "1m04s". */
+export function formatDuration(ms: number): string {
+	if (ms < 1000) return "<1s";
+	const totalSec = Math.floor(ms / 1000);
+	if (totalSec < 60) return `${totalSec}s`;
+	const min = Math.floor(totalSec / 60);
+	return `${min}m${String(totalSec % 60).padStart(2, "0")}s`;
+}
+
+/**
+ * Elapsed time for display: finished tasks report the measured duration,
+ * running ones project from startedAt (grows across tick re-renders).
+ */
+export function elapsedOf(r: BatchResult, now: number = Date.now()): number | undefined {
+	if (r.elapsedMs !== undefined) return r.elapsedMs;
+	if (r.exitCode === -1 && r.startedAt !== undefined) return Math.max(0, now - r.startedAt);
+	return undefined;
 }
 
 type ThemeFg = (color: string, text: string) => string;
@@ -330,6 +425,10 @@ export interface HeadlessChildOptions {
 	denyTools?: string[];
 	defaultCwd: string;
 	sessionsRoot: string;
+	/** Batch mode label (single | parallel | chain) for the running index. */
+	batchMode?: string;
+	/** Spawner session id, recorded in the running index. */
+	spawnerSession?: string;
 	/** Absolute pi CLI path; preferred on Windows where spawning .cmd shims directly fails (EINVAL). */
 	piPath?: string;
 	signal?: AbortSignal;
@@ -340,7 +439,9 @@ export interface HeadlessChildOptions {
 /**
  * Run one headless child: `pi --mode json -p --session <pre-created>` with the
  * task as the prompt. The session file is created before spawn so the parent
- * knows the path up front (no race between parallel children).
+ * knows the path up front (no race between parallel children). Also registers
+ * in the global running index for the duration of the run, so /workers and
+ * /trace can discover live children from any session.
  */
 export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<BatchResult> {
 	mkdirSync(opts.sessionsRoot, { recursive: true });
@@ -382,6 +483,16 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 	const result = emptyResult(opts.agentLabel, opts.task);
 	result.step = opts.step;
 	result.sessionFile = childSession;
+	result.startedAt = Date.now();
+	const workerId = `${opts.agentName.replace(/[^\w-]/g, "")}-${randomUUID().slice(0, 8)}`;
+	const indexPath = runningIndexPath(opts.sessionsRoot);
+	const unregister = () => removeRunningWorker(indexPath, workerId);
+	const markElapsed = () => {
+		if (result.startedAt !== undefined) {
+			result.finishedAt = Date.now();
+			result.elapsedMs = result.finishedAt - result.startedAt;
+		}
+	};
 
 	try {
 		await new Promise<void>((resolve) => {
@@ -415,10 +526,26 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 					stdio: ["ignore", "pipe", "pipe"],
 					windowsHide: true,
 				});
+				// Registered only after a successful spawn: a PID-less record is
+				// unusable for liveness checks.
+				addRunningWorker(indexPath, {
+					id: workerId,
+					pid: proc.pid ?? -1,
+					label: opts.agentLabel,
+					task: opts.task,
+					model: opts.model,
+					mode: opts.batchMode,
+					step: opts.step,
+					startedAt: result.startedAt ?? Date.now(),
+					sessionFile: childSession,
+					spawnerSession: opts.spawnerSession,
+					cwd: opts.cwd,
+				});
 			} catch (err) {
 				// Sync spawn failure (e.g. EINVAL on an unspawnable shim).
 				result.exitCode = 1;
 				result.errorMessage = `failed to spawn ${command}: ${err instanceof Error ? err.message : String(err)}`;
+				markElapsed();
 				resolve();
 				return;
 			}
@@ -446,11 +573,13 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 			proc.on("close", (code) => {
 				if (buffer.trim()) processLine(buffer);
 				result.exitCode = code ?? 0;
+				markElapsed();
 				resolve();
 			});
 			proc.on("error", (err) => {
 				result.exitCode = 1;
 				result.errorMessage = `failed to spawn ${command}: ${err.message}`;
+				markElapsed();
 				resolve();
 			});
 
@@ -466,6 +595,7 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 			}
 		});
 	} finally {
+		unregister();
 		if (promptFile) {
 			try {
 				unlinkSync(promptFile);

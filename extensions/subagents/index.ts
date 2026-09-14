@@ -30,7 +30,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, Spacer, Text, TruncatedText, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -41,18 +41,28 @@ import { discoverAgents, type AgentDef } from "./agents.ts";
 import { activityLabel, readActivityState, type SubagentActivityState } from "./activity.ts";
 import {
 	displayItems,
+	elapsedOf,
 	emptyResult,
+	batchWallTime,
+	firstLines,
+	formatDuration,
+	formatTokens,
 	formatToolCall,
 	formatUsageStats,
 	finalOutput,
 	isFailedResult,
+	isQueued,
 	isRunning,
 	mapWithConcurrencyLimit,
 	MAX_CONCURRENCY,
 	MAX_PARALLEL_TASKS,
+	oneline,
+	progressBar,
 	resultOutput,
 	runHeadlessChild,
+	spinnerFrame,
 	substitutePrevious,
+	summarizeTools,
 	truncateOutput,
 	type BatchMessage,
 	type BatchResult,
@@ -73,6 +83,7 @@ import {
 	sendText,
 } from "./mux.ts";
 import { cancelSidecarPath, classifyExitSidecar, resolveInterrupt } from "./shared.ts";
+import { readRunningWorkers, runningIndexPath } from "./running-index.ts";
 
 const POLL_INTERVAL_MS = 1000;
 // Five minutes of ZERO events — streaming deltas and tool output count as
@@ -88,6 +99,31 @@ const INTERRUPT_SETTLE_MS = 1200;
 const MAX_SUMMARY_CHARS = 2000;
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DONE_EXTENSION_PATH = join(MODULE_DIR, "subagent-done.ts");
+
+/**
+ * Tool names that live in other extensions. Pane children with a `tools:`
+ * list run with `-ne` (only done/identity extensions), so an extension tool
+ * in the list (web_search/web_fetch for the researcher) would silently not
+ * exist. Map them to their extension entry so we can attach it explicitly.
+ */
+const EXTENSION_TOOL_PATHS: Record<string, string> = {
+	web_search: "web-search/index.ts",
+	web_fetch: "web-search/index.ts",
+};
+
+function extensionPathsForTools(tools: string[] | undefined): string[] {
+	if (!tools) return [];
+	const extRoot = join(getAgentDir(), "extensions");
+	const paths = new Set<string>();
+	for (const tool of tools) {
+		const rel = EXTENSION_TOOL_PATHS[tool];
+		if (rel) {
+			const full = join(extRoot, rel);
+			if (existsSync(full)) paths.add(full);
+		}
+	}
+	return [...paths];
+}
 
 // ── Types ──
 
@@ -544,9 +580,19 @@ interface SpawnContext {
 	registryFile: string;
 }
 
-function spawnContext(ctx: ExtensionContext): SpawnContext {
+function spawnContext(ctx: ExtensionContext, knownTools?: Set<string>): SpawnContext {
+	const defs = discoverAgents(ctx.cwd, getAgentDir());
+	// Tool-name validation at spawn time: a typo in `tools:` (e.g. safe_bash)
+	// is silently ignored by pi's --tools filter — surface it instead.
+	if (knownTools) {
+		for (const def of defs.values()) {
+			for (const tool of def.tools ?? []) {
+				if (!knownTools.has(tool)) def.warnings.push(`unknown tool "${tool}"`);
+			}
+		}
+	}
 	return {
-		defs: discoverAgents(ctx.cwd, getAgentDir()),
+		defs,
 		artifactDir: getArtifactDir(ctx),
 		registryFile: registryPath(getArtifactDir(ctx)),
 	};
@@ -566,6 +612,8 @@ function buildLauncherSpec(opts: {
 	cwd?: string;
 	model?: string;
 	grantSpawning: boolean;
+	/** Extra extension entrypoints to load in the child (e.g. web-search for web tools). */
+	extraExtensions?: string[];
 }): LauncherSpec {
 	const def = opts.def;
 	const tools = def?.tools;
@@ -586,7 +634,11 @@ function buildLauncherSpec(opts: {
 		id: opts.id,
 		piPath: opts.piPath,
 		sessionFile: opts.sessionFile,
-		extensionPaths: [DONE_EXTENSION_PATH, ...(opts.grantSpawning ? [join(MODULE_DIR, "index.ts")] : [])],
+		extensionPaths: [
+			DONE_EXTENSION_PATH,
+			...(opts.extraExtensions ?? []),
+			...(opts.grantSpawning ? [join(MODULE_DIR, "index.ts")] : []),
+		],
 		noExtensions: !!(tools && tools.length > 0),
 		cwd: opts.cwd,
 		model: opts.model,
@@ -647,6 +699,7 @@ function doSpawn(ctx: ExtensionContext, params: SpawnParams, sctx: SpawnContext)
 		cwd,
 		model,
 		grantSpawning,
+		extraExtensions: extensionPathsForTools(def.tools),
 	});
 	writeFileSync(scriptPath, renderLauncherPs1(spec), "utf8");
 
@@ -708,7 +761,8 @@ function doSpawn(ctx: ExtensionContext, params: SpawnParams, sctx: SpawnContext)
 					`do NOT wait for it and do NOT poll for its status. When it finishes, the harness AUTOMATICALLY delivers ` +
 					`its result as a steer message that wakes you up and starts a new turn — you do not need to do anything to receive it. ` +
 					`Meanwhile: keep working on other independent tasks, or end your turn immediately. ` +
-					`To send additional instructions later: subagent_message({ name: "${name}", message: "…" }).`,
+					`To send additional instructions later: subagent_message({ name: "${name}", message: "…" }).` +
+				(def.warnings.length > 0 ? `\n⚠ Definition warnings for "${def.name}": ${def.warnings.join("; ")}.` : ""),
 			},
 		],
 		details: { id, name, agent: def.name, pane: paneId, session: sessionFile },
@@ -816,7 +870,75 @@ function doResume(ctx: ExtensionContext, sctx: SpawnContext, entry: RegistryEntr
 
 // ── Extension entry point ──
 
+/**
+ * Framed card for expanded batch results (idea No.5b): corners ╭╮╰╯ adapt to
+ * the viewport width, the header rides the top border, the footer (usage)
+ * sits right-aligned on the bottom border. Children render inside at
+ * width−4; frame lines are cached per width and dropped on invalidate.
+ */
+class BatchCard extends Container {
+	private readonly borderColor: (s: string) => string;
+	private readonly header: string;
+	private readonly footer: string | undefined;
+	private frameWidth?: number;
+	private frameLines?: string[];
+
+	constructor(borderColor: (s: string) => string, header: string, footer?: string) {
+		super();
+		this.borderColor = borderColor;
+		this.header = header;
+		this.footer = footer;
+	}
+
+	override render(width: number): string[] {
+		if (this.frameWidth === width && this.frameLines) return this.frameLines;
+		const inner = Math.max(width - 4, 8); // "│ " on the left, " │" on the right
+		const lines = [this.topLine(width)];
+		for (const line of super.render(inner)) {
+			const pad = Math.max(inner - visibleWidth(line), 0);
+			lines.push(`${this.borderColor("│")} ${truncateToWidth(line, inner)}${" ".repeat(pad)}${this.borderColor(" │")}`);
+		}
+		lines.push(this.bottomLine(width));
+		this.frameWidth = width;
+		this.frameLines = lines;
+		return lines;
+	}
+
+	override invalidate(): void {
+		this.frameWidth = undefined;
+		this.frameLines = undefined;
+		super.invalidate();
+	}
+
+	private topLine(width: number): string {
+		// ╭─ {header} ────╮
+		const header = truncateToWidth(this.header, Math.max(width - 6, 1), "…");
+		const fill = Math.max(width - 5 - visibleWidth(header), 1);
+		return `${this.borderColor("╭─ ")}${header}${this.borderColor(` ${"─".repeat(fill)}╮`)}`;
+	}
+
+	private bottomLine(width: number): string {
+		// ╰────────╯  /  ╰───── {footer} ─╯ (footer right-aligned)
+		if (!this.footer) return this.borderColor(`╰${"─".repeat(Math.max(width - 2, 2))}╯`);
+		const footer = truncateToWidth(this.footer, Math.max(width - 6, 1), "…");
+		const fill = Math.max(width - 4 - visibleWidth(footer), 1);
+		return `${this.borderColor(`╰${"─".repeat(fill)} `)}${footer}${this.borderColor(" ╯")}`;
+	}
+}
+
 export default function subagentsExtension(pi: ExtensionAPI) {
+	// Tool universe for spawn-time validation: everything configured right now
+	// (built-ins + extension tools). Best effort — never blocks a spawn.
+	const knownToolNames = new Set<string>(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
+	try {
+		for (const t of pi.getAllTools?.() ?? []) {
+			const n = typeof t === "string" ? t : (t as { name?: string }).name;
+			if (n) knownToolNames.add(n);
+		}
+	} catch {
+		// API unavailable — built-ins only.
+	}
+
 	latestPi = pi;
 
 	pi.on("session_start", (_event, ctx) => {
@@ -871,7 +993,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const sctx = spawnContext(ctx);
+			const sctx = spawnContext(ctx, knownToolNames);
 			return doSpawn(ctx, params as SpawnParams, sctx);
 		},
 	});
@@ -904,7 +1026,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const sctx = spawnContext(ctx);
+			const sctx = spawnContext(ctx, knownToolNames);
 			const name = params.name.trim();
 			const message = params.message.trim();
 			if (!message) throw new Error("`message` is required.");
@@ -978,7 +1100,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			name: Type.String({ description: "Exact display name of the running subagent to cancel." }),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const sctx = spawnContext(ctx);
+			const sctx = spawnContext(ctx, knownToolNames);
 			const name = params.name.trim();
 			const running = Array.from(runningSubagents.values()).find((r) => r.name === name);
 			if (!running) {
@@ -1100,12 +1222,36 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	const PANE_TOOLS_DENYLIST = ["subagent", "subagent_message", "subagent_cancel", "subagents_list"];
 
+	/** Re-render cadence for the live batch UI (spinner frames, running elapsed). */
+	const BATCH_TICK_MS = 150;
+
+	/** One-line parallel progress for the model-facing content updates. */
+	function parallelStatusLine(results: BatchResult[]): string {
+		const queued = results.filter((r) => isQueued(r)).length;
+		const running = results.filter((r) => isRunning(r)).length;
+		const finished = results.length - queued - running;
+		const ok = finished - results.filter((r) => !isRunning(r) && !isQueued(r) && isFailedResult(r)).length;
+		const parts = [`${ok}/${results.length} done`];
+		if (running > 0) parts.push(`${running} running`);
+		if (queued > 0) parts.push(`${queued} queued`);
+		return `Parallel: ${parts.join(" · ")}`;
+	}
+
 	interface BatchDetails {
 		mode: "single" | "parallel" | "chain";
 		results: BatchResult[];
+		/**
+		 * Chain only: size (utf8 bytes) of the {previous} output handed into
+		 * step i; aligns with results by index, 0 for the first step.
+		 */
+		handOff?: number[];
 	}
 
-	const makeBatchDetails = (mode: BatchDetails["mode"], results: BatchResult[]): BatchDetails => ({ mode, results });
+	const makeBatchDetails = (mode: BatchDetails["mode"], results: BatchResult[], handOff?: number[]): BatchDetails => ({
+		mode,
+		results,
+		handOff,
+	});
 
 	pi.registerTool({
 		name: "task_batch",
@@ -1148,6 +1294,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				thinking: ctx.thinkingLevel,
 			};
 			const sessionsRoot = subagentSessionsRoot();
+			const hasChain = (params.chain?.length ?? 0) > 0;
+			const hasTasks = (params.tasks?.length ?? 0) > 0;
+			const batchModeLabel: string = hasChain ? "chain" : hasTasks ? "parallel" : "single";
 
 			const runSingle = async (
 				agentName: string,
@@ -1176,10 +1325,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					denyTools: PANE_TOOLS_DENYLIST,
 					defaultCwd: ctx.cwd,
 					sessionsRoot,
+					batchMode: batchModeLabel,
+					spawnerSession: ctx.sessionManager?.getSessionId?.(),
 					signal,
 					onEvent: onChildEvent,
 					step,
 				});
+				if (def.warnings.length > 0) {
+					result.stderr += `⚠ Agent definition warnings for "${def.name}": ${def.warnings.join("; ")}.\n`;
+				}
 				// /trace child card — same convention as pane-based subagents.
 				try {
 					pi.appendEntry("session-trace:subagents", {
@@ -1197,10 +1351,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				return result;
 			};
 
-			const hasChain = (params.chain?.length ?? 0) > 0;
-			const hasTasks = (params.tasks?.length ?? 0) > 0;
-			const hasSingle = Boolean(params.agent && params.task);
-			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
+			const modeCount = Number(hasChain) + Number(hasTasks) + Number(Boolean(params.agent && params.task));
 			const inferredMode: BatchDetails["mode"] = hasChain ? "chain" : hasTasks ? "parallel" : "single";
 
 			if (modeCount !== 1) {
@@ -1211,155 +1362,182 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			// ── Chain ──
-			if (hasChain && params.chain) {
-				const results: BatchResult[] = [];
-				let previousOutput = "";
+			// Live tick: advance spinner frames and running-elapsed timers even
+			// when no child event fires (long tool calls inside a child, tasks
+			// queued on the concurrency limit). Each mode points emitTick at its
+			// own re-emit; the timer stops as soon as execute settles.
+			let emitTick: (() => void) | null = null;
+			const tickInterval = onUpdate ? setInterval(() => emitTick?.(), BATCH_TICK_MS) : null;
+			try {
+				// ── Chain ──
+				if (hasChain && params.chain) {
+					const results: BatchResult[] = [];
+					const handOff: number[] = [];
+					let previousOutput = "";
 
-				for (let i = 0; i < params.chain.length; i++) {
-					const step = params.chain[i];
-					const taskWithContext = substitutePrevious(step.task, previousOutput);
-					const chainUpdate = onUpdate
-						? (partial: { content?: unknown; details?: unknown }) => {
-								const current = (partial.details as BatchDetails | undefined)?.results[0];
-								if (current) {
-									onUpdate({
-										content: [{ type: "text", text: finalOutput(current.messages) || "(running...)" }],
-										details: makeBatchDetails("chain", [...results, current]),
-									});
+					for (let i = 0; i < params.chain.length; i++) {
+						const step = params.chain[i];
+						// Size of what this step receives via {previous} — shown as ← +Nk.
+						handOff.push(i === 0 ? 0 : Buffer.byteLength(previousOutput, "utf8"));
+						const taskWithContext = substitutePrevious(step.task, previousOutput);
+						let currentStep: BatchResult | null = null;
+						const chainUpdate = onUpdate
+							? (partial: { content?: unknown; details?: unknown }) => {
+									const current = (partial.details as BatchDetails | undefined)?.results[0];
+									if (current) {
+										onUpdate({
+											content: [{ type: "text", text: finalOutput(current.messages) || "(running...)" }],
+											details: makeBatchDetails("chain", [...results, current], handOff),
+										});
+									}
 								}
-							}
-					: undefined;
+						: undefined;
 
-					const result = await runSingle(step.agent, taskWithContext, step.cwd, i + 1, (r) =>
-						chainUpdate?.({ details: makeBatchDetails("chain", [r]) }),
-					);
-					results.push(result);
+						// Ticks re-emit the current step so its spinner and elapsed keep moving.
+						emitTick = onUpdate
+							? () => {
+									const cur = currentStep;
+									if (cur) chainUpdate?.({ details: makeBatchDetails("chain", [cur]) });
+								}
+							: null;
 
-					if (isFailedResult(result)) {
-						return {
-							content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${resultOutput(result)}` }],
-							details: makeBatchDetails("chain", results),
-							isError: true,
-						};
+						const result = await runSingle(step.agent, taskWithContext, step.cwd, i + 1, (r) => {
+							currentStep = r;
+							chainUpdate?.({ details: makeBatchDetails("chain", [r]) });
+						});
+						emitTick = null;
+						results.push(result);
+
+						if (isFailedResult(result)) {
+							return {
+								content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${resultOutput(result)}` }],
+								details: makeBatchDetails("chain", results, handOff),
+								isError: true,
+							};
+						}
+						previousOutput = finalOutput(result.messages);
 					}
-					previousOutput = finalOutput(result.messages);
-				}
-				return {
-					content: [{ type: "text", text: finalOutput(results[results.length - 1]?.messages ?? []) || "(no output)" }],
-					details: makeBatchDetails("chain", results),
-				};
-			}
-
-			// ── Parallel ──
-			if (hasTasks && params.tasks) {
-				if (params.tasks.length > MAX_PARALLEL_TASKS) {
 					return {
-						content: [{ type: "text", text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.` }],
-						details: makeBatchDetails("parallel", []),
+						content: [{ type: "text", text: finalOutput(results[results.length - 1]?.messages ?? []) || "(no output)" }],
+						details: makeBatchDetails("chain", results, handOff),
 					};
 				}
 
-				const allResults: BatchResult[] = params.tasks.map((t) => ({
-					...emptyResult(t.agent, t.task),
-					exitCode: -1,
-				}));
+				// ── Parallel ──
+				if (hasTasks && params.tasks) {
+					if (params.tasks.length > MAX_PARALLEL_TASKS) {
+						return {
+							content: [{ type: "text", text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.` }],
+							details: makeBatchDetails("parallel", []),
+						};
+					}
 
-				const emitParallelUpdate = () => {
-					if (!onUpdate) return;
-					const running = allResults.filter((r) => isRunning(r)).length;
-					const done = allResults.length - running;
-					onUpdate({
-						content: [{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` }],
-						details: makeBatchDetails("parallel", [...allResults]),
-					});
-				};
+					// All placeholders start queued; the runner clears the flag when a
+					// concurrency slot opens and the child actually spawns.
+					const allResults: BatchResult[] = params.tasks.map((t) => ({
+						...emptyResult(t.agent, t.task),
+						exitCode: -1,
+						queued: true,
+					}));
 
-				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
-					const result = await runSingle(t.agent, t.task, t.cwd, undefined, (r) => {
-						allResults[index] = r;
+					const emitParallelUpdate = () => {
+						if (!onUpdate) return;
+						const busy = allResults.some((r) => isRunning(r) || isQueued(r));
+						onUpdate({
+							content: [{ type: "text", text: parallelStatusLine(allResults) + (busy ? "..." : "") }],
+							details: makeBatchDetails("parallel", [...allResults]),
+						});
+					};
+					emitTick = () => emitParallelUpdate();
+
+					const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
+						allResults[index] = { ...allResults[index], queued: false }; // slot open — spawning now
 						emitParallelUpdate();
+						const result = await runSingle(t.agent, t.task, t.cwd, undefined, (r) => {
+							allResults[index] = r;
+							emitParallelUpdate();
+						});
+						allResults[index] = result;
+						emitParallelUpdate();
+						return result;
 					});
-					allResults[index] = result;
-					emitParallelUpdate();
-					return result;
-				});
 
-				const successCount = results.filter((r) => !isFailedResult(r)).length;
-				const summaries = results.map((r) => {
-					const status = isFailedResult(r)
-						? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
-						: "completed";
-					return `### [${r.agent}] ${status}\n\n${truncateOutput(resultOutput(r))}`;
-				});
-				return {
-					content: [{ type: "text", text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}` }],
-					details: makeBatchDetails("parallel", results),
+					const successCount = results.filter((r) => !isFailedResult(r)).length;
+					const summaries = results.map((r) => {
+						const status = isFailedResult(r)
+							? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
+							: "completed";
+						return `### [${r.agent}] ${status}\n\n${truncateOutput(resultOutput(r))}`;
+					});
+					return {
+						content: [{ type: "text", text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}` }],
+						details: makeBatchDetails("parallel", results),
+					};
+				}
+
+				// ── Single ──
+				let latestSingle: BatchResult | null = null;
+				const emitSingle = () => {
+					if (!onUpdate || !latestSingle) return;
+					onUpdate({
+						content: [{ type: "text", text: finalOutput(latestSingle.messages) || "(running...)" }],
+						details: makeBatchDetails("single", [latestSingle]),
+					});
 				};
-			}
-
-			// ── Single ──
-			const result = await runSingle(
-				params.agent ?? "",
-				params.task ?? "",
-				params.cwd,
-				undefined,
-				onUpdate
-					? (r) =>
-							onUpdate({
-								content: [{ type: "text", text: finalOutput(r.messages) || "(running...)" }],
-								details: makeBatchDetails("single", [r]),
-							})
-					: undefined,
-			);
-			if (isFailedResult(result)) {
+				emitTick = emitSingle;
+				const result = await runSingle(params.agent ?? "", params.task ?? "", params.cwd, undefined, (r) => {
+					latestSingle = r;
+					emitSingle();
+				});
+				if (isFailedResult(result)) {
+					return {
+						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${resultOutput(result)}` }],
+						details: makeBatchDetails("single", [result]),
+						isError: true,
+					};
+				}
 				return {
-					content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${resultOutput(result)}` }],
+					content: [{ type: "text", text: finalOutput(result.messages) || "(no output)" }],
 					details: makeBatchDetails("single", [result]),
-					isError: true,
 				};
+			} finally {
+				if (tickInterval) clearInterval(tickInterval);
 			}
-			return {
-				content: [{ type: "text", text: finalOutput(result.messages) || "(no output)" }],
-				details: makeBatchDetails("single", [result]),
-			};
 		},
 
 		renderCall(args, theme, _context) {
 			const chain = args.chain as Array<{ agent: string; task: string }> | undefined;
 			const tasks = args.tasks as Array<{ agent: string; task: string }> | undefined;
 			if (chain && chain.length > 0) {
-				let text =
-					theme.fg("toolTitle", theme.bold("task_batch ")) +
-					theme.fg("accent", `chain (${chain.length} steps)`);
-				for (let i = 0; i < Math.min(chain.length, 3); i++) {
-					const step = chain[i];
-					const cleanTask = (step.task as string).replace(/\{previous\}/g, "").trim();
-					const preview = cleanTask.length > 40 ? `${cleanTask.slice(0, 40)}...` : cleanTask;
-					text += "\n  " + theme.fg("muted", `${i + 1}.`) + " " + theme.fg("accent", step.agent) + theme.fg("dim", ` ${preview}`);
-				}
-				if (chain.length > 3) text += `\n  ${theme.fg("muted", `... +${chain.length - 3} more`)}`;
-				return new Text(text, 0, 0);
+				// Pipeline on one line: research ─▶ analyze ─▶ report (+2)
+				const shown = chain.slice(0, 4).map((s) => theme.fg("accent", s.agent));
+				const rest = chain.length - shown.length;
+				const pipeline =
+					shown.join(theme.fg("muted", " ─▶ ")) + (rest > 0 ? theme.fg("muted", ` (+${rest})`) : "");
+				return new Text(theme.fg("toolTitle", theme.bold("task_batch ")) + theme.fg("muted", "chain: ") + pipeline, 0, 0);
 			}
 			if (tasks && tasks.length > 0) {
-				let text =
-					theme.fg("toolTitle", theme.bold("task_batch ")) +
-					theme.fg("accent", `parallel (${tasks.length} tasks)`);
-				for (const t of tasks.slice(0, 3)) {
-					const preview = t.task.length > 40 ? `${t.task.slice(0, 40)}...` : t.task;
-					text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${preview}`)}`;
-				}
-				if (tasks.length > 3) text += `\n  ${theme.fg("muted", `... +${tasks.length - 3} more`)}`;
-				return new Text(text, 0, 0);
+				// Agent chips: roles are what matters, task texts truncate meaninglessly.
+				const names = tasks.map((t) => t.agent);
+				const shown = names.slice(0, 6);
+				const rest = names.length - shown.length;
+				const list = shown.join(theme.fg("muted", " · ")) + (rest > 0 ? theme.fg("muted", ` +${rest}`) : "");
+				return new Text(
+					theme.fg("toolTitle", theme.bold("task_batch ")) + theme.fg("muted", `parallel (${tasks.length}): `) + list,
+					0,
+					0,
+				);
 			}
 			const agentName = (args.agent as string) || "...";
 			const task = (args.task as string) || "";
-			const preview = task ? (task.length > 60 ? `${task.slice(0, 60)}...` : task) : "...";
+			// oneline flattens multiline tasks; TruncatedText cuts at the real
+			// viewport width instead of a hard-coded 60 chars.
+			const preview = task ? oneline(task, 400) : "...";
 			const text =
 				theme.fg("toolTitle", theme.bold("task_batch ")) +
 				theme.fg("accent", agentName) +
 				`\n  ${theme.fg("dim", preview)}`;
-			return new Text(text, 0, 0);
+			return new TruncatedText(text, 0, 0);
 		},
 
 		renderResult(result, options, theme, _context) {
@@ -1371,6 +1549,49 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			}
 
 			const mdTheme = getMarkdownTheme();
+			const statusIcon = (r: BatchResult): string => {
+				if (isQueued(r)) return theme.fg("dim", "○");
+				if (isRunning(r)) return theme.fg("warning", spinnerFrame());
+				if (isFailedResult(r)) return theme.fg("error", "✗");
+				return theme.fg("success", "✓");
+			};
+			const elapsedTag = (r: BatchResult): string => {
+				const ms = elapsedOf(r);
+				return ms === undefined ? "" : ` ${theme.fg("dim", formatDuration(ms))}`;
+			};
+			// Verdict chip: reads before any text does. bg resets only itself, so
+			// the tail after the chip stays unhighlighted.
+			const chip = (kind: "running" | "ok" | "fail", label: string): string => {
+				const [bg, fg] =
+					kind === "running"
+						? (["toolPendingBg", "accent"] as const)
+						: kind === "fail"
+							? (["toolErrorBg", "error"] as const)
+							: (["toolSuccessBg", "success"] as const);
+				return theme.bg(bg, theme.fg(fg, ` ${label} `));
+			};
+			const errorLine = (msg: string): string =>
+				theme.bg("toolErrorBg", theme.fg("error", ` Error: ${oneline(msg, 120)} `));
+			const stderrExcerpt = (r: BatchResult): string =>
+				isFailedResult(r) && r.stderr ? firstLines(r.stderr, 3) : "";
+			// One line per task for the collapsed parallel view (No.7).
+			const taskLine = (r: BatchResult): string => {
+				const head = `${statusIcon(r)} ${theme.fg("accent", r.agent)}${elapsedTag(r)}`;
+				if (isQueued(r)) return `${head} ${theme.fg("muted", "queued")}`;
+				const bits: string[] = [];
+				if (isFailedResult(r)) {
+					const reason = oneline(r.errorMessage || r.stopReason || `exit ${r.exitCode}`);
+					bits.push(theme.fg("error", `failed (${reason})`));
+				} else {
+					const tools = summarizeTools(displayItems(r.messages));
+					if (tools) bits.push(theme.fg("muted", tools));
+					if (!isRunning(r)) {
+						const out = finalOutput(r.messages);
+						if (out) bits.push(theme.fg("dim", `→ ${formatTokens(out.length)}`));
+					}
+				}
+				return bits.length > 0 ? `${head} ${bits.join(" ")}` : head;
+			};
 			const collapsedItems = (items: ReturnType<typeof displayItems>, limit: number): string => {
 				const toShow = items.slice(-limit);
 				const skipped = items.length > limit ? items.length - limit : 0;
@@ -1386,29 +1607,24 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				}
 				return text.trimEnd();
 			};
-			const childCard = (container: Container, r: BatchResult, label: string): void => {
-				const rIcon = isRunning(r)
-					? theme.fg("warning", "⏳")
-					: isFailedResult(r)
-						? theme.fg("error", "✗")
-						: theme.fg("success", "✓");
-				container.addChild(new Spacer(1));
-				container.addChild(new Text(`${theme.fg("muted", label)}${theme.fg("accent", r.agent)} ${rIcon}`, 0, 0));
-				container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+			const childCard = (container: Container, r: BatchResult, header: string): void => {
+				const usageStr = formatUsageStats(r.usage, r.model);
+				const card = new BatchCard((s) => theme.fg("borderMuted", s), header, usageStr || undefined);
+				card.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 				for (const item of displayItems(r.messages)) {
 					if (item.type === "toolCall") {
-						container.addChild(
+						card.addChild(
 							new Text(theme.fg("muted", "→ ") + formatToolCall(item.name ?? "", item.args ?? {}, theme.fg), 0, 0),
 						);
 					}
 				}
 				const output = finalOutput(r.messages);
 				if (output) {
-					container.addChild(new Spacer(1));
-					container.addChild(new Markdown(output.trim(), 0, 0, mdTheme));
+					card.addChild(new Spacer(1));
+					card.addChild(new Markdown(output.trim(), 0, 0, mdTheme));
 				}
-				const usageStr = formatUsageStats(r.usage, r.model);
-				if (usageStr) container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
+				container.addChild(new Spacer(1));
+				container.addChild(card);
 			};
 			const aggregateUsage = (results: BatchResult[]) => {
 				const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
@@ -1422,18 +1638,37 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				}
 				return total;
 			};
+			// Done-state header tail: cost · wall time, then failed agent names.
+			const costWallTag = (results: BatchResult[]): string => {
+				const usage = aggregateUsage(results);
+				const bits: string[] = [];
+				if (usage.cost > 0) bits.push(`$${usage.cost < 0.01 ? usage.cost.toFixed(4) : usage.cost.toFixed(2)}`);
+				const wall = batchWallTime(results);
+				if (wall !== undefined) bits.push(formatDuration(wall));
+				return theme.fg("dim", bits.join(" · "));
+			};
+			const failedTag = (results: BatchResult[]): string => {
+				const failed = results.filter((r) => !isRunning(r) && !isQueued(r) && isFailedResult(r));
+				if (failed.length === 0) return "";
+				const names = failed.map((r) => r.agent);
+				const shown = names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "");
+				return theme.fg("error", `${failed.length} failed: ${shown}`);
+			};
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
 				const isError = isFailedResult(r);
-				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+				const isBusy = isRunning(r);
+				const icon = isBusy ? theme.fg("warning", spinnerFrame()) : isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 				const items = displayItems(r.messages);
 				if (expanded) {
 					const container = new Container();
-					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}`;
+					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${elapsedTag(r)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
-					if (isError && r.errorMessage) container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
+					if (isError && r.errorMessage) container.addChild(new Text(errorLine(r.errorMessage), 0, 0));
+					const stderr = stderrExcerpt(r);
+					if (stderr) container.addChild(new Text(theme.fg("dim", stderr), 0, 0));
 					container.addChild(new Spacer(1));
 					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
@@ -1441,7 +1676,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
 					const output = finalOutput(r.messages);
 					if (items.length === 0 && !output) {
-						container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
+						container.addChild(new Text(theme.fg("muted", isBusy ? "(running...)" : "(no output)"), 0, 0));
 					} else {
 						for (const item of items) {
 							if (item.type === "toolCall") {
@@ -1462,10 +1697,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					}
 					return container;
 				}
-				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}`;
+				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${elapsedTag(r)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-				else if (items.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
+				if (isError && r.errorMessage) {
+					text += `\n${errorLine(r.errorMessage)}`;
+					const stderr = stderrExcerpt(r);
+					if (stderr) text += `\n${theme.fg("dim", stderr)}`;
+				} else if (items.length === 0) text += `\n${theme.fg("muted", isBusy ? "(running...)" : "(no output)")}`;
 				else text += `\n${collapsedItems(items, 10)}`;
 				const usageStr = formatUsageStats(r.usage, r.model);
 				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
@@ -1473,19 +1711,31 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			}
 
 			if (details.mode === "chain") {
-				const successCount = details.results.filter((r) => !isFailedResult(r)).length;
-				const icon = successCount === details.results.length ? theme.fg("success", "✓") : theme.fg("error", "✗");
+				const activeCount = details.results.filter((r) => isRunning(r) || isQueued(r)).length;
+				const successCount = details.results.filter((r) => !isRunning(r) && !isQueued(r) && !isFailedResult(r)).length;
+				const doneCount = details.results.length - activeCount;
+				const total = details.results.length;
+				const kind = activeCount > 0 ? "running" : doneCount > successCount ? "fail" : "ok";
+				const head = chip(
+					kind,
+					activeCount > 0 ? `${spinnerFrame()} CHAIN ${doneCount}/${total}` : `CHAIN ${successCount}/${total}`,
+				);
+				const bar = theme.fg("muted", `[${progressBar(doneCount, total)}] `);
+				const tailBits = activeCount > 0 ? [] : [costWallTag(details.results), failedTag(details.results)].filter((s) => s.length > 0);
 				if (expanded) {
 					const container = new Container();
-					container.addChild(
-						new Text(
-							icon + " " + theme.fg("toolTitle", theme.bold("chain ")) + theme.fg("accent", `${successCount}/${details.results.length} steps`),
-							0,
-							0,
-						),
-					);
-					for (const r of details.results) {
-						childCard(container, r, `─── Step ${r.step}: `);
+					container.addChild(new Text(`${head} ${bar}${tailBits.map((s) => ` ${s}`).join("")}`, 0, 0));
+					// Frames supersede the No.6 rail glyphs; ← +Nk still marks the flow.
+					for (let i = 0; i < details.results.length; i++) {
+						const r = details.results[i];
+						const handIn = details.handOff?.[i] ?? 0;
+						const hand =
+							i > 0 && handIn > 0 ? theme.fg("muted", ` ← +${formatTokens(handIn)}`) : "";
+						const stepHeader = `${statusIcon(r)} ${theme.fg("muted", `Step ${r.step ?? i + 1} ·`)} ${theme.fg(
+							"accent",
+							r.agent,
+						)}${hand}${elapsedTag(r)}`;
+						childCard(container, r, stepHeader);
 					}
 					const usageStr = formatUsageStats(aggregateUsage(details.results));
 					if (usageStr) {
@@ -1494,9 +1744,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					}
 					return container;
 				}
-				let text = icon + " " + theme.fg("toolTitle", theme.bold("chain ")) + theme.fg("accent", `${successCount}/${details.results.length} steps`);
+				let text = `${head} ${bar}${tailBits.map((s) => ` ${s}`).join("")}`;
 				for (const r of details.results) {
-					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${isFailedResult(r) ? theme.fg("error", "✗") : theme.fg("success", "✓")}`;
+					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${statusIcon(r)}${elapsedTag(r)}`;
 					const items = displayItems(r.messages);
 					text += items.length === 0 ? `\n${theme.fg("muted", "(no output)")}` : `\n${collapsedItems(items, 5)}`;
 				}
@@ -1506,25 +1756,38 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			}
 
 			// parallel
-			const running = details.results.filter((r) => isRunning(r)).length;
-			const successCount = details.results.filter((r) => !isRunning(r) && !isFailedResult(r)).length;
-			const failCount = details.results.filter((r) => !isRunning(r) && isFailedResult(r)).length;
-			const isRunningBatch = running > 0;
-			const icon = isRunningBatch
-				? theme.fg("warning", "⏳")
-				: failCount > 0
-					? theme.fg("warning", "◐")
-					: theme.fg("success", "✓");
-			const status = isRunningBatch
-				? `${successCount + failCount}/${details.results.length} done, ${running} running`
-				: `${successCount}/${details.results.length} tasks`;
+			const queuedCount = details.results.filter((r) => isQueued(r)).length;
+			const runningCount = details.results.filter((r) => isRunning(r)).length;
+			const doneCount = details.results.length - queuedCount - runningCount;
+			const failCount = details.results.filter((r) => !isRunning(r) && !isQueued(r) && isFailedResult(r)).length;
+			const successCount = doneCount - failCount;
+			const total = details.results.length;
+			const isRunningBatch = runningCount > 0 || queuedCount > 0;
+			const head = chip(
+				isRunningBatch ? "running" : failCount > 0 ? "fail" : "ok",
+				isRunningBatch ? `${spinnerFrame()} PARALLEL ${doneCount}/${total}` : `PARALLEL ${successCount}/${total}`,
+			);
+			const bar = theme.fg("muted", `[${progressBar(doneCount, total)}] `);
+			let tail: string;
+			if (isRunningBatch) {
+				const live = [runningCount > 0 ? `${runningCount} running` : "", queuedCount > 0 ? `${queuedCount} queued` : ""]
+					.filter(Boolean)
+					.join(" · ");
+				tail = `${bar}${live ? ` ${theme.fg("muted", live)}` : ""}`;
+			} else {
+				const bits = [costWallTag(details.results), failedTag(details.results)].filter((s) => s.length > 0);
+				tail = bar + bits.map((s) => ` ${s}`).join("");
+			}
 			if (expanded && !isRunningBatch) {
 				const container = new Container();
-				container.addChild(
-					new Text(`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`, 0, 0),
-				);
+				container.addChild(new Text(`${head} ${tail}`, 0, 0));
 				for (const r of details.results) {
-					childCard(container, r, "─── ");
+					container.addChild(new Spacer(1));
+					childCard(
+						container,
+						r,
+						`${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${statusIcon(r)}${elapsedTag(r)}`,
+					);
 				}
 				const usageStr = formatUsageStats(aggregateUsage(details.results));
 				if (usageStr) {
@@ -1533,19 +1796,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				}
 				return container;
 			}
-			let text = `${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`;
+			// Collapsed: one line per task — status, duration, tools, output size.
+			let text = `${head} ${tail}`;
 			for (const r of details.results) {
-				const rIcon = isRunning(r) ? theme.fg("warning", "⏳") : isFailedResult(r) ? theme.fg("error", "✗") : theme.fg("success", "✓");
-				const items = displayItems(r.messages);
-				text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
-				text +=
-					items.length === 0
-						? `\n${theme.fg("muted", isRunning(r) ? "(running...)" : "(no output)")}`
-						: `\n${collapsedItems(items, 5)}`;
+				text += `\n${taskLine(r)}`;
 			}
 			if (!isRunningBatch) {
 				const usageStr = formatUsageStats(aggregateUsage(details.results));
-				if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
+				if (usageStr) text += `\n${theme.fg("dim", `Total: ${usageStr}`)}`;
 			}
 			if (!expanded) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 			return new Text(text, 0, 0);
@@ -1578,11 +1836,77 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				return;
 			}
 			try {
-				const result = doSpawn(ctx, { agent: agentName, task: taskText }, spawnContext(ctx));
+				const result = doSpawn(ctx, { agent: agentName, task: taskText }, spawnContext(ctx, knownToolNames));
 				ctx.ui.notify(`Spawned ${agentName} in pane ${String(result.details["pane"])}`, "info");
 			} catch (err) {
 				ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
 			}
+		},
+	});
+
+	// ── Command: /workers — global view of live headless workers ──
+
+	const formatElapsed = (ms: number): string => {
+		const s = Math.floor(ms / 1000);
+		if (s < 60) return `${s}s`;
+		if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
+		return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
+	};
+
+	/** Terminate a worker's whole process tree. Windows needs taskkill /T. */
+	const killWorkerTree = (pid: number): void => {
+		if (process.platform === "win32") {
+			execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+		} else {
+			try {
+				process.kill(pid, "SIGTERM");
+			} catch {
+				// Already gone — fine.
+			}
+		}
+	};
+
+	pi.registerCommand("workers", {
+		description: "Live headless task_batch workers across all sessions (subagents)",
+		handler: async (args, ctx) => {
+			const parts = args.trim().split(/\s+/).filter(Boolean);
+			if (parts[0] === "kill") {
+				const target = parts[1];
+			if (!target) {
+					ctx.ui.notify("Usage: /workers kill <id|pid>", "warning");
+					return;
+			}
+				const { workers } = readRunningWorkers(runningIndexPath(subagentSessionsRoot()));
+			const worker =
+					workers.find((w) => w.id === target) ?? workers.find((w) => String(w.pid) === target);
+			if (!worker) {
+					ctx.ui.notify(`No live worker matching "${target}".`, "error");
+					return;
+			}
+			try {
+					killWorkerTree(worker.pid);
+					ctx.ui.notify(`Killed ${worker.label} (pid ${worker.pid}). The batch tool will report the exit.`, "info");
+			} catch (err) {
+					ctx.ui.notify(`Failed to kill pid ${worker.pid}: ${err instanceof Error ? err.message : String(err)}`, "error");
+			}
+				return;
+			}
+
+			const { workers, reaped } = readRunningWorkers(runningIndexPath(subagentSessionsRoot()));
+			if (workers.length === 0) {
+				ctx.ui.notify(reaped > 0 ? `No live workers (${reaped} stale record(s) reaped).` : "No live workers.", "info");
+				return;
+			}
+			const now = Date.now();
+			const lines = workers.map((w) => {
+				const stepTag = w.step !== undefined ? ` step ${w.step}` : "";
+				const modeTag = w.mode ? ` ${w.mode}${stepTag}` : "";
+				return `${w.id} · pid ${w.pid} · ${formatElapsed(now - w.startedAt)} · ${w.model ?? "?"}${modeTag}\n  ${oneline(w.task, 90)}\n  ${w.sessionFile}`;
+			});
+			ctx.ui.notify(`Live workers (${workers.length}):
+
+${lines.join("\n\n")}\n
+/workers kill <id|pid> to terminate.`, "info");
 		},
 	});
 
