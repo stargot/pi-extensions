@@ -76,3 +76,15 @@ export function resolveInterrupt(interrupt: boolean | undefined, stalled: boolea
 	if (interrupt === false) return false;
 	return stalled;
 }
+
+// ── Display formatting ──
+
+/** Compact elapsed time for headers and stall warnings: 5s / 01m05s / 2h03m. */
+export function fmtElapsed(sec: number): string {
+	if (sec < 60) return `${sec}s`;
+	const m = Math.floor(sec / 60);
+	const s = sec % 60;
+	if (m < 60) return `${m}m${String(s).padStart(2, "0")}s`;
+	const h = Math.floor(m / 60);
+	return `${h}h${String(m % 60).padStart(2, "0")}m`;
+}

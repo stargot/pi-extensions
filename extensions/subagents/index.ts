@@ -30,7 +30,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Markdown, Spacer, Text, TruncatedText, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -81,7 +81,17 @@ import {
 	sendInterrupt,
 	sendText,
 } from "./mux.ts";
-import { cancelSidecarPath, classifyExitSidecar, resolveInterrupt } from "./shared.ts";
+import { cancelSidecarPath, classifyExitSidecar, fmtElapsed, resolveInterrupt } from "./shared.ts";
+import {
+	BatchCard,
+	errorLine,
+	renderSubagentCancelResult,
+	renderSubagentMessageResult,
+	renderSubagentResult,
+	renderSubagentsListResult,
+	subagentResultCard,
+	verdictChip,
+} from "./render.ts";
 import { readRunningWorkers, runningIndexPath } from "./running-index.ts";
 
 const POLL_INTERVAL_MS = 1000;
@@ -206,15 +216,6 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fmtElapsed(sec: number): string {
-	if (sec < 60) return `${sec}s`;
-	const m = Math.floor(sec / 60);
-	const s = sec % 60;
-	if (m < 60) return `${m}m${String(s).padStart(2, "0")}s`;
-	const h = Math.floor(m / 60);
-	return `${h}h${String(m % 60).padStart(2, "0")}m`;
-}
-
 function safeFilePart(s: string): string {
 	const cleaned = s
 		.toLowerCase()
@@ -291,6 +292,14 @@ function pruneColumnPanes(): void {
 
 // ── Widget ──
 
+/** One widget row — data only; all styling happens in the setWidget callback. */
+interface WidgetRow {
+	name: string;
+	phase: string;
+	detail: string;
+	elapsedSec: number;
+}
+
 function updateWidget(): void {
 	if (!latestCtx?.hasUI) return;
 	if (runningSubagents.size === 0) {
@@ -298,26 +307,42 @@ function updateWidget(): void {
 		return;
 	}
 	const now = Date.now();
-	const lines: string[] = [];
+	const rows: WidgetRow[] = [];
 	for (const r of runningSubagents.values()) {
-		const elapsed = fmtElapsed(Math.floor((now - r.startTime) / 1000));
 		let phase = "starting";
 		let detail = "";
 		if (r.cancelRequested) {
 			// Cancelling outranks activity display — it is the newest fact.
 			phase = "cancelling";
-		} else if (r.activity.state) {
-			phase = r.activity.state.phase;
-			const label = activityLabel(r.activity.state);
-			if (label) detail = ` · ${label}`;
-			if (phase === "stalled") detail = " · stalled";
+		} else {
+			if (r.activity.state) {
+				phase = r.activity.state.phase;
+				const label = activityLabel(r.activity.state);
+				if (label) detail = ` · ${label}`;
+			}
+			if (r.activity.stalled) phase = "stalled";
 		}
-		lines.push(`${r.name}  ${phase}${detail}  ${elapsed}`);
+		rows.push({ name: r.name, phase, detail, elapsedSec: Math.floor((now - r.startTime) / 1000) });
 	}
 	latestCtx.ui.setWidget("subagents", (_tui, theme) => {
 		const box = new Box(1, 0, (text) => text);
-		const header = theme.fg("muted", `Subagents — ${runningSubagents.size} running`);
-		box.addChild(new Text(`${header}\n${lines.map((l) => theme.fg("accent", "▸ ") + l).join("\n")}`, 0, 0));
+		const header =
+			theme.fg("muted", "Subagents — ") +
+			theme.fg("accent", String(runningSubagents.size)) +
+			theme.fg("muted", " running");
+		const lines = rows.map((row) => {
+			// Bullet carries the phase: active/cancelling spin, stalled warns.
+			const bullet =
+				row.phase === "active"
+					? theme.fg("warning", spinnerFrame())
+					: row.phase === "cancelling"
+						? theme.fg("error", spinnerFrame())
+						: row.phase === "stalled"
+							? theme.fg("warning", "⚠")
+							: theme.fg("accent", "▸");
+			return `${bullet} ${theme.fg("accent", row.name)} ${theme.fg("muted", `${row.phase}${row.detail}`)} ${theme.fg("dim", fmtElapsed(row.elapsedSec))}`;
+		});
+		box.addChild(new Text(`${header}\n${lines.join("\n")}`, 0, 0));
 		return box;
 	});
 }
@@ -371,6 +396,11 @@ function completeSubagent(running: RunningSubagent, result: { exitCode: number; 
 
 	const usageText = usage && (usage.input > 0 || usage.output > 0) ? formatUsage(usage) : undefined;
 	const elapsedText = fmtElapsed(elapsedSec);
+	// Same truncated form the LLM sees — the subagent_result card renders this exact text.
+	const summaryText =
+		summary.length > MAX_SUMMARY_CHARS
+			? `${summary.slice(0, MAX_SUMMARY_CHARS)}\n… [truncated — full transcript: ${running.sessionFile}]`
+			: summary;
 	const statusLine = cancelled
 		? `cancelled by user after ${elapsedText}`
 		: result.errorMessage
@@ -386,7 +416,7 @@ function completeSubagent(running: RunningSubagent, result: { exitCode: number; 
 		`Sub-agent "${running.name}" (${running.agentName || "adhoc"}) ${statusLine}.`,
 		usageText ? `Usage: ${usageText}.` : "",
 		"",
-		summary.length > MAX_SUMMARY_CHARS ? `${summary.slice(0, MAX_SUMMARY_CHARS)}\n… [truncated — full transcript: ${running.sessionFile}]` : summary,
+		summaryText,
 		"",
 		`Follow up with subagent_message({ name: "${running.name}", message: "…" }) — the same name works whether the pane is still open or has since been closed.`,
 	]
@@ -405,6 +435,10 @@ function completeSubagent(running: RunningSubagent, result: { exitCode: number; 
 				session: running.sessionFile,
 				exitCode: result.exitCode,
 				elapsedSec,
+				// Display-only extras for the subagent_result card renderer.
+				status: cancelled ? "cancelled" : result.errorMessage ? "failed" : "finished",
+				...(usageText ? { usageText } : {}),
+				...(summary ? { summary: summaryText } : {}),
 				...(cancelled ? { cancelled: true } : {}),
 				...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
 				...(usage ? { usage } : {}),
@@ -872,62 +906,6 @@ function doResume(ctx: ExtensionContext, sctx: SpawnContext, entry: RegistryEntr
 
 // ── Extension entry point ──
 
-/**
- * Framed card for expanded batch results (idea No.5b): corners ╭╮╰╯ adapt to
- * the viewport width, the header rides the top border, the footer (usage)
- * sits right-aligned on the bottom border. Children render inside at
- * width−4; frame lines are cached per width and dropped on invalidate.
- */
-class BatchCard extends Container {
-	private readonly borderColor: (s: string) => string;
-	private readonly header: string;
-	private readonly footer: string | undefined;
-	private frameWidth?: number;
-	private frameLines?: string[];
-
-	constructor(borderColor: (s: string) => string, header: string, footer?: string) {
-		super();
-		this.borderColor = borderColor;
-		this.header = header;
-		this.footer = footer;
-	}
-
-	override render(width: number): string[] {
-		if (this.frameWidth === width && this.frameLines) return this.frameLines;
-		const inner = Math.max(width - 4, 8); // "│ " on the left, " │" on the right
-		const lines = [this.topLine(width)];
-		for (const line of super.render(inner)) {
-			const pad = Math.max(inner - visibleWidth(line), 0);
-			lines.push(`${this.borderColor("│")} ${truncateToWidth(line, inner)}${" ".repeat(pad)}${this.borderColor(" │")}`);
-		}
-		lines.push(this.bottomLine(width));
-		this.frameWidth = width;
-		this.frameLines = lines;
-		return lines;
-	}
-
-	override invalidate(): void {
-		this.frameWidth = undefined;
-		this.frameLines = undefined;
-		super.invalidate();
-	}
-
-	private topLine(width: number): string {
-		// ╭─ {header} ────╮
-		const header = truncateToWidth(this.header, Math.max(width - 6, 1), "…");
-		const fill = Math.max(width - 5 - visibleWidth(header), 1);
-		return `${this.borderColor("╭─ ")}${header}${this.borderColor(` ${"─".repeat(fill)}╮`)}`;
-	}
-
-	private bottomLine(width: number): string {
-		// ╰────────╯  /  ╰───── {footer} ─╯ (footer right-aligned)
-		if (!this.footer) return this.borderColor(`╰${"─".repeat(Math.max(width - 2, 2))}╯`);
-		const footer = truncateToWidth(this.footer, Math.max(width - 6, 1), "…");
-		const fill = Math.max(width - 4 - visibleWidth(footer), 1);
-		return `${this.borderColor(`╰${"─".repeat(fill)} `)}${footer}${this.borderColor(" ╯")}`;
-	}
-}
-
 export default function subagentsExtension(pi: ExtensionAPI) {
 	// Tool universe for spawn-time validation: everything configured right now
 	// (built-ins + extension tools). Best effort — never blocks a spawn.
@@ -998,6 +976,26 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const sctx = spawnContext(ctx, knownToolNames);
 			return doSpawn(ctx, params as SpawnParams, sctx);
 		},
+		renderCall(args, theme, _context) {
+			// Arguments may arrive partially — every field can be missing.
+			const agent = args.agent || "...";
+			const task = args.task || "";
+			// Two rows instead of one "\n"-joined text: TruncatedText renders only
+			// the first line of its text, a newline inside would silently vanish.
+			const title =
+				theme.fg("toolTitle", theme.bold("subagent ")) +
+				theme.fg("accent", agent) +
+				(args.model ? theme.fg("muted", ` · ${args.model}`) : "") +
+				(args.name ? theme.fg("muted", ` as "${args.name}"`) : "");
+			// oneline flattens multiline tasks; TruncatedText cuts at the real
+			// viewport width instead of a hard-coded cap.
+			const preview = new TruncatedText(`  ${theme.fg("dim", task ? oneline(task, 400) : "...")}`, 0, 0);
+			const container = new Container();
+			container.addChild(new TruncatedText(title, 0, 0));
+			container.addChild(preview);
+			return container;
+		},
+		renderResult: renderSubagentResult,
 	});
 
 	// ── Tool: subagent_message ──
@@ -1087,6 +1085,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			}
 			return doResume(ctx, sctx, entry, message);
 		},
+		renderCall(args, theme, _context) {
+			const text =
+				theme.fg("toolTitle", theme.bold("subagent_message ")) +
+				theme.fg("accent", args.name || "...") +
+				theme.fg("dim", ` ${oneline(args.message || "...", 80)}`) +
+				(args.interrupt === true ? theme.fg("muted", " · interrupt") : "");
+			return new TruncatedText(text, 0, 0);
+		},
+		renderResult: renderSubagentMessageResult,
 	});
 
 	// ── Tool: subagent_cancel ──
@@ -1180,6 +1187,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				details: { name, status: "cancelling" },
 			};
 		},
+		renderCall(args, theme, _context) {
+			return new Text(
+				theme.fg("toolTitle", theme.bold("subagent_cancel ")) + theme.fg("accent", args.name || "..."),
+				0,
+				0,
+			);
+		},
+		renderResult: renderSubagentCancelResult,
 	});
 
 	// ── Tool: subagents_list ──
@@ -1196,13 +1211,22 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				.filter((def) => !allowed || allowed.has(def.name))
 				.sort((a, b) => a.name.localeCompare(b.name));
 
-			const lines = defs.map((def) => {
-				const scope = def.scope === "project" ? "project" : "global";
-				const model = def.model ? ` · ${def.model}` : "";
-				const tools = def.tools ? ` · tools: ${def.tools.join(",")}` : " · tools: default";
-				const mode = def.autoExit ? "auto-exit" : "interactive";
-				const spawnable = def.subagents?.length ? ` · may spawn: ${def.subagents.join(",")}` : "";
-				return `- ${def.name} (${scope}, ${mode}${model}${tools}${spawnable}): ${def.description}`;
+			// One structured pass — feeds both the LLM lines and the renderResult details.
+			const agents = defs.map((def) => ({
+				name: def.name,
+				scope: def.scope === "project" ? "project" : "global",
+				mode: def.autoExit ? "auto-exit" : "interactive",
+				model: def.model ?? "",
+				tools: def.tools ? def.tools.join(",") : "default",
+				subagents: def.subagents ?? [],
+				description: def.description,
+			}));
+
+			const lines = agents.map((a) => {
+				const model = a.model ? ` · ${a.model}` : "";
+				const tools = ` · tools: ${a.tools}`;
+				const spawnable = a.subagents.length ? ` · may spawn: ${a.subagents.join(",")}` : "";
+				return `- ${a.name} (${a.scope}, ${a.mode}${model}${tools}${spawnable}): ${a.description}`;
 			});
 
 			return {
@@ -1215,9 +1239,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 								: "No subagent definitions found. Add .md files to .pi/agents/ (project) or ~/.pi/agent/agents/ (global).",
 					},
 				],
-				details: { count: defs.length, names: defs.map((d) => d.name) },
+				details: { count: defs.length, names: defs.map((d) => d.name), agents },
 			};
 		},
+		renderCall(_args, theme, _context) {
+			return new Text(theme.fg("toolTitle", theme.bold("subagents_list ")) + theme.fg("muted", "definitions"), 0, 0);
+		},
+		renderResult: renderSubagentsListResult,
 	});
 
 	// ── Tool: task_batch ──
@@ -1562,19 +1590,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				const ms = elapsedOf(r);
 				return ms === undefined ? "" : ` ${theme.fg("dim", formatDuration(ms))}`;
 			};
-			// Verdict chip: reads before any text does. bg resets only itself, so
-			// the tail after the chip stays unhighlighted.
-			const chip = (kind: "running" | "ok" | "fail", label: string): string => {
-				const [bg, fg] =
-					kind === "running"
-						? (["toolPendingBg", "accent"] as const)
-						: kind === "fail"
-							? (["toolErrorBg", "error"] as const)
-							: (["toolSuccessBg", "success"] as const);
-				return theme.bg(bg, theme.fg(fg, ` ${label} `));
-			};
-			const errorLine = (msg: string): string =>
-				theme.bg("toolErrorBg", theme.fg("error", ` Error: ${oneline(msg, 120)} `));
+			// Verdict chips and error banners come from the shared render helpers.
 			const stderrExcerpt = (r: BatchResult): string =>
 				isFailedResult(r) && r.stderr ? firstLines(r.stderr, 3) : "";
 			// One line per task for the collapsed parallel view (No.7).
@@ -1669,7 +1685,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${elapsedTag(r)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
-					if (isError && r.errorMessage) container.addChild(new Text(errorLine(r.errorMessage), 0, 0));
+					if (isError && r.errorMessage) container.addChild(new Text(errorLine(theme, r.errorMessage), 0, 0));
 					const stderr = stderrExcerpt(r);
 					if (stderr) container.addChild(new Text(theme.fg("dim", stderr), 0, 0));
 					container.addChild(new Spacer(1));
@@ -1703,7 +1719,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${elapsedTag(r)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				if (isError && r.errorMessage) {
-					text += `\n${errorLine(r.errorMessage)}`;
+					text += `\n${errorLine(theme, r.errorMessage)}`;
 					const stderr = stderrExcerpt(r);
 					if (stderr) text += `\n${theme.fg("dim", stderr)}`;
 				} else if (items.length === 0) text += `\n${theme.fg("muted", isBusy ? "(running...)" : "(no output)")}`;
@@ -1719,7 +1735,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				const doneCount = details.results.length - activeCount;
 				const total = details.results.length;
 				const kind = activeCount > 0 ? "running" : doneCount > successCount ? "fail" : "ok";
-				const head = chip(
+				const head = verdictChip(
+					theme,
 					kind,
 					activeCount > 0 ? `${spinnerFrame()} CHAIN ${doneCount}/${total}` : `CHAIN ${successCount}/${total}`,
 				);
@@ -1766,7 +1783,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const successCount = doneCount - failCount;
 			const total = details.results.length;
 			const isRunningBatch = runningCount > 0 || queuedCount > 0;
-			const head = chip(
+			const head = verdictChip(
+				theme,
 				isRunningBatch ? "running" : failCount > 0 ? "fail" : "ok",
 				isRunningBatch ? `${spinnerFrame()} PARALLEL ${doneCount}/${total}` : `PARALLEL ${successCount}/${total}`,
 			);
@@ -1915,25 +1933,7 @@ ${lines.join("\n\n")}\n
 
 	// ── Renderer for results ──
 
-	pi.registerMessageRenderer("subagent_result", (message, options, theme) => {
-		const details = (message.details ?? {}) as {
-			name?: string;
-			agent?: string;
-			exitCode?: number;
-			elapsedSec?: number;
-			errorMessage?: string;
-			cancelled?: boolean;
-		};
-		// Cancelled outranks failed: a force-closed cancel carries an
-		// errorMessage too, but the verdict the reader needs is "cancelled".
-		const status = details.cancelled
-			? theme.fg("error", "cancelled")
-			: details.errorMessage
-				? theme.fg("error", `failed (${details.errorMessage})`)
-				: theme.fg("success", "finished");
-		const header = `${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", details.name ?? "?")}${theme.fg("muted", ` · ${status}`)}`;
-		const body = typeof message.content === "string" ? message.content : "";
-		const text = options.expanded ? `${header}\n${theme.fg("dim", body)}` : `${header}\n${body.split("\n\n").slice(1).join("\n\n")}`;
-		return new Text(text, options.outputPad ?? 0, 0);
-	});
+	// Completion card lives in render.ts (testable in isolation); this only
+	// wires it up.
+	pi.registerMessageRenderer("subagent_result", (message, options, theme) => subagentResultCard(message, options, theme));
 }
