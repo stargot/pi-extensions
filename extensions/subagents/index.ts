@@ -1532,14 +1532,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			}
 			const agentName = (args.agent as string) || "...";
 			const task = (args.task as string) || "";
-			// oneline flattens multiline tasks; TruncatedText cuts at the real
-			// viewport width instead of a hard-coded 60 chars.
-			const preview = task ? oneline(task, 400) : "...";
-			const text =
-				theme.fg("toolTitle", theme.bold("task_batch ")) +
-				theme.fg("accent", agentName) +
-				`\n  ${theme.fg("dim", preview)}`;
-			return new TruncatedText(text, 0, 0);
+			// Two rows via Container: TruncatedText renders only the first line of
+			// its text, so a "\n"-joined preview would silently vanish. oneline
+			// flattens multiline tasks; TruncatedText cuts at the real viewport
+			// width instead of a hard-coded cap.
+			const title = theme.fg("toolTitle", theme.bold("task_batch ")) + theme.fg("accent", agentName);
+			const container = new Container();
+			container.addChild(new TruncatedText(title, 0, 0));
+			container.addChild(new TruncatedText(`  ${theme.fg("dim", task ? oneline(task, 400) : "...")}`, 0, 0));
+			return container;
 		},
 
 		renderResult(result, options, theme, _context) {
