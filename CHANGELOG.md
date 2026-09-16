@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [Unreleased]
+
+### Changed
+
+- **web-search**: выдача DuckDuckGo парсится собственным мини-парсером
+  (`html.ts`, ~230 строк) вместо linkedom — расширению нужны были только три
+  селектора `tag.class`, `getAttribute` и `textContent`, а импорт linkedom
+  стоил 110–130 мс на каждом старте pi. Парсер проходит бит-в-бит паритет с
+  linkedom на живом снимке страницы выдачи; в тесты добавлен реальный снимок
+  (28 KB) и edge-кейсы: raw-text содержимое `<script>`/`<style>`, void-элементы,
+  `>` в кавычках атрибутов, entities (named + numeric), битая разметка.
+
+### Removed
+
+- **web-search**: зависимость `linkedom` (из корневого `package.json` и
+  `extensions/web-search/package.json`); расширение больше не требует
+  `npm install`.
+
 ## [0.2.0] — 2026-09-15
 
 ### Added

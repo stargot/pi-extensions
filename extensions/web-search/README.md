@@ -34,7 +34,7 @@ web_search({
   браузерных заголовков (GET и голый UA получают 403/202 бот-чек). Таймаут 20 с
   (`AbortSignal.timeout`), один ретрай с паузой 1.5 с на транзиентные ответы
   (202/403/429/challenge-page). Отмена инструмента пробрасывается сразу.
-- **Парсинг** (`parse.ts`, linkedom): `div.result` → `a.result__a` (заголовок +
+- **Парсинг** (`parse.ts` + `html.ts`): `div.result` → `a.result__a` (заголовок +
   редирект-обёртка `//duckduckgo.com/l/?uddg=<encoded>` разворачивается обратно
   в целевой URL) + `a.result__snippet`.
 - В `details` возвращается составленный запрос, счётчик результатов и время
@@ -47,12 +47,12 @@ web_search({
 |---|---|
 | `index.ts` | Инструмент `web_search`: схема, сеть, ретрай, рендереры |
 | `query.ts` | Чистая логика построения запроса (без зависимостей) |
-| `parse.ts` | Парсер выдачи DuckDuckGo (linkedom) |
-| `test/` | Юнит-тесты `query.ts` и `parse.ts` |
+| `html.ts` | Мини HTML-парсер без зависимостей (селекторы `tag.class`, `getAttribute`, `textContent`) |
+| `parse.ts` | Парсер выдачи DuckDuckGo поверх `html.ts` |
+| `test/` | Юнит-тесты `query.ts`, `html.ts` и `parse.ts` |
 
 ## Тесты
 
 ```bash
-npm install          # linkedom для parse.test.ts
 node --test extensions/web-search/test/*.test.ts
 ```
