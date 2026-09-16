@@ -5,6 +5,7 @@
 // Run: node extensions/subagents/test/e2e-pi.manual.ts
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { execSync, execFileSync } from "node:child_process";
 import { renderLauncherPs1 } from "../launcher.ts";
@@ -40,7 +41,9 @@ writeFileSync(
 	].join("\n"),
 	"utf8",
 );
-const doneExt = "D:/Projects/pi-extensions/extensions/subagents/subagent-done.ts";
+// Resolve next to this script — a hard-coded absolute path broke when the
+// project moved to a different drive.
+const doneExt = join(dirname(dirname(fileURLToPath(import.meta.url))), "subagent-done.ts");
 
 const spec = {
 	name: "pi-e2e",
