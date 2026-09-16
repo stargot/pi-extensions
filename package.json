@@ -1,6 +1,6 @@
 {
 	"name": "pi-extensions",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"private": true,
 	"description": "Personal pi package: extensions for the pi coding agent",
 	"type": "module",
