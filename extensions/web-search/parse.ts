@@ -1,23 +1,24 @@
 /**
- * DuckDuckGo HTML result parsing (linkedom-based).
+ * DuckDuckGo HTML result parsing.
  *
  * Kept separate from index.ts so unit tests can exercise it directly without
  * loading the pi extension host. Expects the HTML from the `html/` endpoint:
  * blocks of `div.result` with `a.result__a` (title + redirect href) and
- * `a.result__snippet` (snippet).
+ * `a.result__snippet` (snippet). Parsing is done by the dependency-free
+ * mini-parser in ./html.ts (see its header for scope and limitations).
  */
-import { parseHTML } from "linkedom";
+import { parseHtml } from "./html.ts";
 import { decodeDdgHref, type SearchResult } from "./query.ts";
 
 export function parseDdgResults(html: string): SearchResult[] {
-	const { document } = parseHTML(html);
+	const document = parseHtml(html);
 	const results: SearchResult[] = [];
 	for (const el of document.querySelectorAll("div.result")) {
 		const link = el.querySelector("a.result__a");
 		if (!link) continue;
 		const href = link.getAttribute("href") ?? "";
 		const url = decodeDdgHref(href);
-		const title = (link.textContent ?? "").replace(/\s+/g, " ").trim();
+		const title = link.textContent.replace(/\s+/g, " ").trim();
 		const snippet = (el.querySelector("a.result__snippet")?.textContent ?? "")
 			.replace(/\s+/g, " ")
 			.trim();

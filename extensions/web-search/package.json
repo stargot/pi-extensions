@@ -8,8 +8,5 @@
 	},
 	"pi": {
 		"extensions": ["./index.ts"]
-	},
-	"dependencies": {
-		"linkedom": "^0.16.0"
 	}
 }
