@@ -125,9 +125,12 @@ activity-файл: фаза (starting/active/waiting/done), текущий ин�
 
 ```
 Subagents — 2 running
-▸ scout   active · grep  42s
-▸ worker  waiting        2m10s
+⠋ scout active · grep 42s
+▸ worker waiting 2m10s
 ```
+
+Буллет несёт фазу: ⠋-спиннер — active, красный спиннер — идёт отмена,
+⚠ — stalled, иначе ▸.
 
 Если sequence не меняется дольше **5 минут** у auto-exit агента — steer-уведомление
 «выглядит застывшим» (с последним замеченным занятием и советами
@@ -171,6 +174,7 @@ heartbeat, поэтому здоровая долгая генерация мо�
 | Файл | Роль |
 |---|---|
 | `index.ts` | Оркестратор: инструменты, `/subagent`, вотчер, виджет, реестр |
+| `render.ts` | TUI-рендеры панельных инструментов и карточки `subagent_result` (чистые функции, покрыты `test/render.test.ts`) |
 | `subagent-done.ts` | Child-расширение: identity, активность, auto-exit, `.exit`, cancel-поллинг |
 | `mux.ts` | Диспетчер поверхностей: выбор herdr/wezterm, общее API для index.ts |
 | `wezterm.ts` | Бэкенд WezTerm: все вызовы `wezterm cli` изолированы здесь |
