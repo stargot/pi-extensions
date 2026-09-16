@@ -47,6 +47,38 @@ test("parseDdgResults: empty page yields no results", () => {
 	assert.deepEqual(parseDdgResults("<html><body>nothing here</body></html>"), []);
 });
 
+// Real snapshot of html.duckduckgo.com/html/?q=pi+coding+agent (2026-09-16).
+// Regression net for the linkedom -> html.ts switch: the old parser's output
+// on this exact page is pinned in the assertions below.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const REAL_PAGE = readFileSync(
+	fileURLToPath(new URL("./fixtures/ddg-sample.html", import.meta.url)),
+	"utf8",
+);
+
+test("parseDdgResults: real DDG snapshot — 10 results, entities and <b> handled", () => {
+	const results = parseDdgResults(REAL_PAGE);
+	assert.equal(results.length, 10);
+
+	assert.deepEqual(
+		{ ...results[0], snippet: undefined },
+		{ title: "Pi Documentation · Documentation · Pi", url: "https://pi.dev/docs/latest", snippet: undefined },
+	);
+	assert.match(results[0]!.snippet, /^A terminal-based coding agent/);
+
+	// entity decoding on a real entry (title contains "&amp;" in the raw HTML)
+	const piagent = results.find((r) => r.url === "https://piagent.fyi/");
+	assert.ok(piagent);
+	assert.equal(piagent.title, "Piagent — The resource map & news hub for the Pi coding agent");
+
+	for (const r of results) {
+		assert.match(r.url, /^https?:\/\//);
+		assert.ok(r.title.length > 0);
+	}
+});
+
 test("looksLikeBotChallenge: detects challenge pages, not normal pages", () => {
 	assert.equal(looksLikeBotChallenge("If this anomaly persists, solve the captcha"), true);
 	assert.equal(looksLikeBotChallenge(FIXTURE), false);
