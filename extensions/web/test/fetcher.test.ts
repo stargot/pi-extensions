@@ -339,6 +339,47 @@ test("PDF content-type routes to the 20MB cap: a 7MB body passes the 5MB mark", 
 	assert.equal(jina.calls.length, 0);
 });
 
+test(".pdf URL with octet-stream header → not rejected as unsupported, PDF branch chosen", async () => {
+	// Common CDN/attachment case: the pathname says .pdf, the header says
+	// application/octet-stream. The pdf flag (isPdfUrl) must win over the
+	// header-level content-type rejection. The body is bogus bytes, so
+	// extractPdf may fail on them — that surfaces as "empty", which still
+	// proves the extractPdf branch was chosen ("unsupported" would mean the
+	// header check fired first); real extraction is covered by the manual
+	// smoke test, plan task 12.
+	const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0xde, 0xad]);
+	const { impl } = scriptedFetch([
+		okResponse(
+			new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(pdfBytes);
+					controller.close();
+				},
+			}),
+			"application/octet-stream",
+			HTML_URL,
+		),
+	]);
+	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const outcome = await fetchAndExtract(
+		"https://example.com/report.pdf",
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.notEqual(
+		outcome.errorKind,
+		"unsupported",
+		`expected the PDF branch, got "${outcome.errorKind}": ${outcome.errorMessage}`,
+	);
+	// Deterministic branch proof: extractPdf is entered and fails on the
+	// bogus bytes (pdf.js error wrapped as "empty" by the fetcher) — the
+	// octet-stream header never fired the unsupported check.
+	assert.equal(outcome.errorKind, "empty");
+	assert.match(outcome.errorMessage!, /Invalid PDF structure/);
+	assert.equal(jina.calls.length, 0);
+});
+
 test("unsupported content-type (image) → error 'unsupported', no Jina", async () => {
 	const { impl, calls } = scriptedFetch([
 		okResponse("fake-bytes", "image/png", HTML_URL),

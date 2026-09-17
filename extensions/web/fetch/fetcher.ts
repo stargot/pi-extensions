@@ -187,8 +187,11 @@ export async function fetchAndExtract(
 	const pdf = isPdfUrl(url, contentType || undefined);
 
 	// Header-level rejection before a single body byte is read: a 10MB zip
-	// reports "unsupported", not "too-large", and is never streamed.
-	const unsupported = unsupportedContentType(contentType);
+	// reports "unsupported", not "too-large", and is never streamed. The
+	// pdf flag (isPdfUrl) wins over the header: a .pdf pathname served as
+	// application/octet-stream (typical CDN/attachment) routes to the PDF
+	// extractor instead of being rejected here.
+	const unsupported = pdf ? null : unsupportedContentType(contentType);
 	if (unsupported) {
 		// The body is deliberately ignored — release the socket now.
 		void response.body?.cancel().catch(() => {});
@@ -370,7 +373,7 @@ async function fetchFollowRedirects(
 		if (location) {
 			if (hop >= MAX_REDIRECT_HOPS - 1) {
 				throw redirectError(
-					`Too many redirects (limit ${MAX_REDIRECT_HOPS - 1})`,
+					`Too many redirects (hop budget ${MAX_REDIRECT_HOPS} exhausted)`,
 				);
 			}
 			let nextUrl: URL;
