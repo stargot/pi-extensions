@@ -10,7 +10,7 @@
 | [session-recall](extensions/session-recall/) | `/recall` | Полнотекстовый поиск по всем сессиям всех проектов с переходом в найденную сессию |
 | [session-trace](extensions/session-trace/) | `/trace`, `/trace-web` | Живой flow-граф сессии: карточки ходов, чипы инструментов, маркеры на таймлайне; плюс CLI и веб-вьюер |
 | [subagents](extensions/subagents/) | `subagent`, `task_batch`, `/subagent`, `/workers` | Субагенты: интерактивные в терминальных панелях — WezTerm или herdr (спавн/steer+interrupt/resume/cancel, живой статус) + headless-батчи single/parallel/chain (Windows + pwsh); глобальный индекс живых воркеров |
-| [web](extensions/web/) | `web_search` | Веб-поиск DuckDuckGo без API-ключей: структурированные запросы (точные фразы/исключения/сайт), таймаут и ретрай. На основе расширения Eero Alvar (amosblomqvist) |
+| [web](extensions/web/) | `web_search`, `web_fetch` | Веб-поиск DuckDuckGo без API-ключей: структурированные запросы (точные фразы/исключения/сайт), таймаут и ретрай; плюс fetch страницы → markdown (Readability/Turndown, PDF, текст, Jina-фолбэк для JS-rendered, SSRF-гард). На основе расширения Eero Alvar (amosblomqvist) |
 
 ## Запуск
 
