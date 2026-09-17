@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Added
 
+- **prompt-snippets**: новое расширение — сменные одноцелевые правила промпта:
+  меню по `alt+s` / `/snippets` (тоггл, предпросмотр, скролл), активные
+  сниппеты вклеиваются до/после сообщения на один ход, виджет над редактором
+  показывает активные, тогглы сбрасываются после каждой отправки. Перенесено
+  без изменений логики из
+  [pi-config](https://github.com/amosblomqvist/pi-config/tree/main/extensions/prompt-snippets)
+  Eero Alvar (amosblomqvist), с шестью готовыми сниппетами (kickoff,
+  orchestrator mode, ask questions, verify don't assume, delegate
+  exploration, diagnose don't fix).
+
 - **session-trace**: автоплей при открытии сессии в веб-вьюере — страница сама
   запускает реплей в гипер-ускорении (быстрее максимума селекта 128×, весь
   реплей укладывается в ~5 с, кап 20000×) с лентой, приклеенной к хвосту, и

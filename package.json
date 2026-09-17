@@ -10,7 +10,7 @@
 	},
 	"scripts": {
 		"test": "node --test extensions/**/test/*.test.ts",
-		"smoke": "pi --list-models -e ./extensions/context-inspector/index.ts -e ./extensions/session-ledger/index.ts -e ./extensions/session-recall/index.ts -e ./extensions/session-trace/index.ts -e ./extensions/subagents/index.ts",
+		"smoke": "pi --list-models -e ./extensions/context-inspector/index.ts -e ./extensions/prompt-snippets/index.ts -e ./extensions/session-ledger/index.ts -e ./extensions/session-recall/index.ts -e ./extensions/session-trace/index.ts -e ./extensions/subagents/index.ts",
 		"stats": "node extensions/session-ledger/cli.ts",
 		"recall": "node extensions/session-recall/cli.ts",
 		"trace": "node extensions/session-trace/cli.ts",
@@ -24,6 +24,7 @@
 	"pi": {
 		"extensions": [
 			"./extensions/context-inspector/index.ts",
+			"./extensions/prompt-snippets/index.ts",
 			"./extensions/session-ledger/index.ts",
 			"./extensions/session-recall/index.ts",
 			"./extensions/session-trace/index.ts",

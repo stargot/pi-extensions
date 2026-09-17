@@ -5,6 +5,7 @@
 | Расширение | Команда | Что делает |
 |---|---|---|
 | [context-inspector](extensions/context-inspector/) | `/context` | Что реально видит модель: занятость окна, доля кэша, состав system prompt, вес схем инструментов, самые тяжёлые сообщения |
+| [prompt-snippets](extensions/prompt-snippets/) | `alt+s`, `/snippets` | Сменные правила промпта: чекбоксы-сниппеты, вклеиваются до/после сообщения на один ход. На основе расширения Eero Alvar (amosblomqvist) |
 | [session-ledger](extensions/session-ledger/) | `/stats` | Расходы и активность по всем сессиям на машине: стоимость, токены, кэш, вызовы и ошибки инструментов, компакции |
 | [session-recall](extensions/session-recall/) | `/recall` | Полнотекстовый поиск по всем сессиям всех проектов с переходом в найденную сессию |
 | [session-trace](extensions/session-trace/) | `/trace`, `/trace-web` | Живой flow-граф сессии: карточки ходов, чипы инструментов, маркеры на таймлайне; плюс CLI и веб-вьюер |
