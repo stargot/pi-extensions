@@ -1,11 +1,12 @@
 /**
  * web_fetch orchestration: SSRF-guarded fetch, content-type routing, capped
  * streaming body reads, one retry on transient failures, and extraction with
- * the Jina fallback.
+ * the local browser-bridge render fallback.
  *
  * Port of the third-party web-fetch extension's extractViaHttp +
  * fetchAndExtract with the web-merge decisions applied:
- * - the SSRF guard runs before any network activity, Jina included (P0a);
+ * - the SSRF guard runs before any network activity, the render fallback
+ *   included (P0a);
  * - redirects are followed manually (redirect: "manual"): the target of
  *   every hop is re-checked by the SSRF guard before it is fetched, up to
  *   MAX_REDIRECT_HOPS fetches per attempt — a blocked/unparseable hop
@@ -17,14 +18,15 @@
  *   the bytes actually streamed — content-length is never trusted (P0b);
  * - one retry with ~1.5 s backoff for 429/5xx/network failures; other 4xx
  *   and aborts fail immediately, and transport-level failures never reach
- *   Jina (decision 5);
- * - Jina is consulted only when direct extraction comes up empty (null
- *   article or a JS-rendered shell); a short but real article succeeds with
- *   a warning instead of being thrown away (decision 5);
+ *   the render fallback (decision 5);
+ * - the browser-bridge renderer is consulted only when direct extraction
+ *   comes up empty (null article or a JS-rendered shell); a short but real
+ *   article succeeds with a warning instead of being thrown away
+ *   (decision 5);
  * - the RSC extractor is not ported (decision 3).
  *
  * Pure orchestration, no pi-host imports — unit-testable standalone per the
- * repo rule. Both network touchpoints (fetchImpl, jinaFn) are injectable
+ * repo rule. Both network touchpoints (fetchImpl, renderFn) are injectable
  * for tests that run without network.
  */
 import {
@@ -34,10 +36,6 @@ import {
 	withRetry,
 	type BodyResult,
 } from "../http.ts";
-import {
-	extractWithJinaReader,
-	type JinaResult,
-} from "./jina.ts";
 import {
 	extractArticle,
 	extractHeadingTitle,
@@ -75,7 +73,7 @@ const FETCH_HEADERS: Record<string, string> = {
 	"Upgrade-Insecure-Requests": "1",
 };
 
-/** Hint appended when even the Jina fallback couldn't get the content. */
+/** Hint appended when even the browser-bridge fallback couldn't get content. */
 const FALLBACK_HINT =
 	"The page may be JavaScript-rendered. Try:\n" +
 	"  • A different URL for the same content\n" +
@@ -121,15 +119,31 @@ export interface FetchOutcome {
 	errorMessage?: string;
 }
 
+/**
+ * Successful browser-bridge render: the page's heading title (or null), the
+ * extracted markdown, and the final URL after any in-browser redirects. The
+ * bridge maps its wire types into this shape.
+ */
+export interface RenderResult {
+	title: string | null;
+	markdown: string;
+	finalUrl: string;
+}
+
 /** Network touchpoints, injectable for tests (defaults are the real ones). */
 export interface FetcherDeps {
 	/** Fetch used for the page itself (default: globalThis.fetch). */
 	fetchImpl?: typeof fetch;
-	/** Jina Reader fallback (default: extractWithJinaReader). */
-	jinaFn?: (
+	/**
+	 * Local browser-bridge render fallback, wired by the extension entry
+	 * point. No default: with no bridge running the fetch degrades to an
+	 * honest "empty" outcome. Never throws — every failure mode (no client,
+	 * timeout, unreadable page) resolves to null.
+	 */
+	renderFn?: (
 		url: string,
 		signal: AbortSignal | undefined,
-	) => Promise<JinaResult | null>;
+	) => Promise<RenderResult | null>;
 	/** Backoff between retry attempts; default 1.5 s (short in tests). */
 	retryBackoffMs?: number;
 }
@@ -145,13 +159,9 @@ export async function fetchAndExtract(
 	deps: FetcherDeps = {},
 ): Promise<FetchOutcome> {
 	const fetchImpl = deps.fetchImpl ?? fetch;
-	const jinaFn =
-		deps.jinaFn ??
-		((jinaUrl: string, jinaSignal: AbortSignal | undefined) =>
-			extractWithJinaReader(jinaUrl, jinaSignal));
 	const backoffMs = deps.retryBackoffMs ?? RETRY_BACKOFF_MS;
 
-	// Guard before any network activity — including the Jina fallback.
+	// Guard before any network activity — including the render fallback.
 	let guarded: URL;
 	try {
 		guarded = assertPublicHttpUrl(url);
@@ -175,7 +185,7 @@ export async function fetchAndExtract(
 		// Exhausted retries (429/5xx/network), a non-transient 4xx, an
 		// abort, or a redirect-phase failure (blocked/unparseable hop,
 		// hop budget exhausted). Transport-level failures never reach
-		// Jina (decision 5).
+		// the render fallback (decision 5).
 		return errorOutcome(
 			url,
 			isRedirectError(error) ? "redirect" : "http",
@@ -234,7 +244,7 @@ export async function fetchAndExtract(
 			pdf,
 			buffer: body.buffer,
 			signal,
-			jinaFn,
+			renderFn: deps.renderFn,
 		});
 	} catch (error) {
 		// Extraction-level failure (corrupt/encrypted PDF, unexpected parse
@@ -251,12 +261,12 @@ async function routeAndExtract(input: {
 	pdf: boolean;
 	buffer: Uint8Array;
 	signal: AbortSignal | undefined;
-	jinaFn: (
+	renderFn?: (
 		url: string,
 		signal: AbortSignal | undefined,
-	) => Promise<JinaResult | null>;
+	) => Promise<RenderResult | null>;
 }): Promise<FetchOutcome> {
-	const { url, finalUrl, contentType, pdf, buffer, signal, jinaFn } = input;
+	const { url, finalUrl, contentType, pdf, buffer, signal, renderFn } = input;
 
 	if (pdf) {
 		const { title, markdown } = await extractPdf(buffer, finalUrl);
@@ -287,17 +297,20 @@ async function routeAndExtract(input: {
 		(article.markdown.length < MIN_USEFUL_CONTENT && jsRendered)
 	) {
 		// Empty extraction or a JS-rendered shell — the only paths that
-		// consult Jina (decision 5).
-		const jina = await jinaFn(finalUrl, signal);
-		if (jina) {
+		// consult the browser-bridge renderer (decision 5).
+		const render = (await renderFn?.(finalUrl, signal)) ?? null;
+		if (render) {
+			// The render may land on its own final URL (an in-browser
+			// redirect) — that wins over the fetch's last hop.
+			const renderedUrl = render.finalUrl || finalUrl;
 			return {
 				status: "ok",
 				url,
-				finalUrl,
-				// Jina's heading is often missing — fall back to the URL
-				// basename (port of the source's fallback).
-				title: jina.title ?? titleFromUrl(finalUrl),
-				content: jina.markdown,
+				finalUrl: renderedUrl,
+				// The render's heading is often missing — fall back to the
+				// URL basename (port of the source's fallback).
+				title: render.title ?? titleFromUrl(renderedUrl),
+				content: render.markdown,
 			};
 		}
 		return errorOutcome(
@@ -429,8 +442,8 @@ function isTransientError(error: unknown): boolean {
 }
 
 /**
- * Binary content the tool can't render — always fatal, never a Jina case
- * (port of the source's content-type check).
+ * Binary content the tool can't render — always fatal, never routed to
+ * the render fallback (port of the source's content-type check).
  */
 function unsupportedContentType(contentType: string): string | null {
 	if (contentType.includes("application/octet-stream")) {
@@ -443,12 +456,15 @@ function unsupportedContentType(contentType: string): string | null {
 	return null;
 }
 
-/** Honest message for the LLM when extraction and Jina both came up empty. */
+/**
+ * Honest message for the LLM when extraction and the render fallback both
+ * came up empty.
+ */
 function emptyExtractionMessage(jsRendered: boolean): string {
 	const reason = jsRendered
 		? "Page appears to be JavaScript-rendered (content loads dynamically)"
 		: "Could not extract readable content from HTML structure";
-	return `${reason}; the Jina Reader fallback also came up empty.\n\n${FALLBACK_HINT}`;
+	return `${reason}; the browser-bridge fallback was unavailable or came up empty.\n\n${FALLBACK_HINT}`;
 }
 
 /**

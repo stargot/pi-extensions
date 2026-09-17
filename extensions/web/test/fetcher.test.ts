@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fetchAndExtract, type FetchOutcome } from "../fetch/fetcher.ts";
-import type { JinaResult } from "../fetch/jina.ts";
+import {
+	fetchAndExtract,
+	type FetchOutcome,
+	type RenderResult,
+} from "../fetch/fetcher.ts";
 
 // ── Fixtures ─────────────────────────────────────────────────────────
 
@@ -69,9 +72,9 @@ function scriptedFetch(
 	return { impl, calls };
 }
 
-/** Jina double that records calls and always answers with `result`. */
-function fakeJina(result: JinaResult | null): {
-	fn: (url: string, signal: AbortSignal | undefined) => Promise<JinaResult | null>;
+/** Renderer double that records calls and always answers with `result`. */
+function fakeRenderer(result: RenderResult | null): {
+	fn: (url: string, signal: AbortSignal | undefined) => Promise<RenderResult | null>;
 	calls: Array<{ url: string; signal: AbortSignal | undefined }>;
 } {
 	const calls: Array<{ url: string; signal: AbortSignal | undefined }> = [];
@@ -103,11 +106,26 @@ function redirectResponse(location: string, status = 302): Response {
 
 const HTML_URL = "https://docs.example.com/post/1";
 
+/**
+ * Marker result for tests where the render fallback must NOT be consulted:
+ * a distinctive finalUrl/title so that any accidental use of the result
+ * would flip an assertion instead of passing silently.
+ */
+const BRIDGE_RESULT: RenderResult = {
+	title: "Bridge Title",
+	markdown: "# Bridge Title\n\nBridge-rendered content.",
+	finalUrl: "https://bridge.example/rendered",
+};
+
 function baseDeps(overrides: {
 	impl: typeof fetch;
-	jina: ReturnType<typeof fakeJina>;
+	renderer: ReturnType<typeof fakeRenderer>;
 }) {
-	return { fetchImpl: overrides.impl, jinaFn: overrides.jina.fn, retryBackoffMs: 1 };
+	return {
+		fetchImpl: overrides.impl,
+		renderFn: overrides.renderer.fn,
+		retryBackoffMs: 1,
+	};
 }
 
 function errorKindOf(outcome: FetchOutcome): string {
@@ -125,11 +143,11 @@ test("200 HTML article → ok markdown with links resolved against response.url"
 			HTML_URL,
 		),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");
@@ -141,7 +159,7 @@ test("200 HTML article → ok markdown with links resolved against response.url"
 		outcome.content.includes("[related page](https://docs.example.com/related)"),
 		`link not resolved against final URL: ${outcome.content.slice(0, 200)}`,
 	);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 
 	// Full browser header set from the ported source.
 	assert.equal(calls.length, 1);
@@ -153,21 +171,21 @@ test("200 HTML article → ok markdown with links resolved against response.url"
 	assert.ok(calls[0].init.signal, "fetch receives a combined signal");
 });
 
-test("429 then 429 → error 'http' after the single retry, jinaFn 0 calls", async () => {
+test("429 then 429 → error 'http' after the single retry, renderFn 0 calls", async () => {
 	const rateLimited = () =>
 		new Response("slow down", { status: 429, statusText: "Too Many Requests" });
 	const { impl, calls } = scriptedFetch([rateLimited(), rateLimited()]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		"https://example.com/rate-limited",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "http");
 	assert.match(outcome.errorMessage!, /HTTP 429/);
 	assert.equal(calls.length, 2, "exactly one retry on 429");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 test("429 then 200 → ok after one retry", async () => {
@@ -175,79 +193,148 @@ test("429 then 200 → ok after one retry", async () => {
 		new Response("slow down", { status: 429 }),
 		okResponse(articleHtml(), "text/html; charset=utf-8", HTML_URL),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");
 	assert.equal(outcome.title, "My Article");
 	assert.equal(calls.length, 2);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
-test("404 → error without retry, jinaFn 0 calls", async () => {
+test("404 → error without retry, renderFn 0 calls", async () => {
 	const { impl, calls } = scriptedFetch([
 		new Response("nope", { status: 404, statusText: "Not Found" }),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		"https://example.com/missing",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "http");
 	assert.match(outcome.errorMessage!, /HTTP 404/);
 	assert.equal(calls.length, 1);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
-test("article null + JS-rendered → jinaFn called once with finalUrl and caller signal", async () => {
+test("article null + JS-rendered → renderFn called once with finalUrl and caller signal", async () => {
 	const { impl } = scriptedFetch([
 		okResponse(SPA_HTML, "text/html; charset=utf-8", HTML_URL),
 	]);
-	const jina = fakeJina({
-		title: "Jina Title",
-		markdown: "# Jina Title\n\nRendered content.",
+	const renderer = fakeRenderer({
+		title: "Rendered Title",
+		markdown: "# Rendered Title\n\nRendered content.",
+		finalUrl: HTML_URL,
 	});
 	const controller = new AbortController();
 	const outcome = await fetchAndExtract(HTML_URL, controller.signal, {
 		fetchImpl: impl,
-		jinaFn: jina.fn,
+		renderFn: renderer.fn,
 		retryBackoffMs: 1,
 	});
 
 	assert.equal(outcome.status, "ok");
-	assert.equal(outcome.title, "Jina Title");
-	assert.equal(outcome.content, "# Jina Title\n\nRendered content.");
-	assert.equal(jina.calls.length, 1);
-	assert.equal(jina.calls[0].url, HTML_URL);
-	// The caller's own signal is handed to Jina (Jina combines its timeout).
-	assert.equal(jina.calls[0].signal, controller.signal);
+	assert.equal(outcome.title, "Rendered Title");
+	assert.equal(outcome.content, "# Rendered Title\n\nRendered content.");
+	assert.equal(outcome.finalUrl, HTML_URL);
+	assert.equal(renderer.calls.length, 1);
+	assert.equal(renderer.calls[0].url, HTML_URL);
+	// The caller's own signal is handed to the renderer (the bridge combines
+	// it with its own timeouts).
+	assert.equal(renderer.calls[0].signal, controller.signal);
 });
 
-test("article null + JS-rendered + Jina null → honest error 'empty'", async () => {
+test("article null + JS-rendered + renderFn null → honest error 'empty'", async () => {
 	const { impl } = scriptedFetch([
 		okResponse(SPA_HTML, "text/html; charset=utf-8", HTML_URL),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "empty");
 	assert.match(outcome.errorMessage!, /JavaScript-rendered/);
+	assert.match(
+		outcome.errorMessage!,
+		/browser-bridge fallback was unavailable or came up empty/,
+	);
 	assert.match(outcome.errorMessage!, /web_search/);
 	assert.equal(outcome.content, "");
-	assert.equal(jina.calls.length, 1);
+	assert.equal(renderer.calls.length, 1);
 });
 
-test("oversized HTML body → error 'too-large', jinaFn 0 calls", async () => {
+// ── Render fallback: result mapping ─────────────────────────────────
+
+test("render lands on its own finalUrl (in-browser redirect) → outcome carries the render's finalUrl, title falls back to it", async () => {
+	const { impl } = scriptedFetch([
+		okResponse(SPA_HTML, "text/html; charset=utf-8", HTML_URL),
+	]);
+	const renderedUrl = "https://docs.example.com/rendered/page-name";
+	const renderer = fakeRenderer({
+		title: null,
+		markdown: "# Rendered\n\nBody.",
+		finalUrl: renderedUrl,
+	});
+	const outcome = await fetchAndExtract(
+		HTML_URL,
+		undefined,
+		baseDeps({ impl, renderer }),
+	);
+
+	assert.equal(outcome.status, "ok");
+	assert.equal(outcome.finalUrl, renderedUrl);
+	// Title fallback reads the basename off the render's final URL.
+	assert.equal(outcome.title, "page-name");
+	assert.equal(outcome.content, "# Rendered\n\nBody.");
+});
+
+// ── SSRF regression: the render fallback sits behind the guard ──────
+
+test("SSRF regression: renderFn 0 calls when the guard blocks the URL or a redirect hop", async () => {
+	const renderer = fakeRenderer(BRIDGE_RESULT);
+
+	// The requested URL itself is private: blocked before any network
+	// activity, the render fallback included.
+	const blocked = await fetchAndExtract("http://127.0.0.1/secret", undefined, {
+		fetchImpl: scriptedFetch([]).impl,
+		renderFn: renderer.fn,
+		retryBackoffMs: 1,
+	});
+	assert.equal(errorKindOf(blocked), "ssrf");
+	assert.match(blocked.errorMessage!, /loopback/);
+
+	// A public URL redirecting into the private network: the blocked hop
+	// fails the fetch before extraction — the render fallback is never
+	// consulted either.
+	const { impl, calls } = scriptedFetch([
+		redirectResponse("http://169.254.169.254/latest/meta-data/"),
+	]);
+	const redirected = await fetchAndExtract(
+		"https://example.com/start",
+		undefined,
+		{ fetchImpl: impl, renderFn: renderer.fn, retryBackoffMs: 1 },
+	);
+	assert.equal(errorKindOf(redirected), "redirect");
+	assert.match(redirected.errorMessage!, /link-local/);
+	assert.equal(calls.length, 1, "only the original URL is fetched");
+
+	assert.equal(
+		renderer.calls.length,
+		0,
+		"the render fallback is never consulted for guard-blocked fetches",
+	);
+});
+
+test("oversized HTML body → error 'too-large', renderFn 0 calls", async () => {
 	// Endless pull-based stream of 1MB chunks — like a real body that never
 	// ends; the cap must cut it on streamed bytes, not content-length.
 	const mb = new Uint8Array(1024 * 1024);
@@ -259,49 +346,49 @@ test("oversized HTML body → error 'too-large', jinaFn 0 calls", async () => {
 	const { impl } = scriptedFetch([
 		okResponse(body, "text/html; charset=utf-8", HTML_URL),
 	]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "too-large");
 	assert.match(outcome.errorMessage!, /too large/);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
-test("SSRF guard: http://127.0.0.1/ blocked before any fetch or Jina call", async () => {
+test("SSRF guard: http://127.0.0.1/ blocked before any fetch or renderFn call", async () => {
 	const { impl, calls } = scriptedFetch([]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		"http://127.0.0.1/secret",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "ssrf");
 	assert.match(outcome.errorMessage!, /loopback/);
 	assert.equal(calls.length, 0);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 test("short non-JS article → status ok with a warning, content kept", async () => {
 	const { impl } = scriptedFetch([
 		okResponse(THIN_HTML, "text/html; charset=utf-8", HTML_URL),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");
 	assert.equal(outcome.warning, "Extracted content appears incomplete");
 	assert.ok(outcome.content.length > 0);
 	assert.equal(outcome.title, "Thin");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 test("PDF content-type routes to the 20MB cap: a 7MB body passes the 5MB mark", async () => {
@@ -327,16 +414,16 @@ test("PDF content-type routes to the 20MB cap: a 7MB body passes the 5MB mark", 
 	const { impl } = scriptedFetch([
 		okResponse(body, "application/pdf", "https://example.com/report"),
 	]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		"https://example.com/report",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "http");
 	assert.match(outcome.errorMessage!, /body stream failed mid-read/);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 test(".pdf URL with octet-stream header → not rejected as unsupported, PDF branch chosen", async () => {
@@ -360,11 +447,11 @@ test(".pdf URL with octet-stream header → not rejected as unsupported, PDF bra
 			HTML_URL,
 		),
 	]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		"https://example.com/report.pdf",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.notEqual(
@@ -377,24 +464,24 @@ test(".pdf URL with octet-stream header → not rejected as unsupported, PDF bra
 	// octet-stream header never fired the unsupported check.
 	assert.equal(outcome.errorKind, "empty");
 	assert.match(outcome.errorMessage!, /Invalid PDF structure/);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
-test("unsupported content-type (image) → error 'unsupported', no Jina", async () => {
+test("unsupported content-type (image) → error 'unsupported', renderFn 0 calls", async () => {
 	const { impl, calls } = scriptedFetch([
 		okResponse("fake-bytes", "image/png", HTML_URL),
 	]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "unsupported");
 	assert.match(outcome.errorMessage!, /image\/png/);
 	assert.equal(calls.length, 1);
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 test("plain text → content passed through as-is, title from first heading, finalUrl falls back to url", async () => {
@@ -403,18 +490,18 @@ test("plain text → content passed through as-is, title from first heading, fin
 	const { impl } = scriptedFetch([
 		okResponse(body, "text/plain; charset=utf-8"),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		"https://example.com/notes.txt",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");
 	assert.equal(outcome.title, "Release Notes");
 	assert.equal(outcome.content, body);
 	assert.equal(outcome.finalUrl, "https://example.com/notes.txt");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 // ── Manual redirects (SSRF guard re-checked per hop) ─────────────────
@@ -423,18 +510,18 @@ test("302 to a private address → error 'redirect' at the first hop, the blocke
 	const { impl, calls } = scriptedFetch([
 		redirectResponse("http://169.254.169.254/latest/meta-data/"),
 	]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		"https://example.com/start",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "redirect");
 	assert.match(outcome.errorMessage!, /link-local/);
 	assert.equal(calls.length, 1, "only the original URL is fetched");
 	assert.equal(calls[0].url, "https://example.com/start");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 test("302 to a public URL → followed manually, finalUrl is the redirect target", async () => {
@@ -443,11 +530,11 @@ test("302 to a public URL → followed manually, finalUrl is the redirect target
 		redirectResponse("/moved"),
 		okResponse(articleHtml(), "text/html; charset=utf-8", movedUrl),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		"https://docs.example.com/old",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");
@@ -459,7 +546,7 @@ test("302 to a public URL → followed manually, finalUrl is the redirect target
 	// ...and every hop carries redirect: "manual".
 	assert.equal(calls[0].init.redirect, "manual");
 	assert.equal(calls[1].init.redirect, "manual");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 test("five redirects in a row → error 'redirect' (hop budget exhausted), no further fetch", async () => {
@@ -467,11 +554,11 @@ test("five redirects in a row → error 'redirect' (hop budget exhausted), no fu
 		redirectResponse(`https://example.com/step-${i + 2}`),
 	);
 	const { impl, calls } = scriptedFetch(responses);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		"https://example.com/step-1",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "redirect");
@@ -486,34 +573,34 @@ test("network error then 200 → retried exactly once, then ok", async () => {
 		new Error("getaddrinfo EAI_AGAIN example.com"),
 		okResponse(articleHtml(), "text/html; charset=utf-8", HTML_URL),
 	]);
-	const jina = fakeJina(null);
+	const renderer = fakeRenderer(null);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");
 	assert.equal(outcome.title, "My Article");
 	assert.equal(calls.length, 2, "exactly one retry after a network error");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
-test("abort during fetch → no retry, error surfaced (never a Jina case)", async () => {
+test("abort during fetch → no retry, error surfaced (never a renderFn case)", async () => {
 	const abortError = new Error("This operation was aborted");
 	abortError.name = "AbortError";
 	const { impl, calls } = scriptedFetch([abortError]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "http");
 	assert.match(outcome.errorMessage!, /abort/i);
 	assert.equal(calls.length, 1, "aborts are never retried");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 // ── Header-level content-type check (before the body is read) ───────
@@ -531,11 +618,11 @@ test("unsupported content-type is decided from headers before the body is stream
 	const { impl } = scriptedFetch([
 		okResponse(body, "image/png", HTML_URL),
 	]);
-	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const renderer = fakeRenderer(BRIDGE_RESULT);
 	const outcome = await fetchAndExtract(
 		HTML_URL,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(errorKindOf(outcome), "unsupported");
@@ -544,21 +631,25 @@ test("unsupported content-type is decided from headers before the body is stream
 	// which fires on the first microtask tick regardless of the fetcher. If
 	// the body had actually been read, the 5MB cap would force pulls ≥ 6.
 	assert.equal(pulls, 1, "the body must never be consumed past its start queue");
-	assert.equal(jina.calls.length, 0);
+	assert.equal(renderer.calls.length, 0);
 });
 
 // ── Title fallback to the URL basename ──────────────────────────────
 
-test("JS-rendered page + Jina title null → title falls back to the URL basename", async () => {
+test("JS-rendered page + render title null → title falls back to the URL basename", async () => {
 	const fileUrl = "https://example.com/docs/setup-guide";
 	const { impl } = scriptedFetch([
 		okResponse(SPA_HTML, "text/html; charset=utf-8", fileUrl),
 	]);
-	const jina = fakeJina({ title: null, markdown: "# Rendered\n\nBody." });
+	const renderer = fakeRenderer({
+		title: null,
+		markdown: "# Rendered\n\nBody.",
+		finalUrl: fileUrl,
+	});
 	const outcome = await fetchAndExtract(
 		fileUrl,
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");
@@ -569,11 +660,15 @@ test("URL with no basename (bare origin) → title stays null", async () => {
 	const { impl } = scriptedFetch([
 		okResponse(SPA_HTML, "text/html; charset=utf-8", "https://example.com/"),
 	]);
-	const jina = fakeJina({ title: null, markdown: "# Rendered\n\nBody." });
+	const renderer = fakeRenderer({
+		title: null,
+		markdown: "# Rendered\n\nBody.",
+		finalUrl: "https://example.com/",
+	});
 	const outcome = await fetchAndExtract(
 		"https://example.com/",
 		undefined,
-		baseDeps({ impl, jina }),
+		baseDeps({ impl, renderer }),
 	);
 
 	assert.equal(outcome.status, "ok");

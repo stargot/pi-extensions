@@ -162,7 +162,7 @@ function cleanAttribute(value: string | null): string {
 /**
  * Heuristic for "this page needs JavaScript to render": a <body> with
  * almost no visible text (< 500 chars) alongside many <script> tags.
- * Drives the fetcher's Jina fallback (decision 5). Pages without a <body>
+ * Drives the fetcher's render fallback (decision 5). Pages without a <body>
  * are not considered JS-rendered (matches the ported source).
  */
 export function isLikelyJSRendered(html: string): boolean {
@@ -180,7 +180,7 @@ export function isLikelyJSRendered(html: string): boolean {
 
 /**
  * First markdown heading (`#`/`##`) as a fallback title — plain text
- * responses and Jina markdown start with `# Title` before `Source:`/`---`.
+ * responses and bridge markdown start with `# Title` before `Source:`/`---`.
  * Bold markers are stripped; null when no matching heading exists.
  */
 export function extractHeadingTitle(markdown: string): string | null {

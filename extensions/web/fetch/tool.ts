@@ -18,7 +18,7 @@ export function registerWebFetch(pi: ExtensionAPI) {
 		name: "web_fetch",
 		label: "Web Fetch",
 		description:
-			"Fetch a web page and extract readable content as clean markdown. Uses Readability + Turndown for high-quality HTML→markdown conversion. Handles PDFs, plain text, and falls back to Jina Reader for JS-rendered pages.",
+			"Fetch a web page and extract readable content as clean markdown. Uses Readability + Turndown for high-quality HTML→markdown conversion. Handles PDFs, plain text, and falls back to the local browser bridge for JS-rendered pages.",
 		promptSnippet:
 			"Fetch a URL and extract readable content as markdown. Supports HTML pages, PDFs, and plain text.",
 
