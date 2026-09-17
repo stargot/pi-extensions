@@ -245,6 +245,11 @@
 		var servedMode = false; // страница открыта через web/serve.ts — хвост тянем по fetch
 		var errorsOnly = false;
 		var stick = true; // держать ленту приклеенной к хвосту
+		var replaySpeed = 0; // скорость автоплея: 0 — скорость селекта, N — hyper (×)
+		var autoplay = false;
+		var AUTOPLAY_TARGET_MS = 5000;  // в какой срок уложить реплей
+		var AUTOPLAY_MAX_SPEED = 20000; // кап hyper-скорости автоплея (×)
+		var LIVE_MS = 5 * 60 * 1000;    // записи свежее этого — сессия считается живой
 
 		var el = {
 			file: $("file"), stats: $("stats"), tl: $("timeline"), viz: $("viz"),
@@ -324,7 +329,7 @@
 			fileHandle = f;
 			servedMode = false;
 			var r = new FileReader();
-			r.onload = function () { load(parseLines(String(r.result))); };
+			r.onload = function () { load(parseLines(String(r.result))); startAutoplay(); };
 			r.readAsText(f);
 		}
 		// --- события ---
@@ -332,6 +337,7 @@
 		el.tl.addEventListener("scroll", function (ev) {
 			if (!ev.isTrusted) return; // программная установка scrollTop — не жест пользователя
 			stick = el.tl.scrollTop + el.tl.clientHeight >= el.tl.scrollHeight - 40;
+			if (!stick) cancelAutoplay(); // ушли скроллом — автоплей отменяется
 		});
 		el.q.oninput = function () { draw(); };
 		el.errs.onclick = function () {
@@ -402,7 +408,29 @@
 		};
 		setInterval(fetchWorkers, 5000);
 		fetchWorkers();
+		// --- автоплей при открытии сессии ---
+		function cancelAutoplay() {
+			autoplay = false;
+			replaySpeed = 0; // дальше плеер живёт на скорости селекта
+		}
+		function startAutoplay() {
+			if (/[?&]noplay=1/.test(location.search)) return;
+			if (location.hash === "#end") return;
+			if (entries.length < 2) return;
+			if (Date.now() - entries[entries.length - 1].ms < LIVE_MS) {
+				seekTo(entries[entries.length - 1].ms); // живая сессия — сразу хвост, follow не трогаем
+				return;
+			}
+			var span = entries[entries.length - 1].ms - entries[0].ms;
+			replaySpeed = Math.min(AUTOPLAY_MAX_SPEED, Math.max(128, span / AUTOPLAY_TARGET_MS));
+			autoplay = true;
+			playing = true;
+			stick = true;
+			el.play.textContent = "⏸";
+			lastTick = performance.now();
+		}
 		el.play.onclick = function () {
+			cancelAutoplay(); // ручное вмешательство — обычный плеер на скорости селекта
 			playing = !playing;
 			if (playing && fedCount >= entries.length) seekTo(firstMs); // ⟲ с начала
 			if (playing) stick = true;
@@ -410,11 +438,13 @@
 			lastTick = performance.now();
 		};
 		el.end.onclick = function () {
+			cancelAutoplay();
 			playing = false; stick = true; el.play.textContent = "▶";
 			feedUntil(Infinity); playheadMs = entries.length ? entries[entries.length - 1].ms : 0; draw();
 		};
-		el.speed.onchange = function () { speed = Number(el.speed.value); };
+		el.speed.onchange = function () { cancelAutoplay(); speed = Number(el.speed.value); };
 		el.slider.oninput = function () {
+			cancelAutoplay();
 			playing = false; el.play.textContent = "▶";
 			seekTo(firstMs + Number(el.slider.value));
 		};
@@ -422,8 +452,8 @@
 			var typing = ev.target && ev.target.tagName === "INPUT";
 			if (typing) return; // в поле фильтра клавиши не перехватываем
 			if (ev.code === "Space" && ev.target === document.body) { ev.preventDefault(); el.play.onclick(); }
-			if (ev.code === "ArrowLeft") { playing = false; el.play.textContent = "▶"; seekTo(playheadMs - 5000); }
-			if (ev.code === "ArrowRight") { playing = false; el.play.textContent = "▶"; seekTo(playheadMs + 5000); }
+			if (ev.code === "ArrowLeft") { cancelAutoplay(); playing = false; el.play.textContent = "▶"; seekTo(playheadMs - 5000); }
+			if (ev.code === "ArrowRight") { cancelAutoplay(); playing = false; el.play.textContent = "▶"; seekTo(playheadMs + 5000); }
 		});
 		["dragover", "drop"].forEach(function (t) {
 			document.addEventListener(t, function (ev) { ev.preventDefault(); el.drop.classList.toggle("drag", t === "dragover"); });
@@ -443,9 +473,11 @@
 				fileName = name ? decodeURIComponent(name) : "session.jsonl";
 				servedMode = true;
 				load(parseLines(t));
-				// #end — открыть сразу с хвоста сессии (иначе реплей стоит в начале)
+				// #end — открыть сразу с хвоста сессии; иначе — автоплей реплея
 				if (location.hash === "#end" && entries.length) {
 					seekTo(entries[entries.length - 1].ms);
+				} else {
+					startAutoplay();
 				}
 			});
 		}).catch(function () { /* file:// — drag&drop */ });
@@ -455,9 +487,13 @@
 			var now = performance.now();
 			var dt = now - lastTick;
 			lastTick = now;
-			playheadMs += dt * speed;
+			playheadMs += dt * (autoplay ? replaySpeed : speed);
 			feedUntil(playheadMs);
-			if (fedCount >= entries.length) { playing = false; el.play.textContent = "▶"; }
+			if (fedCount >= entries.length) {
+				playing = false;
+				cancelAutoplay(); // пауза на конце реплея
+				el.play.textContent = "▶";
+			}
 			draw();
 		}, 100);
 
@@ -733,6 +769,7 @@
 				var t0 = entries[0].ms, t1 = entries[entries.length - 1].ms;
 				if (t1 <= t0) return;
 				var frac = Math.max(0, Math.min(1, (x - PAD) / (rect.width - PAD * 2)));
+				cancelAutoplay();
 				playing = false; el.play.textContent = "▶";
 				seekTo(t0 + frac * (t1 - t0));
 			}
@@ -755,6 +792,7 @@
 					var n = nodePos[i];
 					if (x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + n.h) {
 						selectedTurn = n.turn.index;
+						cancelAutoplay();
 						stick = false; // не прыгать в конец на следующем рендере
 						draw();
 						var card = document.getElementById("t-" + n.turn.index);
