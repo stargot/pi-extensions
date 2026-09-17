@@ -26,6 +26,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   автоплей; live-сессии (последняя запись моложе 5 минут, например
   `/trace-web` без аргумента) вместо реплея открываются сразу с хвоста.
 
+- **web**: инструмент `web_fetch` — извлечение страницы в markdown для LLM
+  (пакет переименован из `web-search` → `pi-web`): HTML → markdown ленивыми
+  linkedom + Readability + turndown, PDF через unpdf (лимит 100 страниц, маркер
+  обрезки), не-HTML содержимое отдаётся как есть; для JS-rendered страниц —
+  фолбэк через Jina Reader. SSRF-гард блокирует private/loopback/link-local
+  адреса до любого сетевого запроса; тело ответа читается стримово с лимитами
+  5 MB (HTML/текст) и 20 MB (PDF); относительные ссылки и `src` резолвятся в
+  абсолютные; один ретрай на 429/5xx и сетевые ошибки; неполный контент
+  возвращается успешным результатом с предупреждением вместо выбрасывания.
+  Известные ограничения: DNS-rebinding не проверяется (гард работает по
+  литералам адресов), Jina Reader — внешний сервис без гарантий доступности
+  и содержимого, RSC/Next.js-страницы напрямую не извлекаются (только через
+  Jina).
+
 ### Changed
 
 - **web-search**: выдача DuckDuckGo парсится собственным мини-парсером
@@ -35,6 +49,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   linkedom на живом снимке страницы выдачи; в тесты добавлен реальный снимок
   (28 KB) и edge-кейсы: raw-text содержимое `<script>`/`<style>`, void-элементы,
   `>` в кавычках атрибутов, entities (named + numeric), битая разметка.
+- **web**: каталог расширения `extensions/web-search` переименован в
+  `extensions/web`, имя пакета `pi-web-search` → `pi-web`; точка входа
+  `index.ts` регистрирует оба инструмента (`web_search` + `web_fetch`).
+- **web**: `package-lock.json` закоммичен — детерминированный `npm install`
+  при reconciliation клона пакета.
+- **web**: общие сетевые хелперы (`combineSignals`, `isAbort`, `sleep`,
+  `withRetry`, `readBodyCapped`) вынесены в `http.ts` и используются обоими
+  инструментами.
 
 ### Removed
 
