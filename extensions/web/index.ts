@@ -1,9 +1,15 @@
 /**
- * Entry point of the pi-web package.
+ * Entry point of the pi-web package: registers both web tools.
  *
- * TODO(task-9): thin entry for both tools — registerWebSearch(pi) from
- * ./search.ts + registerWebFetch(pi) from ./fetch/tool.ts. Until web_fetch
- * lands, this re-exports the search tool so the manifest path
- * ./extensions/web/index.ts keeps working.
+ * web_search — DuckDuckGo HTML-endpoint search (./search.ts);
+ * web_fetch — page fetching to markdown with PDF extraction and the
+ * Jina Reader fallback (./fetch/tool.ts).
  */
-export { default } from "./search.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerWebFetch } from "./fetch/tool.ts";
+import registerWebSearch from "./search.ts";
+
+export default function (pi: ExtensionAPI) {
+	registerWebSearch(pi);
+	registerWebFetch(pi);
+}
