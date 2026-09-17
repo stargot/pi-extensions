@@ -31,5 +31,11 @@
 			"./extensions/subagents/index.ts",
 			"./extensions/web-search/index.ts"
 		]
+	},
+	"dependencies": {
+		"@mozilla/readability": "^0.6.0",
+		"linkedom": "^0.18.13",
+		"turndown": "^7.2.4",
+		"unpdf": "^1.8.1"
 	}
 }
