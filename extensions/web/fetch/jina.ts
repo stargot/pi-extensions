@@ -9,6 +9,7 @@
  * throws; the caller decides how to surface a missed fallback.
  */
 import { combineSignals } from "../http.ts";
+import { extractHeadingTitle } from "./markdown.ts";
 
 const JINA_READER_BASE = "https://r.jina.ai/";
 const JINA_TIMEOUT_MS = 30_000;
@@ -20,15 +21,6 @@ const BOT_MARKERS = ["Loading...", "Please enable JavaScript"];
 export interface JinaResult {
 	title: string | null;
 	markdown: string;
-}
-
-// TODO(task-8): dedupe with markdown.ts extractHeadingTitle — markdown.ts is
-// being written by a parallel worker, so the helper lives here for now.
-function extractHeadingTitle(markdown: string): string | null {
-	const match = markdown.match(/^#{1,2}\s+(.+)/m);
-	if (!match) return null;
-	const cleaned = match[1].replace(/\*+/g, "").trim();
-	return cleaned || null;
 }
 
 /**
