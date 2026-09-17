@@ -155,6 +155,7 @@ test("200 HTML article → ok markdown with links resolved against response.url"
 	assert.equal(outcome.finalUrl, HTML_URL);
 	assert.equal(outcome.title, "My Article");
 	assert.equal(outcome.warning, undefined);
+	assert.equal(outcome.via, undefined, "direct extraction never claims the bridge");
 	assert.ok(
 		outcome.content.includes("[related page](https://docs.example.com/related)"),
 		`link not resolved against final URL: ${outcome.content.slice(0, 200)}`,
@@ -243,6 +244,7 @@ test("article null + JS-rendered → renderFn called once with finalUrl and call
 	assert.equal(outcome.title, "Rendered Title");
 	assert.equal(outcome.content, "# Rendered Title\n\nRendered content.");
 	assert.equal(outcome.finalUrl, HTML_URL);
+	assert.equal(outcome.via, "browser-bridge");
 	assert.equal(renderer.calls.length, 1);
 	assert.equal(renderer.calls[0].url, HTML_URL);
 	// The caller's own signal is handed to the renderer (the bridge combines
@@ -292,6 +294,7 @@ test("render lands on its own finalUrl (in-browser redirect) → outcome carries
 
 	assert.equal(outcome.status, "ok");
 	assert.equal(outcome.finalUrl, renderedUrl);
+	assert.equal(outcome.via, "browser-bridge");
 	// Title fallback reads the basename off the render's final URL.
 	assert.equal(outcome.title, "page-name");
 	assert.equal(outcome.content, "# Rendered\n\nBody.");

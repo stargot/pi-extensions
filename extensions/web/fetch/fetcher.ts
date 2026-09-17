@@ -117,6 +117,12 @@ export interface FetchOutcome {
 	errorKind?: FetchErrorKind;
 	/** Present on status "error": human-readable failure message. */
 	errorMessage?: string;
+	/**
+	 * Set when the content came through the local browser-bridge render
+	 * fallback rather than direct HTTP extraction (the tool layer surfaces
+	 * it as details.via).
+	 */
+	via?: "browser-bridge";
 }
 
 /**
@@ -311,6 +317,7 @@ async function routeAndExtract(input: {
 				// URL basename (port of the source's fallback).
 				title: render.title ?? titleFromUrl(renderedUrl),
 				content: render.markdown,
+				via: "browser-bridge",
 			};
 		}
 		return errorOutcome(

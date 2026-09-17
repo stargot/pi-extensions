@@ -7,27 +7,45 @@
  * sees the failure as tool-error text; a ⚠ marker is appended to the
  * result status when extraction succeeded but the content may be
  * incomplete (FetchOutcome.warning).
+ *
+ * The entry point (../index.ts) injects the local browser-bridge renderer
+ * as deps.renderFn: when a page is JS-rendered and direct extraction comes
+ * up empty, fetchAndExtract re-renders it in the user's browser through
+ * the pi-web-companion extension (details.via "browser-bridge"). Without
+ * the bridge the fetch degrades to an honest empty outcome.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { fetchAndExtract } from "./fetcher.ts";
+import { fetchAndExtract, type FetcherDeps } from "./fetcher.ts";
 
-export function registerWebFetch(pi: ExtensionAPI) {
+/** Injectable seams for the tool registration (see FetcherDeps). */
+export interface WebFetchDeps {
+	/**
+	 * Local browser-bridge render fallback; wired by the extension entry
+	 * point from the module-singleton bridge. Optional: without it (tests,
+	 * bridgeless sessions) fetchAndExtract simply never re-renders.
+	 */
+	renderFn?: FetcherDeps["renderFn"];
+}
+
+export function registerWebFetch(pi: ExtensionAPI, deps: WebFetchDeps = {}) {
 	pi.registerTool({
 		name: "web_fetch",
 		label: "Web Fetch",
 		description:
-			"Fetch a web page and extract readable content as clean markdown. Uses Readability + Turndown for high-quality HTML→markdown conversion. Handles PDFs, plain text, and falls back to the local browser bridge for JS-rendered pages.",
+			"Fetch a web page and extract readable content as clean markdown. Uses Readability + Turndown for high-quality HTML→markdown conversion. Handles PDFs, plain text, and falls back to the local browser bridge (pi-web-companion extension) when the page is JS-rendered.",
 		promptSnippet:
-			"Fetch a URL and extract readable content as markdown. Supports HTML pages, PDFs, and plain text.",
+			"Fetch a URL and extract readable content as markdown. Supports HTML pages, PDFs, and plain text; JS-rendered pages are re-rendered via the user's local browser bridge when available.",
 
 		parameters: Type.Object({
 			url: Type.String({ description: "URL to fetch" }),
 		}),
 
 		async execute(_toolCallId, params: { url: string }, signal) {
-			const outcome = await fetchAndExtract(params.url, signal);
+			const outcome = await fetchAndExtract(params.url, signal, {
+				renderFn: deps.renderFn,
+			});
 
 			if (outcome.status === "error") {
 				throw new Error(`${outcome.url}: ${outcome.errorMessage}`);
@@ -49,6 +67,7 @@ export function registerWebFetch(pi: ExtensionAPI) {
 					title: outcome.title,
 					chars: outcome.content.length,
 					...(outcome.warning ? { warning: outcome.warning } : {}),
+					...(outcome.via ? { via: outcome.via } : {}),
 				},
 			};
 		},

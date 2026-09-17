@@ -197,8 +197,12 @@ export interface BridgeHandle {
  * model (same-user processes can read anything anyway). Throws only when
  * neither reading nor writing is possible — startBridge turns that into
  * a disabled bridge rather than a crashed session.
+ *
+ * Exported so the config unit tests (test/bridge-config.test.ts) can cover
+ * the generate-and-persist pairing without a live server (socket lifecycle
+ * is bridge.test.ts's job).
  */
-function loadOrCreateToken(file: string): string {
+export function loadOrCreateToken(file: string): string {
 	try {
 		const existing = readFileSync(file, "utf8").trim();
 		if (existing) return existing;
