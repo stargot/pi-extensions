@@ -1,8 +1,8 @@
 {
-	"name": "pi-web-search",
+	"name": "pi-web",
 	"private": true,
 	"type": "module",
-	"description": "DuckDuckGo web search for pi (HTML endpoint, no API keys). Based on the web-search extension by Eero Alvar (amosblomqvist).",
+	"description": "Web tools for pi: DuckDuckGo web_search (HTML endpoint, no API keys) and web_fetch (page fetching to markdown). Based on the web-search extension by Eero Alvar (amosblomqvist).",
 	"engines": {
 		"node": ">=22.18"
 	},

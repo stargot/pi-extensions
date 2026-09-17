@@ -1,4 +1,4 @@
-# web-search — DuckDuckGo-поиск для pi без API-ключей
+# web — DuckDuckGo-поиск для pi без API-ключей
 
 Инструмент `web_search`: полнотекстовый веб-поиск через HTML-endpoint
 DuckDuckGo. Без ключей, без квот, со структурированными аргументами
@@ -54,5 +54,5 @@ web_search({
 ## Тесты
 
 ```bash
-node --test extensions/web-search/test/*.test.ts
+node --test extensions/web/test/*.test.ts
 ```

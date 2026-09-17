@@ -116,8 +116,8 @@ const DONE_EXTENSION_PATH = join(MODULE_DIR, "subagent-done.ts");
  * exist. Map them to their extension entry so we can attach it explicitly.
  */
 const EXTENSION_TOOL_PATHS: Record<string, string> = {
-	web_search: "web-search/index.ts",
-	web_fetch: "web-search/index.ts",
+	web_search: "web/index.ts",
+	web_fetch: "web/index.ts",
 };
 
 function extensionPathsForTools(tools: string[] | undefined): string[] {
@@ -648,7 +648,7 @@ function buildLauncherSpec(opts: {
 	cwd?: string;
 	model?: string;
 	grantSpawning: boolean;
-	/** Extra extension entrypoints to load in the child (e.g. web-search for web tools). */
+	/** Extra extension entrypoints to load in the child (e.g. web for web tools). */
 	extraExtensions?: string[];
 }): LauncherSpec {
 	const def = opts.def;

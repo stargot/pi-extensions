@@ -1,7 +1,7 @@
 /**
  * Minimal dependency-free HTML parser for the DuckDuckGo HTML endpoint.
  *
- * Replaces linkedom: the only DOM surface web-search needs is three fixed
+ * Replaces linkedom: the only DOM surface web needs is three fixed
  * "tag.class" selectors plus getAttribute/textContent, and importing linkedom
  * cost ~110-130 ms on every pi startup for that. This module implements just
  * that subset — no CSS selector engine, no DOM events, no live trees.

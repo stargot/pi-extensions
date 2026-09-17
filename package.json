@@ -29,7 +29,7 @@
 			"./extensions/session-recall/index.ts",
 			"./extensions/session-trace/index.ts",
 			"./extensions/subagents/index.ts",
-			"./extensions/web-search/index.ts"
+			"./extensions/web/index.ts"
 		]
 	},
 	"dependencies": {
