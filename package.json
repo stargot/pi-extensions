@@ -4,7 +4,9 @@
 	"private": true,
 	"description": "Personal pi package: extensions for the pi coding agent",
 	"type": "module",
-	"keywords": ["pi-package"],
+	"keywords": [
+		"pi-package"
+	],
 	"engines": {
 		"node": ">=22.18"
 	},
@@ -37,5 +39,8 @@
 		"linkedom": "^0.18.13",
 		"turndown": "^7.2.4",
 		"unpdf": "^1.8.1"
+	},
+	"devDependencies": {
+		"@types/turndown": "^5.0.6"
 	}
 }
