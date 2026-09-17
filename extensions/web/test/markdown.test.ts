@@ -77,6 +77,22 @@ test("extractArticle: unresolvable href passes through unchanged", async () => {
 	);
 });
 
+test("extractArticle: consecutive calls with different baseUrls each resolve against their own base (shared rule, no stale base)", async () => {
+	const html = articleHtml('<p>See <a href="/x">this link</a> for details.</p>');
+	const first = await extractArticle(html, "https://first.com/a/b");
+	const second = await extractArticle(html, "https://second.org/c/d");
+	assert.ok(first);
+	assert.ok(second);
+	assert.ok(
+		first.markdown.includes("[this link](https://first.com/x)"),
+		`first call got: ${first.markdown}`,
+	);
+	assert.ok(
+		second.markdown.includes("[this link](https://second.org/x)"),
+		`second call got: ${second.markdown}`,
+	);
+});
+
 test("extractArticle: no extractable article → null", async () => {
 	const result = await extractArticle(
 		"<html><head><title>x</title></head><body>" +

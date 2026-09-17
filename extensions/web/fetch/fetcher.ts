@@ -6,6 +6,13 @@
  * Port of the third-party web-fetch extension's extractViaHttp +
  * fetchAndExtract with the web-merge decisions applied:
  * - the SSRF guard runs before any network activity, Jina included (P0a);
+ * - redirects are followed manually (redirect: "manual"): the target of
+ *   every hop is re-checked by the SSRF guard before it is fetched, up to
+ *   MAX_REDIRECT_HOPS fetches per attempt — a blocked/unparseable hop
+ *   target or an exhausted hop budget fails as errorKind "redirect"
+ *   (closes the redirect-rebinding hole of a native redirect follower);
+ * - the content-type check runs on headers alone, before the body is read
+ *   — a 10 MB image reports "unsupported", never "too-large";
  * - size caps are chosen before a single body byte is read and enforced on
  *   the bytes actually streamed — content-length is never trusted (P0b);
  * - one retry with ~1.5 s backoff for 429/5xx/network failures; other 4xx
@@ -44,6 +51,13 @@ const USER_AGENT =
 
 const FETCH_TIMEOUT_MS = 30_000;
 const RETRY_BACKOFF_MS = 1_500;
+/**
+ * Fetch budget per attempt: the original request plus redirect hops. A
+ * redirect landing on the last budgeted fetch fails with a "redirect"
+ * error instead of issuing a further request — redirect loops cannot
+ * spin. At most MAX_REDIRECT_HOPS - 1 redirects are actually followed.
+ */
+const MAX_REDIRECT_HOPS = 5;
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024;
 const MAX_PDF_SIZE = 20 * 1024 * 1024;
 const MIN_USEFUL_CONTENT = 500;
@@ -67,10 +81,16 @@ const FALLBACK_HINT =
 	"  • A different URL for the same content\n" +
 	"  • web_search to find cached/alternative versions";
 
-/** Coarse failure class of an error outcome. */
+/**
+ * Coarse failure class of an error outcome. "redirect" covers the manual
+ * redirect-following phase: a hop target blocked by the SSRF guard, an
+ * unparseable Location, or the hop budget exhausted (see
+ * fetchFollowRedirects).
+ */
 export type FetchErrorKind =
 	| "ssrf"
 	| "http"
+	| "redirect"
 	| "too-large"
 	| "unsupported"
 	| "empty";
@@ -85,7 +105,10 @@ export interface FetchOutcome {
 	status: "ok" | "error";
 	/** URL as requested by the caller. */
 	url: string;
-	/** URL after redirects (response.url), falling back to the requested URL. */
+	/**
+	 * URL of the last hop actually fetched (redirects are followed
+	 * manually), falling back to the requested URL.
+	 */
 	finalUrl: string;
 	/** Extracted title; null when none could be determined or on error. */
 	title: string | null;
@@ -137,22 +160,45 @@ export async function fetchAndExtract(
 	}
 
 	let response: Response;
+	let finalUrl: string;
 	try {
-		response = await withRetry(() => fetchOnce(guarded.href, signal, fetchImpl), {
-			retries: 1,
-			backoffMs,
-			isTransient: isTransientError,
-			signal,
-		});
+		({ response, finalUrl } = await withRetry(
+			() => fetchFollowRedirects(guarded.href, signal, fetchImpl),
+			{
+				retries: 1,
+				backoffMs,
+				isTransient: isTransientError,
+				signal,
+			},
+		));
 	} catch (error) {
-		// Exhausted retries (429/5xx/network), a non-transient 4xx, or an
-		// abort. Transport-level failures never reach Jina (decision 5).
-		return errorOutcome(url, "http", errorMessage(error));
+		// Exhausted retries (429/5xx/network), a non-transient 4xx, an
+		// abort, or a redirect-phase failure (blocked/unparseable hop,
+		// hop budget exhausted). Transport-level failures never reach
+		// Jina (decision 5).
+		return errorOutcome(
+			url,
+			isRedirectError(error) ? "redirect" : "http",
+			errorMessage(error),
+		);
 	}
 
-	const finalUrl = response.url || url;
 	const contentType = response.headers.get("content-type") ?? "";
 	const pdf = isPdfUrl(url, contentType || undefined);
+
+	// Header-level rejection before a single body byte is read: a 10MB zip
+	// reports "unsupported", not "too-large", and is never streamed.
+	const unsupported = unsupportedContentType(contentType);
+	if (unsupported) {
+		// The body is deliberately ignored — release the socket now.
+		void response.body?.cancel().catch(() => {});
+		return errorOutcome(
+			url,
+			"unsupported",
+			`Unsupported content type: ${unsupported}`,
+			finalUrl,
+		);
+	}
 
 	let body: BodyResult;
 	try {
@@ -214,28 +260,19 @@ async function routeAndExtract(input: {
 		return { status: "ok", url, finalUrl, title, content: markdown };
 	}
 
-	const unsupported = unsupportedContentType(contentType);
-	if (unsupported) {
-		return errorOutcome(
-			url,
-			"unsupported",
-			`Unsupported content type: ${unsupported}`,
-			finalUrl,
-		);
-	}
-
 	const text = new TextDecoder().decode(buffer);
 	const isHtml =
 		contentType.includes("text/html") ||
 		contentType.includes("application/xhtml+xml");
 	if (!isHtml) {
 		// Plain text (or anything textual): pass through as-is, title from
-		// the first markdown-style heading if there is one.
+		// the first markdown-style heading if there is one, else the URL
+		// basename (port of the source's fallback).
 		return {
 			status: "ok",
 			url,
 			finalUrl,
-			title: extractHeadingTitle(text),
+			title: extractHeadingTitle(text) ?? titleFromUrl(finalUrl),
 			content: text,
 		};
 	}
@@ -254,7 +291,9 @@ async function routeAndExtract(input: {
 				status: "ok",
 				url,
 				finalUrl,
-				title: jina.title,
+				// Jina's heading is often missing — fall back to the URL
+				// basename (port of the source's fallback).
+				title: jina.title ?? titleFromUrl(finalUrl),
 				content: jina.markdown,
 			};
 		}
@@ -287,36 +326,99 @@ async function routeAndExtract(input: {
 }
 
 /**
- * One fetch attempt: full browser header set, caller signal combined with a
- * 30 s timeout. Errors are tagged `transient` for network failures and
- * 429/5xx statuses; other 4xx and aborts stay non-transient (withRetry
- * additionally never retries aborts, whatever the tag says).
+ * One fetch attempt with manually followed redirects: each hop's target is
+ * resolved and re-checked by the SSRF guard before it is fetched — the
+ * native `redirect: "follow"` never consults our guard, which let a public
+ * URL bounce fetches into the private network (redirect-rebinding).
+ *
+ * The caller has already guarded the original URL. Budget: at most
+ * MAX_REDIRECT_HOPS fetches per attempt; a redirect landing on the last
+ * budgeted fetch fails instead of issuing a further request. Failures of
+ * the redirect phase (blocked/unparseable hop target, budget exhausted,
+ * 3xx without a usable Location) are tagged `redirect` — surfaced as
+ * errorKind "redirect" and never retried. Network errors are tagged
+ * transient; non-ok statuses per their class (withRetry never retries
+ * aborts, whatever the tag says). The fetched body of discarded responses
+ * (redirects, non-ok) is cancelled so the socket is not held until GC.
  */
-async function fetchOnce(
+async function fetchFollowRedirects(
 	url: string,
 	signal: AbortSignal | undefined,
 	fetchImpl: typeof fetch,
-): Promise<Response> {
-	let response: Response;
-	try {
-		response = await fetchImpl(url, {
-			headers: FETCH_HEADERS,
-			signal: combineSignals(signal, FETCH_TIMEOUT_MS),
-		});
-	} catch (error) {
-		if (isAbort(error)) throw error;
-		throw Object.assign(
-			new Error(`${errorMessage(error)} (network error)`),
-			{ transient: true },
-		);
+): Promise<{ response: Response; finalUrl: string }> {
+	let currentUrl = url;
+	for (let hop = 0; ; hop++) {
+		let response: Response;
+		try {
+			response = await fetchImpl(currentUrl, {
+				headers: FETCH_HEADERS,
+				// Follow redirects by hand so every hop passes the guard.
+				redirect: "manual",
+				signal: combineSignals(signal, FETCH_TIMEOUT_MS),
+			});
+		} catch (error) {
+			if (isAbort(error)) throw error;
+			throw Object.assign(
+				new Error(`${errorMessage(error)} (network error)`),
+				{ transient: true },
+			);
+		}
+
+		const location = isRedirectStatus(response.status)
+			? response.headers.get("location")
+			: null;
+		if (location) {
+			if (hop >= MAX_REDIRECT_HOPS - 1) {
+				throw redirectError(
+					`Too many redirects (limit ${MAX_REDIRECT_HOPS - 1})`,
+				);
+			}
+			let nextUrl: URL;
+			try {
+				nextUrl = new URL(location, currentUrl);
+			} catch {
+				throw redirectError(
+					`Redirect to an invalid URL: ${location}`,
+				);
+			}
+			try {
+				nextUrl = assertPublicHttpUrl(nextUrl.href);
+			} catch (error) {
+				throw redirectError(
+					`Redirect blocked by the SSRF guard: ${errorMessage(error)}`,
+				);
+			}
+			// The 3xx body is never read — release the socket now.
+			void response.body?.cancel().catch(() => {});
+			currentUrl = nextUrl.href;
+			continue;
+		}
+
+		if (!response.ok) {
+			// Release the socket instead of holding it until GC (withRetry
+			// may or may not come back to this response).
+			void response.body?.cancel().catch(() => {});
+			throw Object.assign(
+				new Error(`HTTP ${response.status}: ${response.statusText}`),
+				{ transient: response.status === 429 || response.status >= 500 },
+			);
+		}
+		return { response, finalUrl: currentUrl };
 	}
-	if (!response.ok) {
-		throw Object.assign(
-			new Error(`HTTP ${response.status}: ${response.statusText}`),
-			{ transient: response.status === 429 || response.status >= 500 },
-		);
-	}
-	return response;
+}
+
+/** Statuses with redirect semantics (300–399; a Location decides). */
+function isRedirectStatus(status: number): boolean {
+	return status >= 300 && status < 400;
+}
+
+/** Redirect-phase failure: non-transient (never retried), errorKind "redirect". */
+function redirectError(message: string): Error {
+	return Object.assign(new Error(message), { redirect: true });
+}
+
+function isRedirectError(error: unknown): boolean {
+	return (error as { redirect?: boolean } | null)?.redirect === true;
 }
 
 function isTransientError(error: unknown): boolean {
@@ -344,6 +446,26 @@ function emptyExtractionMessage(jsRendered: boolean): string {
 		? "Page appears to be JavaScript-rendered (content loads dynamically)"
 		: "Could not extract readable content from HTML structure";
 	return `${reason}; the Jina Reader fallback also came up empty.\n\n${FALLBACK_HINT}`;
+}
+
+/**
+ * Last-resort title: the basename of the URL path (port of the source's
+ * fallback). "https://a.com/x/post.html" → "post.html"; a path with no
+ * basename (bare origin "/", directory URLs ending in "/") → null.
+ */
+function titleFromUrl(url: string): string | null {
+	try {
+		const basename = new URL(url).pathname.split("/").pop();
+		if (!basename) return null;
+		try {
+			return decodeURIComponent(basename);
+		} catch {
+			// Malformed percent-encoding — the raw segment still beats null.
+			return basename;
+		}
+	} catch {
+		return null;
+	}
 }
 
 function errorOutcome(

@@ -96,6 +96,11 @@ function okResponse(
 	return response;
 }
 
+/** 3xx response with a Location header (manual-redirect hop). */
+function redirectResponse(location: string, status = 302): Response {
+	return new Response(null, { status, headers: { Location: location } });
+}
+
 const HTML_URL = "https://docs.example.com/post/1";
 
 function baseDeps(overrides: {
@@ -369,4 +374,167 @@ test("plain text → content passed through as-is, title from first heading, fin
 	assert.equal(outcome.content, body);
 	assert.equal(outcome.finalUrl, "https://example.com/notes.txt");
 	assert.equal(jina.calls.length, 0);
+});
+
+// ── Manual redirects (SSRF guard re-checked per hop) ─────────────────
+
+test("302 to a private address → error 'redirect' at the first hop, the blocked target is never fetched", async () => {
+	const { impl, calls } = scriptedFetch([
+		redirectResponse("http://169.254.169.254/latest/meta-data/"),
+	]);
+	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const outcome = await fetchAndExtract(
+		"https://example.com/start",
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(errorKindOf(outcome), "redirect");
+	assert.match(outcome.errorMessage!, /link-local/);
+	assert.equal(calls.length, 1, "only the original URL is fetched");
+	assert.equal(calls[0].url, "https://example.com/start");
+	assert.equal(jina.calls.length, 0);
+});
+
+test("302 to a public URL → followed manually, finalUrl is the redirect target", async () => {
+	const movedUrl = "https://docs.example.com/moved";
+	const { impl, calls } = scriptedFetch([
+		redirectResponse("/moved"),
+		okResponse(articleHtml(), "text/html; charset=utf-8", movedUrl),
+	]);
+	const jina = fakeJina(null);
+	const outcome = await fetchAndExtract(
+		"https://docs.example.com/old",
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(outcome.status, "ok");
+	assert.equal(outcome.finalUrl, movedUrl);
+	assert.equal(outcome.title, "My Article");
+	assert.equal(calls.length, 2);
+	// The second hop goes to the absolute redirect target...
+	assert.equal(calls[1].url, movedUrl);
+	// ...and every hop carries redirect: "manual".
+	assert.equal(calls[0].init.redirect, "manual");
+	assert.equal(calls[1].init.redirect, "manual");
+	assert.equal(jina.calls.length, 0);
+});
+
+test("five redirects in a row → error 'redirect' (hop budget exhausted), no further fetch", async () => {
+	const responses = Array.from({ length: 5 }, (_, i) =>
+		redirectResponse(`https://example.com/step-${i + 2}`),
+	);
+	const { impl, calls } = scriptedFetch(responses);
+	const jina = fakeJina(null);
+	const outcome = await fetchAndExtract(
+		"https://example.com/step-1",
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(errorKindOf(outcome), "redirect");
+	assert.match(outcome.errorMessage!, /Too many redirects/);
+	assert.equal(calls.length, 5, "the 6th hop is never fetched");
+});
+
+// ── Retry and abort semantics ────────────────────────────────────────
+
+test("network error then 200 → retried exactly once, then ok", async () => {
+	const { impl, calls } = scriptedFetch([
+		new Error("getaddrinfo EAI_AGAIN example.com"),
+		okResponse(articleHtml(), "text/html; charset=utf-8", HTML_URL),
+	]);
+	const jina = fakeJina(null);
+	const outcome = await fetchAndExtract(
+		HTML_URL,
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(outcome.status, "ok");
+	assert.equal(outcome.title, "My Article");
+	assert.equal(calls.length, 2, "exactly one retry after a network error");
+	assert.equal(jina.calls.length, 0);
+});
+
+test("abort during fetch → no retry, error surfaced (never a Jina case)", async () => {
+	const abortError = new Error("This operation was aborted");
+	abortError.name = "AbortError";
+	const { impl, calls } = scriptedFetch([abortError]);
+	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const outcome = await fetchAndExtract(
+		HTML_URL,
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(errorKindOf(outcome), "http");
+	assert.match(outcome.errorMessage!, /abort/i);
+	assert.equal(calls.length, 1, "aborts are never retried");
+	assert.equal(jina.calls.length, 0);
+});
+
+// ── Header-level content-type check (before the body is read) ───────
+
+test("unsupported content-type is decided from headers before the body is streamed", async () => {
+	let pulls = 0;
+	// Endless 1MB-chunk body: if the body were read, the outcome would be
+	// "too-large" (5MB cap) and pulls ≥ 5 — never "unsupported".
+	const body = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			pulls += 1;
+			controller.enqueue(new Uint8Array(1024 * 1024));
+		},
+	});
+	const { impl } = scriptedFetch([
+		okResponse(body, "image/png", HTML_URL),
+	]);
+	const jina = fakeJina({ title: "Jina", markdown: "# Jina" });
+	const outcome = await fetchAndExtract(
+		HTML_URL,
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(errorKindOf(outcome), "unsupported");
+	assert.match(outcome.errorMessage!, /image\/png/);
+	// Exactly 1 pull = the spec-mandated queue fill at stream start (HWM 1),
+	// which fires on the first microtask tick regardless of the fetcher. If
+	// the body had actually been read, the 5MB cap would force pulls ≥ 6.
+	assert.equal(pulls, 1, "the body must never be consumed past its start queue");
+	assert.equal(jina.calls.length, 0);
+});
+
+// ── Title fallback to the URL basename ──────────────────────────────
+
+test("JS-rendered page + Jina title null → title falls back to the URL basename", async () => {
+	const fileUrl = "https://example.com/docs/setup-guide";
+	const { impl } = scriptedFetch([
+		okResponse(SPA_HTML, "text/html; charset=utf-8", fileUrl),
+	]);
+	const jina = fakeJina({ title: null, markdown: "# Rendered\n\nBody." });
+	const outcome = await fetchAndExtract(
+		fileUrl,
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(outcome.status, "ok");
+	assert.equal(outcome.title, "setup-guide");
+});
+
+test("URL with no basename (bare origin) → title stays null", async () => {
+	const { impl } = scriptedFetch([
+		okResponse(SPA_HTML, "text/html; charset=utf-8", "https://example.com/"),
+	]);
+	const jina = fakeJina({ title: null, markdown: "# Rendered\n\nBody." });
+	const outcome = await fetchAndExtract(
+		"https://example.com/",
+		undefined,
+		baseDeps({ impl, jina }),
+	);
+
+	assert.equal(outcome.status, "ok");
+	assert.equal(outcome.title, null);
 });

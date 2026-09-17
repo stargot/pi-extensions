@@ -8,7 +8,8 @@ const VALID_PAGE = [
 	"Markdown Content:",
 	"# Example Domain",
 	"",
-	"Welcome to the example page.",
+	"Welcome to the example page. A few more sentences follow so the tail",
+	"clears the minimum-length gate that discards shorter stub payloads.",
 	"",
 ].join("\n");
 
@@ -39,7 +40,8 @@ test("valid Jina payload → { title, markdown } after the marker", async () => 
 	);
 	assert.deepEqual(result, {
 		title: "Example Domain",
-		markdown: "# Example Domain\n\nWelcome to the example page.",
+		markdown:
+			"# Example Domain\n\nWelcome to the example page. A few more sentences follow so the tail\nclears the minimum-length gate that discards shorter stub payloads.",
 	});
 });
 
@@ -121,10 +123,13 @@ test("caller signal is forwarded as a combined signal, abort propagates", async 
 });
 
 test("markdown without a heading → title null, content kept", async () => {
-	const { impl } = recordingFetch(
-		200,
-		"Markdown Content:\nJust plain text, no heading here.",
-	);
+	// Body must clear MIN_MARKDOWN_LENGTH (100) — shorter tails are treated
+	// as stubs (see the next test).
+	const body =
+		"Just plain text, no heading here, but enough words follow to push " +
+		"this paragraph well past the one-hundred-character minimum that a " +
+		"payload has to clear before it counts as real content.";
+	const { impl } = recordingFetch(200, `Markdown Content:\n${body}`);
 	const result = await extractWithJinaReader(
 		"https://example.com",
 		undefined,
@@ -132,6 +137,19 @@ test("markdown without a heading → title null, content kept", async () => {
 	);
 	assert.deepEqual(result, {
 		title: null,
-		markdown: "Just plain text, no heading here.",
+		markdown: body,
 	});
+});
+
+test("markdown tail shorter than 100 chars after the marker → null (min-length check)", async () => {
+	const { impl } = recordingFetch(
+		200,
+		"Markdown Content:\n# Tiny\n\nStub body, no real article.",
+	);
+	const result = await extractWithJinaReader(
+		"https://example.com",
+		undefined,
+		impl,
+	);
+	assert.equal(result, null);
 });

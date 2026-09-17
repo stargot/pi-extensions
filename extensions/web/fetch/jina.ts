@@ -16,6 +16,12 @@ const JINA_TIMEOUT_MS = 30_000;
 
 const MARKDOWN_MARKER = "Markdown Content:";
 const BOT_MARKERS = ["Loading...", "Please enable JavaScript"];
+/**
+ * Markdown tails shorter than this read as a stub (a block-page remnant, a
+ * captcha notice), not content — null, like the bot markers. Port of the
+ * source's min-length check (source index.ts:383).
+ */
+const MIN_MARKDOWN_LENGTH = 100;
 
 /** Successful Jina extraction: heading title (or null) and the markdown body. */
 export interface JinaResult {
@@ -27,8 +33,10 @@ export interface JinaResult {
  * Fetch `url` through the Jina Reader service and return its markdown.
  *
  * Resolves null when the service is unreachable, answers non-2xx, the payload
- * has no "Markdown Content:" section, or the payload is a bot/placeholder
- * page ("Loading...", "Please enable JavaScript"). The caller signal is
+ * has no "Markdown Content:" section, the section is a bot/placeholder page
+ * ("Loading...", "Please enable JavaScript"), or the extracted markdown is
+ * shorter than MIN_MARKDOWN_LENGTH (a stub, not content — restores the
+ * source's min-length check, lost in the port). The caller signal is
  * combined with a 30 s timeout; either firing resolves null. `fetchImpl` is
  * injectable for tests.
  */
@@ -54,6 +62,7 @@ export async function extractWithJinaReader(
 		if (BOT_MARKERS.some((marker) => markdown.startsWith(marker))) {
 			return null;
 		}
+		if (markdown.length < MIN_MARKDOWN_LENGTH) return null;
 
 		return { title: extractHeadingTitle(markdown), markdown };
 	} catch {

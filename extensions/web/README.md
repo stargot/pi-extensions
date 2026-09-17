@@ -66,6 +66,11 @@ web_fetch({
   дальше маркер обрезки, Title/Author из метаданных; не-HTML (текст и
   прочее) → как есть, заголовок из первой `#`-строки;
   image/audio/video/zip/octet-stream → честная ошибка «unsupported».
+- **Редиректы** следуются вручную (`redirect: "manual"`): цель каждого
+  хопа заново проходит SSRF-гард до запроса — redirect-rebinding
+  (публичный URL, редиректящий в private-сеть) закрыт. Бюджет — 5
+  запросов на попытку; исчерпание лимита, невалидный или заблокированный
+  hop — ошибка «redirect» без ретрая. `finalUrl` — URL последнего хопа.
 - **Лимиты чтения**: body читается стримово и режется по реально увиденным
   байтам — content-length не доверяется; кап 5 MB для страниц, 20 MB для
   PDF (выбирается до чтения первого байта).
@@ -107,7 +112,7 @@ web_fetch({
 ## Тесты
 
 ```bash
-node --test extensions/web/test/*.test.ts   # 83 теста
+node --test extensions/web/test/*.test.ts   # 93 теста
 ```
 
 | Файл | Тестов | Покрывает |
@@ -117,9 +122,9 @@ node --test extensions/web/test/*.test.ts   # 83 теста
 | `parse.test.ts` | 4 | парсер выдачи (+ фикстура `fixtures/ddg-sample.html`) |
 | `http.test.ts` | 16 | `combineSignals` / `sleep` / `withRetry` / `readBodyCapped` |
 | `ssrf.test.ts` | 4 | блок-лист и нормализация URL |
-| `markdown.test.ts` | 13 | экстракция статьи, резолв ссылок, эвристики |
-| `jina.test.ts` | 9 | фолбэк на подменяемом `fetchImpl` |
-| `fetcher.test.ts` | 12 | оркестрация: роутинг, ретраи, капы, фолбэк |
+| `markdown.test.ts` | 14 | экстракция статьи, резолв ссылок, эвристики |
+| `jina.test.ts` | 10 | фолбэк на подменяемом `fetchImpl` |
+| `fetcher.test.ts` | 20 | оркестрация: роутинг, ретраи, капы, редиректы, фолбэк |
 
 Тесты не импортируют `index.ts`/`tool.ts` (правило репо: чистая логика —
 отдельно от pi-хоста), сеть в тестах подменяется.
@@ -128,7 +133,8 @@ node --test extensions/web/test/*.test.ts   # 83 теста
 
 - **DNS-rebinding**: гард проверяет литералы адресов, но не резолвит
   DNS-имена — перепроверка IP до fetch осознанно не делалась (в модуле
-  нет I/O).
+  нет I/O). Redirect-rebinding при этом закрыт: редиректы следуются
+  вручную, и цель каждого хопа заново проходит гард.
 - **Jina Reader — внешний сервис** (`r.jina.ai`): доступность и качество
   не гарантированы, фолбэк строго best-effort.
 - **RSC/Next.js**: payload React Server Components напрямую не извлекается

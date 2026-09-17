@@ -6,9 +6,11 @@
  * @mozilla/readability, turndown) load lazily via `await import()` inside
  * extractArticle — importing this module, and therefore starting pi, never
  * pays their cost (web-merge decision 2). The turndown converter instance
- * is built once on first use and cached at module level; its
- * URL-resolution rule is re-registered per call with the current baseUrl
- * (same rule key replaces the previous one).
+ * is built once on first use and cached at module level; the URL-resolution
+ * rule is a single shared instance too — turndown's addRule does not
+ * replace an existing key (it unshifts onto the rule list), so re-registering
+ * per call would pile up copies. The shared rule reads its baseUrl from a
+ * holder refreshed in the synchronous tail of extractArticle (see there).
  *
  * Ported from the third-party web-fetch extension, minus the RSC extractor
  * (decision 3) and with link/img URLs resolved against the page's final
@@ -44,6 +46,47 @@ interface TurndownConverter {
 /** Built on first use (lazy `await import("turndown")`), cached forever. */
 let turndownInstance: TurndownConverter | null = null;
 
+/**
+ * Base URL the shared resolve-relative-urls rule currently resolves
+ * against. Written only in the synchronous tail of extractArticle — no
+ * await between the write and turndown() — so even interleaved concurrent
+ * extractions always convert with their own page's base URL (a synchronous
+ * block is atomic in JS).
+ */
+const ruleContext = { baseUrl: "" };
+
+/** Shared resolve-relative-urls rule, built once on first use (see build). */
+let resolveRelativeUrlsRule: TurndownRule | null = null;
+
+/**
+ * Build the shared URL-resolution rule. It must read the base URL through
+ * the ruleContext holder rather than a captured copy: the rule object is
+ * registered with turndown exactly once and serves every later call.
+ */
+function buildResolveRelativeUrlsRule(): TurndownRule {
+	return {
+		filter: (node) =>
+			(node.nodeName === "A" && !!node.getAttribute("href")) ||
+			(node.nodeName === "IMG" && !!node.getAttribute("src")),
+		replacement: (content, node) => {
+			const baseUrl = ruleContext.baseUrl;
+			if (node.nodeName === "A") {
+				const href = resolveAttr(node.getAttribute("href"), baseUrl);
+				if (!href) return content;
+				const title = cleanAttribute(node.getAttribute("title"));
+				return title
+					? `[${content}](${href} "${title}")`
+					: `[${content}](${href})`;
+			}
+			const src = resolveAttr(node.getAttribute("src"), baseUrl);
+			if (!src) return "";
+			const alt = cleanAttribute(node.getAttribute("alt"));
+			const title = cleanAttribute(node.getAttribute("title"));
+			return title ? `![${alt}](${src} "${title}")` : `![${alt}](${src})`;
+		},
+	};
+}
+
 async function getTurndown(): Promise<TurndownConverter> {
 	if (!turndownInstance) {
 		const { default: TurndownService } = await import("turndown");
@@ -76,33 +119,21 @@ export async function extractArticle(
 	const article = reader.parse();
 	if (!article) return null;
 
-	// No await between addRule and turndown(): concurrent extractions can
-	// interleave around getTurndown's await, but the resolution rule is
-	// always (re)bound to this call's baseUrl within the same synchronous
-	// run as the conversion. Re-adding the same rule key replaces it;
-	// turndown unshifts added rules, so ours outranks the default
-	// link/image rules.
+	// The shared rule is registered exactly once — turndown's addRule does
+	// NOT replace an existing key, it unshifts onto the rule list, so
+	// re-adding per call would accumulate copies and slow every lookup.
+	// Rebinding the base URL happens in the synchronous tail below: there
+	// is no await between ruleContext.baseUrl = ... and turndown(), so
+	// concurrent extractions can interleave around the awaits above, yet
+	// each conversion still runs with its own page's base URL (each sync
+	// block is atomic in JS). The rule unshifts ahead of turndown's default
+	// link/image rules, so ours wins.
 	const turndown = await getTurndown();
-	turndown.addRule("resolve-relative-urls", {
-		filter: (node) =>
-			(node.nodeName === "A" && !!node.getAttribute("href")) ||
-			(node.nodeName === "IMG" && !!node.getAttribute("src")),
-		replacement: (content, node) => {
-			if (node.nodeName === "A") {
-				const href = resolveAttr(node.getAttribute("href"), baseUrl);
-				if (!href) return content;
-				const title = cleanAttribute(node.getAttribute("title"));
-				return title
-					? `[${content}](${href} "${title}")`
-					: `[${content}](${href})`;
-			}
-			const src = resolveAttr(node.getAttribute("src"), baseUrl);
-			if (!src) return "";
-			const alt = cleanAttribute(node.getAttribute("alt"));
-			const title = cleanAttribute(node.getAttribute("title"));
-			return title ? `![${alt}](${src} "${title}")` : `![${alt}](${src})`;
-		},
-	});
+	if (!resolveRelativeUrlsRule) {
+		resolveRelativeUrlsRule = buildResolveRelativeUrlsRule();
+		turndown.addRule("resolve-relative-urls", resolveRelativeUrlsRule);
+	}
+	ruleContext.baseUrl = baseUrl;
 
 	return {
 		title: article.title ?? "",
