@@ -42,9 +42,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   без заголовка у страницы тайтл берётся из basename URL-пути; короткие
   ответы Jina (< 100 символов после маркера) отбрасываются как заглушки.
   Известные ограничения: DNS-rebinding не проверяется (гард работает по
-  литералам адресов), Jina Reader — внешний сервис без гарантий доступности
-  и содержимого, RSC/Next.js-страницы напрямую не извлекаются (только через
-  Jina).
+  литералам адресов), RSC/Next.js-страницы напрямую не извлекаются.
+
+- **web**: локальный браузерный мост для `web_fetch` — JS-rendered страницы
+  (и страницы, где прямая экстракция пуста) дорендериваются в браузере
+  пользователя через MV3-расширение
+  [pi-web-companion](https://github.com/stargot/pi-web-companion):
+  pi поднимает WS-сервер на `127.0.0.1` (порты 8790–8799, первый свободный;
+  env `PI_WEB_BRIDGE_PORT`/`PI_WEB_BRIDGE_PORTS`), расширение коннектится
+  клиентом и снимает контент Readability + Turndown по уже отрендеренному
+  DOM (переиспользуя уже открытую вкладку с этим URL — без повторного
+  логина). Pairing — shared-токен: `PI_WEB_BRIDGE_TOKEN` /
+  `PI_WEB_BRIDGE_TOKEN_FILE` / файл `~/.pi/agent/web-bridge-token`,
+  генерируется при первом старте моста. Команда `/bridge` — статус (порт,
+  клиенты, токен-файл, причина отключения). Безопасность: bind строго
+  `127.0.0.1`, Origin-фильтр на upgrade (злые веб-страницы отсекаются до
+  обмена токеном), constant-time проверка токена, бан IP после 3 неудачных
+  hello. Lifecycle — `session_start`/`session_shutdown` (мост честно
+  пересоздаётся на /new, /resume, /fork); исчерпание портов или недоступный
+  токен отключают мост с warning, не ломая сессию; любой сбой рендера —
+  честная пустая ошибка, а не подвешенный вызов.
 
 ### Changed
 
@@ -66,6 +83,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Removed
 
+- **web**: фолбэк Jina Reader (`r.jina.ai`) — внешний API заменён локальным
+  браузерным мостом (см. Added): рендеринг JS-страниц теперь идёт в браузере
+  пользователя, ноль внешних сервисов; удалены `extensions/web/fetch/jina.ts`
+  и его тесты, инъекция `jinaFn` в `FetcherDeps` переименована в `renderFn`.
 - **web-search**: зависимость `linkedom` (из корневого `package.json` и
   `extensions/web-search/package.json`); расширение больше не требует
   `npm install`.
