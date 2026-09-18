@@ -1,22 +1,30 @@
 /**
  * Unit tests for the bridge configuration surface (plan §4, task B4):
- * parsePortRange (the range grammar shared with the companion's options
- * validator), readBridgeConfig (env priorities and degradation), and the
- * token-pairing file logic (loadOrCreateToken: read-back, generate AND
- * persist, content shape).
+ * parsePortRange / parseSinglePort (the port grammars shared with the
+ * companion's options validator), readBridgeConfig (env priorities and
+ * degradation), and the token-pairing file logic (loadOrCreateToken:
+ * read-back, generate AND persist, content shape, and the create-race
+ * where a concurrent first start must adopt the winner's token).
  *
  * Pure config/fs only — no server is started here; the live socket
  * lifecycle (listen, hello, close) is bridge.test.ts's job.
  */
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import fsModule, {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
 	loadOrCreateToken,
 	parsePortRange,
+	parseSinglePort,
 	readBridgeConfig,
 	resolveTokenFilePath,
 } from "../fetch/bridge.ts";
@@ -38,6 +46,20 @@ test("parsePortRange: bounds accepted (1024…65535, inclusive)", () => {
 	assert.deepEqual(parsePortRange("65535"), [65535]);
 	assert.deepEqual(parsePortRange("1024-1026"), [1024, 1025, 1026]);
 	assert.deepEqual(parsePortRange("65534-65535"), [65534, 65535]);
+});
+
+test("parseSinglePort: PI_WEB_BRIDGE_PORT's grammar — one port, same bounds", () => {
+	assert.equal(parseSinglePort("8790"), 8790);
+	assert.equal(parseSinglePort("  9001 \t"), 9001, "whitespace tolerated");
+	assert.equal(parseSinglePort("1024"), 1024);
+	assert.equal(parseSinglePort("65535"), 65535);
+	// A range is NOT this variable's grammar (use PI_WEB_BRIDGE_PORTS).
+	assert.throws(() => parseSinglePort("8790-8799"));
+	assert.throws(() => parseSinglePort(""));
+	assert.throws(() => parseSinglePort("abc"));
+	assert.throws(() => parseSinglePort("1023"));
+	assert.throws(() => parseSinglePort("0"));
+	assert.throws(() => parseSinglePort("65536"));
 });
 
 test("parsePortRange: garbage and out-of-bounds throw", () => {
@@ -62,6 +84,8 @@ test("parsePortRange: garbage and out-of-bounds throw", () => {
 
 test("readBridgeConfig: PI_WEB_BRIDGE_PORT > PI_WEB_BRIDGE_PORTS > default", () => {
 	assert.deepEqual(readBridgeConfig({ PI_WEB_BRIDGE_PORT: "9001" }).ports, [9001]);
+	// PI_WEB_BRIDGE_PORTS carries the range grammar — a single port too.
+	assert.deepEqual(readBridgeConfig({ PI_WEB_BRIDGE_PORTS: "9002" }).ports, [9002]);
 	assert.deepEqual(
 		readBridgeConfig({ PI_WEB_BRIDGE_PORTS: "9002-9004" }).ports,
 		[9002, 9003, 9004],
@@ -81,6 +105,12 @@ test("readBridgeConfig: PI_WEB_BRIDGE_PORT > PI_WEB_BRIDGE_PORTS > default", () 
 test("readBridgeConfig: an invalid port env degrades to the default, never throws", () => {
 	const invalid = readBridgeConfig({ PI_WEB_BRIDGE_PORT: "not-a-port" });
 	assert.deepEqual(invalid.ports, parsePortRange("8790-8799"));
+	// PI_WEB_BRIDGE_PORT is single-port-only: a range value is invalid for
+	// it (the range grammar lives in PI_WEB_BRIDGE_PORTS) and degrades.
+	assert.deepEqual(
+		readBridgeConfig({ PI_WEB_BRIDGE_PORT: "9001-9003" }).ports,
+		parsePortRange("8790-8799"),
+	);
 	// Out-of-bounds range is invalid the same way.
 	const outOfBounds = readBridgeConfig({ PI_WEB_BRIDGE_PORTS: "700-800" });
 	assert.deepEqual(outOfBounds.ports, parsePortRange("8790-8799"));
@@ -162,6 +192,64 @@ test("loadOrCreateToken: empty file → regenerated and overwritten", () => {
 		assert.equal(token.length, 43);
 		assert.equal(readFileSync(file, "utf8"), `${token}\n`);
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("loadOrCreateToken: two parallel first starts race → both adopt ONE token (the file's)", (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "bridge-config-"));
+	const file = join(dir, "web-bridge-token");
+	try {
+		assert.equal(existsSync(file), false, "precondition: two sessions, no token file yet");
+		const rivalToken = "rival-pi-session-token-0123456789abcdefghijklmnopqr";
+
+		// Deterministically replay the concurrent-first-start race at its
+		// exact window: this session's initial read missed (ENOENT), then
+		// the rival session created the file with ITS token, and only then
+		// our 'wx' create ran. The write is intercepted to replay that
+		// interleaving: the rival wins the file, our create throws EEXIST.
+		// loadOrCreateToken must adopt the rival's token — if both sessions
+		// kept their own, the companion (paired with one of them) could not
+		// authenticate the other bridge.
+		const realWrite = fsModule.writeFileSync;
+		t.mock.method(fsModule, "writeFileSync", (
+			path: Parameters<typeof realWrite>[0],
+			data: Parameters<typeof realWrite>[1],
+			options?: Parameters<typeof realWrite>[2],
+		) => {
+			// The rival's atomic O_EXCL create wins the race…
+			realWrite(path, `${rivalToken}\n`, { mode: 0o600, flag: "wx" });
+			// …and our own create loses with EEXIST (file already exists).
+			const error = new Error("EEXIST: file already exists") as NodeJS.ErrnoException;
+			error.code = "EEXIST";
+			throw error;
+		});
+
+		// The loser of the race must not keep its freshly generated token:
+		assert.equal(loadOrCreateToken(file), rivalToken, "the rival's token is adopted");
+		// …and the file still holds exactly the shared (rival) token.
+		assert.equal(readFileSync(file, "utf8"), `${rivalToken}\n`, "file untouched by the loser");
+	} finally {
+		t.mock.restoreAll();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("loadOrCreateToken: non-EEXIST write failures still surface", (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "bridge-config-"));
+	const file = join(dir, "web-bridge-token");
+	try {
+		// Only the create-race EEXIST is handled (adopt the winner); any
+		// other failure (EACCES, ENOSPC, …) must propagate — startBridge
+		// turns it into a disabled bridge, but the error itself stays true.
+		t.mock.method(fsModule, "writeFileSync", () => {
+			const error = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+			error.code = "EACCES";
+			throw error;
+		});
+		assert.throws(() => loadOrCreateToken(file), /EACCES/);
+	} finally {
+		t.mock.restoreAll();
 		rmSync(dir, { recursive: true, force: true });
 	}
 });

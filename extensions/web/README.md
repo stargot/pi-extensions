@@ -138,7 +138,7 @@ Readability + Turndown по уже отрендеренному DOM (clone до�
 
 | Переменная | Значение |
 |---|---|
-| `PI_WEB_BRIDGE_PORT` | один порт; побеждает `PI_WEB_BRIDGE_PORTS` |
+| `PI_WEB_BRIDGE_PORT` | одиночный порт (не диапазон; для диапазона есть `PI_WEB_BRIDGE_PORTS`); побеждает `PI_WEB_BRIDGE_PORTS` |
 | `PI_WEB_BRIDGE_PORTS` | диапазон `"8790-8799"` или одиночный порт; значение по умолчанию |
 | `PI_WEB_BRIDGE_TOKEN` | shared-токен инлайн; побеждает `PI_WEB_BRIDGE_TOKEN_FILE` |
 | `PI_WEB_BRIDGE_TOKEN_FILE` | путь к файлу токена |
@@ -162,8 +162,8 @@ IP — бан на 60 с (слепые локальные сканеры).
 
 **Lifecycle**: сервер стартует в `session_start` (не в фабрике расширения —
 открывать сокеты там запрещено правилами pi) и закрывается в
-`session_shutdown`; /new, /resume, /fork, /reload пересоздают его, расширение
-переподключается само по backoff.
+`session_shutdown`; /new, /resume, /fork, /clone, /reload пересоздают его,
+расширение переподключается само по backoff.
 
 ## Файлы
 
@@ -178,7 +178,8 @@ IP — бан на 60 с (слепые локальные сканеры).
 | `fetch/pdf.ts` | PDF-экстракция: ленивый unpdf, лимит 100 страниц, метаданные |
 | `fetch/bridge-protocol.ts` | Протокол WS v1: типы сообщений, `parseBridgeMessage`, константы дефолтов (порт-диапазон, таймауты, капы) |
 | `fetch/bridge-core.ts` | Чистое ядро моста (без сокетов): реестры клиентов и джобов, FIFO-очередь, constant-time auth, TTL/grace-таймеры |
-| `fetch/bridge.ts` | WS-сервер моста: перебор портов, Origin-фильтр, hello-аутентификация, генерация/чтение токена, heartbeat, `startBridge`/`close` |
+| `fetch/bridge.ts` | WS-сервер моста: перебор портов, Origin-фильтр, hello-аутентификация, генерация/чтение токена (гонобезопасная), heartbeat, `startBridge`/`close` |
+| `fetch/in-flight.ts` | Чистый хелпер дедупликации in-flight старта (`dedupeInFlight`), на который опирается lifecycle в `index.ts` |
 | `fetch/tool.ts` | Инструмент `web_fetch`: схема, execute, рендереры |
 | `query.ts` | Чистая логика построения запроса `web_search` (без зависимостей) |
 | `html.ts` | Мини HTML-парсер без зависимостей (селекторы `tag.class`, `getAttribute`, `textContent`) |
@@ -188,7 +189,7 @@ IP — бан на 60 с (слепые локальные сканеры).
 ## Тесты
 
 ```bash
-node --test extensions/web/test/*.test.ts   # 145 тестов
+node --test extensions/web/test/*.test.ts   # 152 теста
 ```
 
 | Файл | Тестов | Покрывает |
@@ -202,7 +203,8 @@ node --test extensions/web/test/*.test.ts   # 145 тестов
 | `fetcher.test.ts` | 23 | оркестрация: роутинг, ретраи, капы, редиректы, `renderFn` (+ SSRF-регрессия: рендер не вызывается для отклонённых URL) |
 | `bridge-protocol.test.ts` | 8 | валидные/битые JSON, чужой `v`, неизвестный type |
 | `bridge-core.test.ts` | 18 | реестры, auth, TTL→null, late-result, очередь, нет клиента→null |
-| `bridge-config.test.ts` | 10 | port-range/env-конфиг, парсинг диапазона, генерация токена |
+| `bridge-config.test.ts` | 13 | port-range/env-конфиг, грамматики портов (диапазон и одиночный), генерация токена + гонка параллельных первых стартов |
+| `in-flight.test.ts` | 4 | дедупликация in-flight старта моста (run/current, очистка слота, ретрай после сбоя) |
 | `bridge.test.ts` | 23 | интеграция с реальным WS-сервером (порт 0): auth, job→result, TTL, late-result |
 
 Тесты не импортируют `index.ts`/`tool.ts` (правило репо: чистая логика —

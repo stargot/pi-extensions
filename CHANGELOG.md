@@ -59,7 +59,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   `127.0.0.1`, Origin-фильтр на upgrade (злые веб-страницы отсекаются до
   обмена токеном), constant-time проверка токена, бан IP после 3 неудачных
   hello. Lifecycle — `session_start`/`session_shutdown` (мост честно
-  пересоздаётся на /new, /resume, /fork); исчерпание портов или недоступный
+  пересоздаётся на /new, /resume, /fork, /clone, /reload); исчерпание портов или недоступный
   токен отключают мост с warning, не ломая сессию; любой сбой рендера —
   честная пустая ошибка, а не подвешенный вызов.
 

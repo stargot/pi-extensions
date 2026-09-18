@@ -13,9 +13,9 @@
  * precedent: extensions/subagents/index.ts): the WS server is a module
  * singleton started in session_start — never in the factory, which must not
  * open sockets — and closed in session_shutdown. pi fires session_start /
- * session_shutdown around /new, /resume, /fork and /clone too, so the server
- * honestly restarts with the session; parallel pi sessions coexist via the
- * port range. Startup is deliberately non-fatal: a bridge that cannot bind
+ * session_shutdown around /new, /resume, /fork, /clone and /reload too, so
+ * the server honestly restarts with the session; parallel pi sessions
+ * coexist via the port range. Startup is deliberately non-fatal: a bridge that cannot bind
  * (range exhausted) or pair its token only degrades web_fetch's fallback to
  * the honest empty outcome — the session itself is never at risk.
  *
@@ -29,6 +29,7 @@ import {
 	startBridge,
 	type BridgeHandle,
 } from "./fetch/bridge.ts";
+import { dedupeInFlight } from "./fetch/in-flight.ts";
 import { registerWebFetch } from "./fetch/tool.ts";
 import registerWebSearch from "./search.ts";
 
@@ -51,14 +52,16 @@ let bridgeDisabledReason: string | null = null;
 let bridgeTokenFile: string | null = null;
 
 /**
- * Start the bridge once per session, idempotently and never fatally.
- * startBridge itself is idempotent-safe to call again only after close —
- * the guard here makes repeated session_start events (they fire on /new,
- * /resume, /fork, /clone, and after extension reload) skip a bridge that
- * is already listening.
+ * The bridge start, memoized in flight (dedupeInFlight, the pure core is
+ * in fetch/in-flight.ts). Overlapping session_start events — pi fires them
+ * on /new, /resume, /fork, /clone, /reload, and handlers run fire-and-
+ * forget — must share ONE startBridge call: two concurrent starts would
+ * each bind a server, and the first would leak and survive the shutdown
+ * that only ever saw the second handle. The work itself is deliberately
+ * non-fatal: a bridge that cannot bind (range exhausted) or pair its token
+ * only degrades web_fetch's fallback to the honest empty outcome.
  */
-async function ensureBridge(): Promise<void> {
-	if (bridge) return; // already listening — nothing to do
+const startBridgeOnce = dedupeInFlight(async (): Promise<void> => {
 	const config = readBridgeConfig(process.env);
 	bridgeTokenFile = config.tokenFile;
 	try {
@@ -76,10 +79,23 @@ async function ensureBridge(): Promise<void> {
 		bridgeDisabledReason = error instanceof Error ? error.message : String(error);
 		console.warn(`[pi-web] browser bridge failed to start: ${bridgeDisabledReason}`);
 	}
+});
+
+/** Start the bridge once per session, idempotently and never fatally. */
+function ensureBridge(): Promise<void> {
+	if (bridge) return Promise.resolve(); // already listening — nothing to do
+	// Joins an in-flight start instead of racing a second server.
+	return startBridgeOnce.run();
 }
 
 /** Idempotent teardown: close the bridge, forget it and its diagnostics. */
 async function shutdownBridge(): Promise<void> {
+	// Wait out an in-flight start (session_shutdown can overlap the very
+	// session_start that triggered it): close what the start PRODUCES, not
+	// whatever handle was visible before it settled — otherwise the
+	// just-started server leaks and survives the shutdown holding its port.
+	const pending = startBridgeOnce.current();
+	if (pending) await pending.catch(() => {}); // a failed start left nothing to close
 	const handle = bridge;
 	bridge = null;
 	bridgeDisabledReason = null;

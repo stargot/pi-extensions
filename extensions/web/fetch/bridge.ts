@@ -34,7 +34,12 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// The fs module is imported as a namespace-style default (property access
+// at call time) so tests can intercept writeFileSync and replay the
+// concurrent-first-start race deterministically (see
+// test/bridge-config.test.ts): named ESM imports bind to a module
+// snapshot and would bypass such a patch.
+import fs from "node:fs";
 import {
 	createServer,
 	type IncomingMessage,
@@ -106,10 +111,12 @@ export interface BridgeConfig {
 
 /**
  * Port-range spec shared by the PI_WEB_BRIDGE_PORTS env var and the
- * default: "8790-8799" (inclusive) or a single "8790". Validation matches
- * the companion's options validator by design (plan §4/B2): integers,
- * from ≥ 1024 (no privileged ports), to ≤ 65535, from ≤ to. Throws on any
- * deviation — readBridgeConfig translates that into the default range.
+ * default: a single "8790" or an inclusive "8790-8799". Canonical
+ * semantics, kept identical on the companion side
+ * (pi-web-companion src/options/validate.ts, plan §4/B2): integers,
+ * from ≥ 1024 (no privileged ports), to ≤ 65535, from ≤ to; a single port
+ * is the from == to degenerate range. Throws on any deviation —
+ * readBridgeConfig translates that into the default range.
  */
 export function parsePortRange(range: string): number[] {
 	const match = /^(\d+)(?:-(\d+))?$/.exec(range.trim());
@@ -132,6 +139,26 @@ export function parsePortRange(range: string): number[] {
 }
 
 /**
+ * Parse a single port ("8790", whitespace-tolerant) with the same bounds
+ * as parsePortRange: integer, ≥ 1024, ≤ 65535. This is the grammar of
+ * PI_WEB_BRIDGE_PORT — a range there is invalid (PI_WEB_BRIDGE_PORTS is
+ * the range variable). Throws on any deviation.
+ */
+export function parseSinglePort(port: string): number {
+	const trimmed = port.trim();
+	if (!/^\d+$/.test(trimmed)) {
+		throw new Error(`Invalid port: ${JSON.stringify(port)}`);
+	}
+	const value = Number(trimmed);
+	if (value < 1024 || value > 65535) {
+		throw new Error(
+			`Port out of bounds (1024–65535): ${JSON.stringify(port)}`,
+		);
+	}
+	return value;
+}
+
+/**
  * Default location of the pairing token file: <agentDir>/web-bridge-token,
  * with agentDir resolved by the pi host (getAgentDir). Extracted so the
  * wiring step (B4) can re-point it if the host's docs say otherwise, and
@@ -143,9 +170,10 @@ export function resolveTokenFilePath(): string {
 
 /**
  * Bridge configuration from the environment (plan §2):
- * - PI_WEB_BRIDGE_PORT (one port) wins over PI_WEB_BRIDGE_PORTS (a range
- *   like "8790-8799"); the default range applies otherwise. An invalid
- *   value never throws — it degrades to the default range;
+ * - PI_WEB_BRIDGE_PORT — a single port (the range grammar lives in
+ *   PI_WEB_BRIDGE_PORTS, which it overrides); the default range applies
+ *   otherwise. An invalid value never throws — it degrades to the default
+ *   range;
  * - PI_WEB_BRIDGE_TOKEN (inline) wins over PI_WEB_BRIDGE_TOKEN_FILE
  *   (path); the default is resolveTokenFilePath().
  */
@@ -155,7 +183,7 @@ export function readBridgeConfig(
 	let ports: number[];
 	try {
 		ports = env.PI_WEB_BRIDGE_PORT
-			? parsePortRange(env.PI_WEB_BRIDGE_PORT)
+			? [parseSinglePort(env.PI_WEB_BRIDGE_PORT)]
 			: parsePortRange(env.PI_WEB_BRIDGE_PORTS ?? DEFAULT_PORT_RANGE);
 	} catch {
 		ports = parsePortRange(DEFAULT_PORT_RANGE);
@@ -194,24 +222,52 @@ export interface BridgeHandle {
  * (crypto.randomBytes(32) → base64url) and persist it (plan §2 pairing:
  * the user pastes it into the extension's options once). The write is
  * mkdir -p + mode 600 — silently relaxed on NTFS, matching the threat
- * model (same-user processes can read anything anyway). Throws only when
- * neither reading nor writing is possible — startBridge turns that into
- * a disabled bridge rather than a crashed session.
+ * model (same-user processes can read anything anyway). Creation is
+ * race-safe ('wx', O_EXCL): two pi sessions first-starting simultaneously
+ * converge on ONE token — the create's winner persists its token, the
+ * loser gets EEXIST, re-reads and adopts the winner's token (each session
+ * generating its own would leave the companion, pairable with only one,
+ * locked out of the other bridge). Throws only when neither reading nor
+ * writing is possible — startBridge turns that into a disabled bridge
+ * rather than a crashed session.
  *
  * Exported so the config unit tests (test/bridge-config.test.ts) can cover
  * the generate-and-persist pairing without a live server (socket lifecycle
  * is bridge.test.ts's job).
  */
 export function loadOrCreateToken(file: string): string {
-	try {
-		const existing = readFileSync(file, "utf8").trim();
-		if (existing) return existing;
-	} catch {
-		// Fall through to generation (ENOENT is the expected path).
+	// Bounded loop: the fast path is a read of an existing file; on a miss
+	// we create with 'wx' (O_EXCL) so exactly one concurrent first-start
+	// writes its token and the losers adopt it. The loop (not a bare
+	// EEXIST branch) also covers the transient window where the winner has
+	// created the file but not flushed its bytes yet: re-read and adopt
+	// instead of generating a rival token.
+	for (let attempt = 0; attempt < 5; attempt++) {
+		try {
+			const existing = fs.readFileSync(file, "utf8").trim();
+			if (existing) return existing;
+		} catch {
+			// Fall through to creation (ENOENT is the expected path).
+		}
+		const token = randomBytes(32).toString("base64url");
+		fs.mkdirSync(dirname(file), { recursive: true });
+		try {
+			fs.writeFileSync(file, `${token}\n`, {
+				mode: 0o600,
+				flag: "wx",
+			});
+			return token;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+			// Lost the create race: loop back and adopt the winner's token
+			// (see the docblock — divergent tokens break pairing).
+		}
 	}
+	// The file exists but still reads empty after every attempt (an aborted
+	// first write — no paired token exists anywhere to adopt). Heal it the
+	// historical way: plain truncating overwrite.
 	const token = randomBytes(32).toString("base64url");
-	mkdirSync(dirname(file), { recursive: true });
-	writeFileSync(file, `${token}\n`, { mode: 0o600 });
+	fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
 	return token;
 }
 
