@@ -12,7 +12,7 @@
 	},
 	"scripts": {
 		"test": "node --test extensions/**/test/*.test.ts",
-		"smoke": "pi --list-models -e ./extensions/context-inspector/index.ts -e ./extensions/edit-guard/index.ts -e ./extensions/prompt-snippets/index.ts -e ./extensions/session-ledger/index.ts -e ./extensions/session-recall/index.ts -e ./extensions/session-trace/index.ts -e ./extensions/subagents/index.ts -e ./extensions/web/index.ts",
+		"smoke": "pi --list-models -e ./extensions/ask-user-question.ts -e ./extensions/context-inspector/index.ts -e ./extensions/edit-guard/index.ts -e ./extensions/prompt-snippets/index.ts -e ./extensions/session-ledger/index.ts -e ./extensions/session-recall/index.ts -e ./extensions/session-trace/index.ts -e ./extensions/subagents/index.ts -e ./extensions/web/index.ts",
 		"stats": "node extensions/session-ledger/cli.ts",
 		"recall": "node extensions/session-recall/cli.ts",
 		"trace": "node extensions/session-trace/cli.ts",
@@ -26,6 +26,7 @@
 	},
 	"pi": {
 		"extensions": [
+			"./extensions/ask-user-question.ts",
 			"./extensions/context-inspector/index.ts",
 			"./extensions/edit-guard/index.ts",
 			"./extensions/prompt-snippets/index.ts",
