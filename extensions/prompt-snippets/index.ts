@@ -2,7 +2,8 @@
  * Prompt Snippets — mix-and-match single-purpose prompt rules.
  *
  * Each snippet is a markdown file with frontmatter (name, description,
- * placement, order) stored in the `snippets/` directory next to this file.
+ * placement, order) stored in `~/.pi/agent/snippets/` (user data lives
+ * outside the package git clone, so `pi update` never touches it).
  *
  * - Press alt+s or run /snippets to open the toggle menu (space: toggle,
  *   tab: preview, enter: apply, esc: cancel). The menu is a bordered,
@@ -16,8 +17,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
@@ -31,8 +32,7 @@ interface Snippet {
 	body: string;
 }
 
-const extensionDir = dirname(fileURLToPath(import.meta.url));
-const snippetsDir = join(extensionDir, "snippets");
+const snippetsDir = join(getAgentDir(), "snippets");
 const WIDGET_ID = "prompt-snippets";
 
 function parseSnippet(filename: string, raw: string): Snippet | null {

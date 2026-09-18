@@ -27,7 +27,7 @@
 
 ## Сниппеты
 
-Лежат в `snippets/` рядом с `index.ts` — по одному markdown-файлу на сниппет,
+Лежат в `~/.pi/agent/snippets/` — по одному markdown-файлу на сниппет,
 с frontmatter:
 
 ```markdown
