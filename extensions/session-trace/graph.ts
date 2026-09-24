@@ -414,7 +414,7 @@ export class TraceView {
 			m.totals.cost > 0 ? fmtMoney(m.totals.cost) : "",
 		].filter(Boolean) as string[];
 		const left = parts.join(sep);
-		const b = this.badge();
+		const b = this.badge(visibleWidth(left) + 1);
 		const pad = width - visibleWidth(left) - visibleWidth(b) - 1;
 		return pad > 0 ? `${left} ${" ".repeat(pad)}${b}` : truncateToWidth(`${left} ${b}`, width);
 	}

@@ -461,7 +461,7 @@ export function resolveEdit(fileText: string, oldText: string, opts?: { fuzzy?: 
 	}
 	// Prefilter не пропустил ни одного окна — показываем первое окно файла.
 	if (!bestEffort && fileLines.length >= n) {
-		bestEffort = { line: 1, span: n, actual: rawWindow(0, n, false), similarity: 0 };
+		bestEffort = { line: 1, span: n, actual: rawWindow(0, n, false) ?? "", similarity: 0 };
 	}
 	return notFound(oldText, bestEffort, "");
 }

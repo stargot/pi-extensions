@@ -99,7 +99,7 @@ test("GraphModel builds turns, chips, user/bash items and markers from entries",
 	);
 
 	// Первый ход: чип read → ok, thinking и текст обрезаны до одной строки
-	const t1 = m.items.find((i) => i.kind === "turn" && i.index === 1)!;
+	const t1 = m.items.find((i): i is Extract<(typeof m.items)[number], { kind: "turn" }> => i.kind === "turn" && i.index === 1)!;
 	assert.equal(t1.model, "glm-5.3");
 	assert.equal(t1.tokensOut, 50);
 	assert.equal(t1.chips.length, 1);
@@ -110,9 +110,9 @@ test("GraphModel builds turns, chips, user/bash items and markers from entries",
 	assert.equal(t1.text, "Читаю файл");
 
 	// Второй ход: чип edit → error; bash с ненулевым exitCode
-	const t2 = m.items.find((i) => i.kind === "turn" && i.index === 2)!;
+	const t2 = m.items.find((i): i is Extract<(typeof m.items)[number], { kind: "turn" }> => i.kind === "turn" && i.index === 2)!;
 	assert.equal(t2.chips[0].status, "error");
-	const bash = m.items.find((i) => i.kind === "bash")!;
+	const bash = m.items.find((i): i is Extract<(typeof m.items)[number], { kind: "bash" }> => i.kind === "bash")!;
 	assert.equal(bash.exitCode, 1);
 
 	// Дочерняя карточка субагента
@@ -130,7 +130,7 @@ test("GraphModel aggregates totals and per-model stats", () => {
 	const agg = m.models.get("glm-5.3")!;
 	assert.equal(agg.turns, 2);
 	assert.equal(agg.output, 90);
-	const child = m.items.find((i) => i.kind === "child")!;
+	const child = m.items.find((i): i is Extract<(typeof m.items)[number], { kind: "child" }> => i.kind === "child")!;
 	assert.ok(child);
 	// version растёт с каждой записью (инвалидация кэша рендера)
 	assert.ok(m.version >= sessionEntries().length);

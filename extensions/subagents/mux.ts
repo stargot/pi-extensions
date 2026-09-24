@@ -32,7 +32,7 @@ export interface CreatePaneOptions {
  * HERDR_ENV=1 and WEZTERM_PANE set (pi inside a herdr pane) must pick herdr.
  */
 export function selectBackend(
-	env: Pick<NodeJS.ProcessEnv, "HERDR_ENV" | "WEZTERM_PANE">,
+	env: NodeJS.ProcessEnv,
 	herdrOk: boolean,
 	weztermOk: boolean,
 ): MuxBackend | null {

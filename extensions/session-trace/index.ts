@@ -47,8 +47,8 @@ export default function (pi: ExtensionAPI) {
 						completions = sessions
 							.slice(0, 20)
 							.map((s) => ({
-								value: s.file,
-								label: `${basename(s.file)}${s.modified ? ` · ${new Date(s.modified).toLocaleString()}` : ""}`,
+								value: s.path,
+								label: `${basename(s.path)}${s.modified ? ` · ${new Date(s.modified).toLocaleString()}` : ""}`,
 							}));
 					})
 					.catch(() => {

@@ -51,7 +51,7 @@ test("recorder: throttles intermediate writes (sequence still bumps)", () => {
 	rec.sessionStart();
 	const first = JSON.parse(readFileSync(file, "utf8"));
 	rec.toolExecutionStart("t1", "grep");
-	rec.toolExecutionEnd("t1");
+	rec.toolExecutionEnd();
 	// Throttled: disk still shows the last flushed state, but the in-memory
 	// sequence advanced — verify via a forced flush.
 	rec.agentEndWaiting();
@@ -87,7 +87,8 @@ test("recorder: heartbeat bumps sequence and preserves the last real event", () 
 
 test("readActivityState: missing/invalid/wrong-id reasons", () => {
 	const file = tmpActivityFile();
-	assert.equal(readActivityState(file, "c1").reason, "missing");
+	const reasonOf = (r: ReturnType<typeof readActivityState>): string => (r.ok ? "ok" : r.reason);
+	assert.equal(reasonOf(readActivityState(file, "c1")), "missing");
 
 	const rec = createActivityRecorder({ runningChildId: "c1", activityFile: file });
 	rec.sessionStart();
@@ -95,10 +96,10 @@ test("readActivityState: missing/invalid/wrong-id reasons", () => {
 	assert.equal(ok.ok, true);
 	if (ok.ok) assert.equal(ok.state.runningChildId, "c1");
 
-	assert.equal(readActivityState(file, "c2").reason, "wrong-id");
+	assert.equal(reasonOf(readActivityState(file, "c2")), "wrong-id");
 
 	writeFileSync(file, "not json", "utf8");
-	assert.equal(readActivityState(file, "c1").reason, "invalid");
+	assert.equal(reasonOf(readActivityState(file, "c1")), "invalid");
 
 	rmSync(join(file, "..", ".."), { recursive: true, force: true });
 });
