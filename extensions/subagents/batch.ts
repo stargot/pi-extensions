@@ -24,6 +24,13 @@ import { killProcessTree } from "./proctree.ts";
 export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
 export const PER_TASK_OUTPUT_CAP = 50 * 1024;
+/**
+ * Cap for a chain step's {previous} output. The prompt rides the child's
+ * argv, and Windows command lines top out around 32K characters — an
+ * uncapped handoff turns a verbose step into a spawn failure (EINVAL) of
+ * the next one.
+ */
+export const PREVIOUS_OUTPUT_CAP = 16 * 1024;
 /** stderr kept per child (tail). Diagnostics live at the end of a crash
  *  log; an unbounded buffer just bloats memory and the error card. */
 export const STDERR_CAP = 64 * 1024;
@@ -127,7 +134,9 @@ export function resultOutput(r: BatchResult): string {
 }
 
 export function substitutePrevious(task: string, previousOutput: string): string {
-	return task.replace(/\{previous\}/g, previousOutput);
+	// Function form: the output is data, not a replacement pattern — "$&",
+	// "$`", "$$" in a child's answer must survive verbatim.
+	return task.replace(/\{previous\}/g, () => previousOutput);
 }
 
 export function truncateOutput(output: string, cap = PER_TASK_OUTPUT_CAP): string {

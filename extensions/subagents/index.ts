@@ -66,6 +66,7 @@ import {
 	substitutePrevious,
 	summarizeTools,
 	truncateOutput,
+	PREVIOUS_OUTPUT_CAP,
 	type BatchMessage,
 	type BatchResult,
 } from "./batch.ts";
@@ -1425,9 +1426,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 					for (let i = 0; i < params.chain.length; i++) {
 						const step = params.chain[i];
+						// Cap what this step receives via {previous}: the prompt rides
+						// the child's argv, and Windows command lines are finite — an
+						// uncapped handoff turns a verbose step into the next one's
+						// spawn failure.
+						const handOffOutput = i === 0 ? "" : truncateOutput(previousOutput, PREVIOUS_OUTPUT_CAP);
 						// Size of what this step receives via {previous} — shown as ← +Nk.
-						handOff.push(i === 0 ? 0 : Buffer.byteLength(previousOutput, "utf8"));
-						const taskWithContext = substitutePrevious(step.task, previousOutput);
+						handOff.push(Buffer.byteLength(handOffOutput, "utf8"));
+						const taskWithContext = substitutePrevious(step.task, handOffOutput);
 						let currentStep: BatchResult | null = null;
 						const chainUpdate = onUpdate
 							? (partial: { content?: unknown; details?: unknown }) => {

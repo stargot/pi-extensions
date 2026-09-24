@@ -308,6 +308,14 @@ test("BatchMessage shape: text-only message_end without usage is tolerated", () 
 	assert.equal(finalOutput(r.messages), "hi");
 });
 
+// ── Reliability fixes: chaining, cancel, timeout, compaction ──
+
+test("substitutePrevious: replacement output is data, not a pattern ($&, $$ survive)", () => {
+	const out = 'git log --format="%h %s" && echo "$$" done$&';
+	assert.equal(substitutePrevious("Analyze: {previous}", out), `Analyze: ${out}`);
+	assert.equal(substitutePrevious("no placeholder", out), "no placeholder");
+});
+
 test("runHeadlessChild: abort marks the result aborted/failed, not success", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-batch-abort-"));
 	const fixture = join(dir, "hang.js");
