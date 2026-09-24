@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -86,6 +86,23 @@ test("corrupt index file reads empty instead of throwing", () => {
 		writeFileSync(path, "{not json");
 		const r = readRunningWorkers(path);
 		assert.equal(r.workers.length, 0);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("writeIndexFile: no temp-file leftovers after add/remove", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-running-tmp-"));
+	const path = runningIndexPath(dir);
+	try {
+		addRunningWorker(path, worker({ id: "a" }));
+		addRunningWorker(path, worker({ id: "b" }));
+		removeRunningWorker(path, "a");
+		const { workers } = readRunningWorkers(path, () => true);
+		assert.equal(workers.length, 1);
+		assert.equal(workers[0]?.id, "b");
+		const leftovers = readdirSync(dir).filter((f) => f.includes(".tmp"));
+		assert.equal(leftovers.length, 0, `no tmp files left: ${leftovers.join(", ")}`);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

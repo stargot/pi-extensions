@@ -10,7 +10,8 @@
  *
  * Pure logic, no pi runtime imports — shared with session-trace (read-only).
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
 export const RUNNING_INDEX_VERSION = 1;
@@ -85,9 +86,22 @@ function readIndexFile(path: string): RunningIndexFile {
 function writeIndexFile(path: string, index: RunningIndexFile): void {
 	try {
 		mkdirSync(dirname(path), { recursive: true });
-		const tmp = `${path}.tmp`;
-		writeFileSync(tmp, JSON.stringify(index));
-		renameSync(tmp, path);
+		// Unique temp name: two pi sessions batching concurrently share nothing,
+		// so one writer's rename can never clobber another's half-written file.
+		// (In-process add/remove are synchronous — atomic w.r.t. each other.)
+		// Cross-process writers remain last-writer-wins on the whole file; the
+		// index is advisory and readers heal via PID reaping.
+		const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+		try {
+			writeFileSync(tmp, JSON.stringify(index));
+			renameSync(tmp, path);
+		} finally {
+			try {
+				unlinkSync(tmp);
+			} catch {
+				// Renamed away — nothing to clean.
+			}
+		}
 	} catch {
 		// Best effort: the index is advisory, never fatal.
 	}
