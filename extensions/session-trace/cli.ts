@@ -14,7 +14,7 @@ import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { TraceView } from "./graph.ts";
 import { oneLine } from "./session.ts";
 
-const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
+const SESSIONS_DIR = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions");
 
 interface SessionInfo {
 	file: string;
