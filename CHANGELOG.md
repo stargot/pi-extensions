@@ -7,6 +7,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Added
 
+- **subagents**: `task_batch` — per-task таймаут `timeoutMs` (параметр модели;
+  по умолчанию 30 минут, `0` отключает): зависший ребёнок убивается по дереву
+  процессов и возвращается как failed (`stopReason: timeout`) вместо вечного
+  зависания инструмента.
+- **subagents**: в live-прогрессе `task_batch` виден текущий инструмент ребёнка
+  (`→ bash…`) — инжест `tool_execution_start/end` обновляет карточку внутри
+  хода, не дожидаясь его конца.
+
 - **ask-user-question**: инструмент структурированного вопроса к пользователю
   (вопрос, опции с описаниями, multiSelect, свободный ввод через Other).
   Перенесён из глобальных расширений в пакет, импорты перебиты
@@ -98,6 +106,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 - **web**: общие сетевые хелперы (`combineSignals`, `isAbort`, `sleep`,
   `withRetry`, `readBodyCapped`) вынесены в `http.ts` и используются обоими
   инструментами.
+- **subagents**: `task_batch` — живые обновления (onUpdate details) несут
+  компактные снапшоты результатов: payload'ы toolResult отброшены, длинные
+  тексты и аргументы обрезаны — полная транскрипт и так живёт в session-файле
+  ребёнка; финальный результат остаётся полным.
+- **subagents**: `/trace`-карточка ребёнка вынесена в общий `appendTraceCard`
+  (одна конвенция для панельных и headless детей), убийство процессов — в
+  общий `proctree.ts` (используется и abort-путём, и `/workers kill`).
 
 ### Removed
 
@@ -108,6 +123,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 - **web-search**: зависимость `linkedom` (из корневого `package.json` и
   `extensions/web-search/package.json`); расширение больше не требует
   `npm install`.
+
+### Fixed
+
+- **subagents**: `task_batch` — ребёнок, убитый сигналом (Esc, таймаут,
+  `/workers kill`), больше не отчитывается «успехом с пустым выводом»:
+  `close` с `code=null` маппится в failed c `stopReason: aborted`.
+- **subagents**: `task_batch` — работающая эскалация SIGKILL: после первого
+  kill условие `if (!proc.killed)` никогда не пускало до SIGKILL, зависший по
+  SIGTERM ребёнок оставался живым навсегда; отмена на Windows теперь убивает
+  всё дерево процессов (раньше — только прямого ребёнка, внуки оставались),
+  таймер эскалации снимается по завершении.
+- **subagents**: `task_batch` — после отмены оставшиеся queued-задачи
+  parallel-режима больше не спавнятся «на убой» (мусорные процессы и
+  session-файлы) — возвращаются как `cancelled before start`.
+- **subagents**: `task_batch` — `{previous}` в цепочке больше не интерпретирует
+  `$&`, `` $` ``, `$$` в выводе предыдущего шага как replacement-паттерны
+  (function-replacement) и обрезается до 16 КБ (промпт едет в argv, лимит
+  командной строки Windows ~32К символов).
+- **subagents**: `task_batch` — stderr ребёнка капится хвостом 64 КБ с маркером
+  (раньше — безлимитный рост буфера и карточки ошибки).
+- **subagents**: running-index — уникальное имя tmp-файла: два параллельных
+  сеанса с батчами больше не могут перезаписать half-written `.tmp` друг друга
+  (гонка на общем имени давала потерянные записи и призраков в `/workers`).
 
 ## [0.2.0] — 2026-09-15
 
