@@ -307,3 +307,125 @@ test("BatchMessage shape: text-only message_end without usage is tolerated", () 
 	assert.equal(r.usage.input, 0);
 	assert.equal(finalOutput(r.messages), "hi");
 });
+
+test("runHeadlessChild: abort marks the result aborted/failed, not success", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-batch-abort-"));
+	const fixture = join(dir, "hang.js");
+	writeFileSync(fixture, `setInterval(() => {}, 1000);`, "utf8");
+	const original = process.argv[1];
+	const ac = new AbortController();
+	try {
+		process.argv[1] = fixture;
+		setTimeout(() => ac.abort(), 150);
+		const started = Date.now();
+		const result = await runHeadlessChild({
+			agentName: "x",
+			agentLabel: "x",
+			task: "t",
+			cwd: dir,
+			defaultCwd: dir,
+			sessionsRoot: join(dir, "sessions"),
+			timeoutMs: 0, // off — abort is the killer here
+			signal: ac.signal,
+		});
+		const elapsed = Date.now() - started;
+		assert.ok(elapsed < 5000, `resolved promptly after abort (${elapsed}ms)`);
+		assert.equal(isFailedResult(result), true, "aborted child is a failure, not a false success");
+		assert.equal(result.stopReason, "aborted");
+		assert.equal(result.exitCode !== 0, true);
+		assert.ok(result.errorMessage && result.errorMessage.length > 0);
+	} finally {
+		process.argv[1] = original;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("runHeadlessChild: timeout kills a hung child and reports timeout", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-batch-timeout-"));
+	const fixture = join(dir, "hang.js");
+	writeFileSync(fixture, `setInterval(() => {}, 1000);`, "utf8");
+	const original = process.argv[1];
+	try {
+		process.argv[1] = fixture;
+		const started = Date.now();
+		const result = await runHeadlessChild({
+			agentName: "x",
+			agentLabel: "x",
+			task: "t",
+			cwd: dir,
+			defaultCwd: dir,
+			sessionsRoot: join(dir, "sessions"),
+			timeoutMs: 300,
+			killEscalationMs: 250,
+		});
+		const elapsed = Date.now() - started;
+		assert.ok(elapsed < 5000, `timeout resolved promptly (${elapsed}ms)`);
+		assert.equal(isFailedResult(result), true);
+		assert.equal(result.stopReason, "timeout");
+		assert.match(result.errorMessage || "", /timed out/);
+	} finally {
+		process.argv[1] = original;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("runHeadlessChild: SIGTERM-ignoring child is SIGKILLed after escalation (posix)", async () => {
+	if (process.platform === "win32") return; // TerminateProcess cannot be ignored
+	const dir = mkdtempSync(join(tmpdir(), "pi-batch-escalate-"));
+	const fixture = join(dir, "stubborn.js");
+	writeFileSync(fixture, `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`, "utf8");
+	const original = process.argv[1];
+	try {
+		process.argv[1] = fixture;
+		const started = Date.now();
+		const result = await runHeadlessChild({
+			agentName: "x",
+			agentLabel: "x",
+			task: "t",
+			cwd: dir,
+			defaultCwd: dir,
+			sessionsRoot: join(dir, "sessions"),
+			timeoutMs: 200,
+			killEscalationMs: 300,
+		});
+		const elapsed = Date.now() - started;
+		// 200ms timeout + ~300ms escalation grace → well under 5s.
+		assert.ok(elapsed < 5000, `escalation fired (${elapsed}ms)`);
+		assert.equal(isFailedResult(result), true);
+		assert.equal(result.stopReason, "timeout");
+	} finally {
+		process.argv[1] = original;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("runHeadlessChild: stderr is capped to a tail with a truncation marker", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-batch-stderr-"));
+	const fixture = join(dir, "noisy.js");
+	writeFileSync(
+		fixture,
+		// One big write + a grace timeout: process.exit() would drop still-
+		// buffered pipe output and the parent would never cross the cap.
+		`let out = ""; for (let i = 0; i < 4000; i++) out += "noisy line " + i + " " + "x".repeat(60) + "\\n"; process.stderr.write(out); setTimeout(() => process.exit(0), 300);`,
+		"utf8",
+	);
+	const original = process.argv[1];
+	try {
+		process.argv[1] = fixture;
+		const result = await runHeadlessChild({
+			agentName: "x",
+			agentLabel: "x",
+			task: "t",
+			cwd: dir,
+			defaultCwd: dir,
+			sessionsRoot: join(dir, "sessions"),
+			timeoutMs: 0,
+		});
+		assert.ok(result.stderr.startsWith("[...stderr truncated"), "marker present");
+		assert.ok(result.stderr.length < 200 * 1024, `bounded (${result.stderr.length} bytes)`);
+		assert.ok(result.stderr.includes("3999"), "tail (the useful end) preserved");
+	} finally {
+		process.argv[1] = original;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

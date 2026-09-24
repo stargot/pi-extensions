@@ -19,10 +19,19 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { addRunningWorker, removeRunningWorker, runningIndexPath } from "./running-index.ts";
+import { killProcessTree } from "./proctree.ts";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
 export const PER_TASK_OUTPUT_CAP = 50 * 1024;
+/** stderr kept per child (tail). Diagnostics live at the end of a crash
+ *  log; an unbounded buffer just bloats memory and the error card. */
+export const STDERR_CAP = 64 * 1024;
+/**
+ * Default per-child timeout. Generous, but a hung child must not wedge the
+ * tool call — and with it the parent's whole turn — forever. 0 disables.
+ */
+export const DEFAULT_CHILD_TIMEOUT_MS = 30 * 60 * 1000;
 
 // ── Types ──
 
@@ -94,7 +103,7 @@ export function isQueued(r: BatchResult): boolean {
 }
 
 export function isFailedResult(r: BatchResult): boolean {
-	return r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted";
+	return r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted" || r.stopReason === "timeout";
 }
 
 // ── Pure logic ──
@@ -431,6 +440,10 @@ export interface HeadlessChildOptions {
 	spawnerSession?: string;
 	/** Absolute pi CLI path; preferred on Windows where spawning .cmd shims directly fails (EINVAL). */
 	piPath?: string;
+	/** Per-child timeout in ms. Default DEFAULT_CHILD_TIMEOUT_MS; 0 disables. */
+	timeoutMs?: number;
+	/** Grace period before SIGKILL escalation after a kill (tests shrink this). */
+	killEscalationMs?: number;
 	signal?: AbortSignal;
 	onEvent?: (r: BatchResult) => void;
 	step?: number;
@@ -550,49 +563,112 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 				return;
 			}
 
-			let buffer = "";
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				try {
-					const event = JSON.parse(line);
-					if (ingestBatchEvent(result, event)) opts.onEvent?.(result);
-				} catch {
-					// Non-JSON line — ignore.
-				}
-			};
-
-			proc.stdout.on("data", (data: Buffer) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
-			});
-			proc.stderr.on("data", (data: Buffer) => {
-				result.stderr += data.toString();
-			});
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				result.exitCode = code ?? 0;
-				markElapsed();
-				resolve();
-			});
-			proc.on("error", (err) => {
-				result.exitCode = 1;
-				result.errorMessage = `failed to spawn ${command}: ${err.message}`;
-				markElapsed();
-				resolve();
-			});
-
-			if (opts.signal) {
-				const kill = () => {
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
+				let buffer = "";
+				const processLine = (line: string) => {
+					if (!line.trim()) return;
+					try {
+						const event = JSON.parse(line);
+						if (ingestBatchEvent(result, event)) opts.onEvent?.(result);
+					} catch {
+						// Non-JSON line — ignore.
+					}
 				};
-				if (opts.signal.aborted) kill();
-				else opts.signal.addEventListener("abort", kill, { once: true });
-			}
+
+				proc.stdout!.on("data", (data: Buffer) => {
+					buffer += data.toString();
+					const lines = buffer.split("\n");
+					buffer = lines.pop() || "";
+					for (const line of lines) processLine(line);
+				});
+				// Keep the tail only: crash diagnostics live at the end of the
+				// stream, and a chatty child must not grow the buffer unbounded.
+				let stderrTrimmed = false;
+				proc.stderr!.on("data", (data: Buffer) => {
+					result.stderr += data.toString();
+					if (result.stderr.length > STDERR_CAP * 2) {
+						result.stderr = result.stderr.slice(-STDERR_CAP);
+						stderrTrimmed = true;
+					}
+				});
+
+				// Kill bookkeeping. `killed` separates our own kills (abort,
+				// timeout) from external ones; both must yield a FAILED result —
+				// close fires with code=null for signal deaths, which a naive
+				// `code ?? 0` reports as success.
+				let settled = false;
+				let killed = false;
+				let killReason: "aborted" | "timeout" | null = null;
+				let escalation: NodeJS.Timeout | null = null;
+
+				const killChild = (reason: "aborted" | "timeout") => {
+					if (settled || killed) return;
+					killed = true;
+					killReason = reason;
+					const pid = proc.pid;
+					// Tree kill on Windows, direct signal on POSIX — proc.kill
+					// leaves grandchildren (bash etc.) alive on win32.
+					killProcessTree(pid ?? -1, "SIGTERM");
+					// A child ignoring SIGTERM (or an unreapable POSIX subtree) is
+					// force-killed after the grace period. Note: proc.killed is
+					// already true after the first kill — it must not gate this.
+					escalation = setTimeout(() => {
+						if (settled) return;
+						killProcessTree(pid ?? -1, "SIGKILL");
+					}, opts.killEscalationMs ?? 5000);
+				};
+
+				// Per-child timeout: a hung child would otherwise wedge the tool
+				// call — and the parent's whole turn — forever.
+				const timeoutSetting = opts.timeoutMs ?? DEFAULT_CHILD_TIMEOUT_MS;
+				const timeout = timeoutSetting > 0 ? setTimeout(() => killChild("timeout"), timeoutSetting) : null;
+				timeout?.unref();
+
+				const clearTimers = () => {
+					if (escalation) clearTimeout(escalation);
+					if (timeout) clearTimeout(timeout);
+				};
+
+				proc.on("close", (code, signalCode) => {
+					settled = true;
+					clearTimers();
+					if (buffer.trim()) processLine(buffer);
+					if (killed) {
+						result.exitCode = code ?? 1;
+						result.stopReason = killReason ?? undefined;
+						if (!result.errorMessage) {
+							result.errorMessage =
+								killReason === "timeout"
+									? `timed out after ${timeoutSetting}ms and was killed`
+									: "killed: batch cancelled";
+						}
+					} else {
+						// Signal death we did not initiate (e.g. /workers kill):
+						// close fires with code=null — that must not read as success.
+						result.exitCode = code ?? (signalCode ? 1 : 0);
+						if (code === null && signalCode) {
+							result.stopReason = "aborted";
+							if (!result.errorMessage) result.errorMessage = `killed by signal ${signalCode}`;
+						}
+					}
+					if (stderrTrimmed) {
+						result.stderr = `[...stderr truncated, keeping last ${STDERR_CAP} bytes...]\n${result.stderr}`;
+					}
+					markElapsed();
+					resolve();
+				});
+				proc.on("error", (err) => {
+					settled = true;
+					clearTimers();
+					result.exitCode = 1;
+					result.errorMessage = `failed to spawn ${command}: ${err.message}`;
+					markElapsed();
+					resolve();
+				});
+
+				if (opts.signal) {
+					if (opts.signal.aborted) killChild("aborted");
+					else opts.signal.addEventListener("abort", () => killChild("aborted"), { once: true });
+				}
 		});
 	} finally {
 		unregister();

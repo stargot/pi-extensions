@@ -57,6 +57,7 @@ import {
 	mapWithConcurrencyLimit,
 	MAX_CONCURRENCY,
 	MAX_PARALLEL_TASKS,
+	DEFAULT_CHILD_TIMEOUT_MS,
 	oneline,
 	progressBar,
 	resultOutput,
@@ -1316,6 +1317,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				),
 			),
 			cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+			timeoutMs: Type.Optional(
+				Type.Number({
+					description:
+						`Per-task timeout in milliseconds, applied to every task in any mode. ` +
+						`Default ${DEFAULT_CHILD_TIMEOUT_MS} (30 min); 0 disables. A timed-out task is killed and reported failed. ` +
+						`Set explicitly for long-running tasks that would otherwise hit the default.`,
+					default: DEFAULT_CHILD_TIMEOUT_MS,
+				}),
+			),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -1328,6 +1338,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
 			const batchModeLabel: string = hasChain ? "chain" : hasTasks ? "parallel" : "single";
+			// Per-child timeout: explicit positive value wins; 0 disables; an
+			// invalid value falls back to the runner default (30 min).
+			const timeoutMs =
+				typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
+					? Math.max(0, Math.floor(params.timeoutMs))
+					: undefined;
 
 			const runSingle = async (
 				agentName: string,
@@ -1358,6 +1374,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					sessionsRoot,
 					batchMode: batchModeLabel,
 					spawnerSession: ctx.sessionManager?.getSessionId?.(),
+					timeoutMs,
 					signal,
 					onEvent: onChildEvent,
 					step,
