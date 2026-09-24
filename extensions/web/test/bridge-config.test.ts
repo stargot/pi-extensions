@@ -214,8 +214,8 @@ test("loadOrCreateToken: two parallel first starts race → both adopt ONE token
 		const realWrite = fsModule.writeFileSync;
 		t.mock.method(fsModule, "writeFileSync", (
 			path: Parameters<typeof realWrite>[0],
-			data: Parameters<typeof realWrite>[1],
-			options?: Parameters<typeof realWrite>[2],
+			_data: Parameters<typeof realWrite>[1],
+			_options?: Parameters<typeof realWrite>[2],
 		) => {
 			// The rival's atomic O_EXCL create wins the race…
 			realWrite(path, `${rivalToken}\n`, { mode: 0o600, flag: "wx" });

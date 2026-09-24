@@ -359,7 +359,8 @@ test("compactResultForDetails: drops toolResult payloads, caps long texts and ar
 	const toolResult = c.messages.find((m) => m.role === "toolResult");
 	assert.equal(toolResult?.content, undefined, "toolResult payload dropped");
 	// Original untouched (updates are copies).
-	assert.equal((r.messages[0]?.content?.[0] as { text?: string }).text?.length, 5000);
+	const originalPart = r.messages[0]?.content?.[0] as { text?: string } | undefined;
+	assert.equal(originalPart?.text?.length, 5000);
 });
 
 test("runHeadlessChild: abort marks the result aborted/failed, not success", async () => {

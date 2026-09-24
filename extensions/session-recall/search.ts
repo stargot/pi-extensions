@@ -57,8 +57,7 @@ export const ROLES: UnitRole[] = ["user", "assistant", "tool", "custom", "summar
 export function parseQuery(input: string): Query {
 	const query: Query = { terms: [] };
 	const re = /"([^"]+)"|(\S+)/g;
-	let match: RegExpExecArray | null;
-	while ((match = re.exec(input)) !== null) {
+	for (const match of input.matchAll(re)) {
 		const token = match[1] ?? match[2] ?? "";
 		const filter = /^(role|project|tool):(.+)$/.exec(token);
 		if (filter && !match[1]) {

@@ -82,5 +82,5 @@ test("formatResults: numbered list and empty case", () => {
 		{ title: "T1", url: "https://a", snippet: "s1" },
 		{ title: "T2", url: "https://b", snippet: "s2" },
 	]);
-	assert.match(out, /1\. T1\n   https:\/\/a\n   s1\n\n2\. T2/);
+	assert.match(out, /1\. T1\n {3}https:\/\/a\n {3}s1\n\n2\. T2/);
 });

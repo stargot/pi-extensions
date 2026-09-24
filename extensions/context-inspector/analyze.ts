@@ -216,7 +216,8 @@ export function analyzeEntries(
 	let index = 0;
 
 	const add = (group: Record<string, GroupStat>, key: string, tokens: number) => {
-		const g = (group[key] ??= { count: 0, tokens: 0 });
+		if (!group[key]) group[key] = { count: 0, tokens: 0 };
+		const g = group[key];
 		g.count += 1;
 		g.tokens += tokens;
 	};

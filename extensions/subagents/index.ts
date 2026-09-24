@@ -69,7 +69,6 @@ import {
 	summarizeTools,
 	truncateOutput,
 	PREVIOUS_OUTPUT_CAP,
-	type BatchMessage,
 	type BatchResult,
 } from "./batch.ts";
 import { renderLauncherPs1, type LauncherSpec } from "./launcher.ts";
@@ -174,19 +173,6 @@ interface SpawnParams {
 	cwd?: string;
 }
 
-interface SubagentResultSummary {
-	name: string;
-	task: string;
-	agentName: string;
-	summary: string;
-	exitCode: number;
-	elapsedSec: number;
-	sessionFile: string;
-	errorMessage?: string;
-	usageText?: string;
-	model?: string;
-}
-
 // ── Module state (one set per live session; reset in session_start) ──
 
 let latestPi: ExtensionAPI | null = null;
@@ -203,10 +189,6 @@ function publishRunningChildrenCount(): void {
 		() => runningSubagents.size;
 }
 publishRunningChildrenCount();
-
-function isChildSession(): boolean {
-	return !!process.env.PI_SUBAGENT_SESSION;
-}
 
 function allowedAgentsInChild(): Set<string> | null {
 	const raw = process.env.PI_SUBAGENT_ALLOWED;
@@ -401,7 +383,6 @@ function completeSubagent(running: RunningSubagent, result: { exitCode: number; 
 				: "Sub-agent exited without output";
 	const { summary, usage, model } = summarizeSessionFile(running.sessionFile, fallback);
 	const elapsedSec = Math.floor((Date.now() - running.startTime) / 1000);
-
 	// session-trace integration: child card in /trace (TUI) and web viewer.
 	appendTraceCard(latestPi, {
 		agent: running.agentName || running.name,
@@ -1411,7 +1392,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			};
 
 			const modeCount = Number(hasChain) + Number(hasTasks) + Number(Boolean(params.agent && params.task));
-			const inferredMode: BatchDetails["mode"] = hasChain ? "chain" : hasTasks ? "parallel" : "single";
 
 			if (modeCount !== 1) {
 				const available = Array.from(defs.keys()).join(", ") || "none";

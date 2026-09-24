@@ -54,7 +54,7 @@ export function newestSession(root = sessionsRoot()): string | undefined {
 		}
 		for (const name of names) {
 			const full = join(dir, name);
-			let st;
+			let st: ReturnType<typeof statSync>;
 			try {
 				st = statSync(full);
 			} catch {
@@ -80,7 +80,10 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		// Origin допускается только собственный (same-origin POST из вьюера);
 		// чужая страница в браузере дёргать этот эндпоинт не может.
 		const ownOrigin = `http://${req.headers.host ?? ""}`;
-		if (req.headers.origin && req.headers.origin !== ownOrigin) return send(res, 403, "forbidden");
+		if (req.headers.origin && req.headers.origin !== ownOrigin) {
+			send(res, 403, "forbidden");
+			return;
+		}
 		let body = "";
 		req.on("data", (chunk) => {
 			body += chunk;
@@ -98,7 +101,10 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		return;
 	}
 
-	if (url.pathname === "/ping") return send(res, 200, "session-trace");
+	if (url.pathname === "/ping") {
+		send(res, 200, "session-trace");
+		return;
+	}
 
 	// Живые task_batch-воркеры из глобального индекса subagents (running.json).
 	// Динамический импорт: индекс опционален — без расширения отвечаем 404,
@@ -115,7 +121,10 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 
 	if (url.pathname === "/session.jsonl") {
 		const file = state.file;
-		if (!file || !existsSync(file)) return send(res, 404, "нет файла сессии — запустите serve.ts с --file или перетащите .jsonl на страницу");
+		if (!file || !existsSync(file)) {
+			send(res, 404, "нет файла сессии — запустите serve.ts с --file или перетащите .jsonl на страницу");
+			return;
+		}
 		res.writeHead(200, {
 			"content-type": MIME[".jsonl"],
 			"x-session-file": encodeURIComponent(basename(file)),
@@ -127,7 +136,10 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 
 	// Статика: / → index.html, /app.js
 	const rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
-	if (rel !== "index.html" && rel !== "app.js") return send(res, 404, "not found");
+	if (rel !== "index.html" && rel !== "app.js") {
+		send(res, 404, "not found");
+		return;
+	}
 	try {
 		res.writeHead(200, { "content-type": MIME[rel.slice(rel.lastIndexOf("."))] ?? "text/plain" });
 		res.end(readFileSync(join(webDir, rel)));

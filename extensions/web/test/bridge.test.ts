@@ -109,10 +109,8 @@ class TestClient {
 	): Promise<Extract<BridgeMessage, { type: "hello_ok" | "hello_err" }>> {
 		await this.open;
 		this.send(helloMsg(token));
-		return this.next((message) =>
-			message.type === "hello_ok" || message.type === "hello_err"
-				? true
-				: false,
+		return this.next(
+			(message) => message.type === "hello_ok" || message.type === "hello_err",
 		);
 	}
 

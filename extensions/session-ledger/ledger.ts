@@ -229,7 +229,8 @@ export function parseSessionText(text: string, file: string): SessionSummary | u
 		}
 		if (message.role === "toolResult") {
 			const name = message.toolName ?? toolNameByCallId.get(String((message as { toolCallId?: string }).toolCallId)) ?? "?";
-			const tool = (summary.byTool[name] ??= { calls: 0, errors: 0 });
+			if (!summary.byTool[name]) summary.byTool[name] = { calls: 0, errors: 0 };
+			const tool = summary.byTool[name];
 			tool.calls += 1;
 			const isError = message.isError === true;
 			if (isError) tool.errors += 1;
@@ -390,7 +391,8 @@ export function dayOf(ms: number): string {
 }
 
 function bump<T extends Stats>(group: Record<string, T>, key: string): T {
-	return (group[key] ??= emptyStats() as T);
+	if (!group[key]) group[key] = emptyStats() as T;
+	return group[key];
 }
 
 function normalizeUsage(usage: UsageLike): Required<Pick<UsageLike, "input" | "output" | "cacheRead" | "cacheWrite">> & { cost: number } {

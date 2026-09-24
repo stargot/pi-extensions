@@ -661,6 +661,8 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 						return `${theme.fg("success", "✓ ")}${theme.fg("muted", "Other: ")}${theme.fg("accent", answer.label)}`;
 					case "option":
 						return `${theme.fg("success", "✓ ")}${theme.fg("accent", `${answer.index}. ${answer.label}`)}`;
+					default:
+						return "";
 				}
 			});
 			return new Text(lines.join("\n"), 0, 0);

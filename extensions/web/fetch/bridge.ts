@@ -65,7 +65,6 @@ import {
 	type BridgeMessage,
 	type HelloReplyMsg,
 	type JobMsg,
-	type PingMsg,
 	type ResultMsg,
 } from "./bridge-protocol.ts";
 import type { RenderResult } from "./fetcher.ts";

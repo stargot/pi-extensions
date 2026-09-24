@@ -5,18 +5,18 @@
  */
 /* eslint-env browser */
 (function () {
-	"use strict";
+	
 
 	// ---------- форматирование ----------
 
 	function fmtK(n) {
-		if (!isFinite(n) || n === 0) return "0";
+		if (!Number.isFinite(n) || n === 0) return "0";
 		if (n < 1000) return String(Math.round(n));
 		if (n < 1e6) return (n / 1000).toFixed(1) + "k";
 		return (n / 1e6).toFixed(1) + "M";
 	}
 	function fmtDur(ms) {
-		if (ms === undefined || !isFinite(ms)) return "";
+		if (ms === undefined || !Number.isFinite(ms)) return "";
 		if (ms < 1000) return Math.max(1, Math.round(ms)) + "ms";
 		var s = ms / 1000;
 		if (s < 60) return s.toFixed(1) + "s";
@@ -28,7 +28,7 @@
 		return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 	}
 	function fmtMoney(c) {
-		if (!isFinite(c) || c === 0) return "";
+		if (!Number.isFinite(c) || c === 0) return "";
 		return c < 0.01 ? "$" + c.toFixed(4) : "$" + c.toFixed(2);
 	}
 	function oneLine(s, max) {
@@ -45,7 +45,7 @@
 		var t = e && e.message && e.message.timestamp;
 		if (typeof t === "number") return t;
 		var p = Date.parse((e && e.timestamp) || "");
-		return isFinite(p) ? p : 0;
+		return Number.isFinite(p) ? p : 0;
 	}
 	function contentText(c) {
 		if (typeof c === "string") return c;
@@ -63,7 +63,7 @@
 		if (typeof a.command === "string" && a.command) return oneLine(a.command, 72);
 		if (typeof a.query === "string" && a.query) return oneLine(a.query, 64);
 		if (typeof a.url === "string" && a.url) return oneLine(a.url, 64);
-		try { return oneLine(JSON.stringify(a), 64); } catch (e) { return ""; }
+		try { return oneLine(JSON.stringify(a), 64); } catch { return ""; }
 	}
 
 	// ---------- модель (порт session.ts) ----------
@@ -308,7 +308,7 @@
 				try {
 					var e = JSON.parse(t);
 					out.push({ ms: Date.parse(e.timestamp) || 0, e: e });
-				} catch (err) { /* частичная строка — пропускаем */ }
+				} catch { /* частичная строка — пропускаем */ }
 			});
 			return out;
 		}
@@ -499,7 +499,7 @@
 
 		// ---------- визуализация (canvas, в духе zoetrope) ----------
 
-		var viz = (function () {
+		(function () {
 			var COLORS = {
 				bg: "#151a21", line: "#2a3038", text: "#d7dde6", dim: "#7d8590",
 				accent: "#e3b341", ok: "#3fb950", err: "#f85149", warn: "#d29922", tool: "#58c4dc",
@@ -509,7 +509,6 @@
 			var graphCv = $("graph"), stripCv = $("strip");
 			var dpr = window.devicePixelRatio || 1;
 			var nodePos = []; // {x, y, turn}
-			var mainRect = null;
 
 			function resize() {
 				// граф занимает всю высоту левой колонки минус лента-таймлайн (26 + бордер)
@@ -858,7 +857,7 @@
 					try {
 						feedEntry(m, JSON.parse(t));
 						n++;
-					} catch (e) {
+					} catch {
 						/* skip */
 					}
 				});

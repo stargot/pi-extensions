@@ -39,7 +39,7 @@ interface TelemetryEdit {
 export function createEditGuardHandler(
 	pi: ExtensionAPI,
 	deps: { readFile: typeof readFile } = { readFile },
-): (event: ToolCallEvent, ctx: { cwd: string }) => Promise<ToolCallEventResult | void> {
+): (event: ToolCallEvent, ctx: { cwd: string }) => Promise<ToolCallEventResult | undefined> {
 	return async (event, ctx) => {
 		if (!isToolCallEventType("edit", event)) return undefined;
 

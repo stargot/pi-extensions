@@ -414,7 +414,7 @@ export class TraceView {
 			m.totals.cost > 0 ? fmtMoney(m.totals.cost) : "",
 		].filter(Boolean) as string[];
 		const left = parts.join(sep);
-		const b = this.badge(visibleWidth(left) + 1);
+		const b = this.badge(start);
 		const pad = width - visibleWidth(left) - visibleWidth(b) - 1;
 		return pad > 0 ? `${left} ${" ".repeat(pad)}${b}` : truncateToWidth(`${left} ${b}`, width);
 	}
@@ -555,7 +555,10 @@ export class TraceView {
 			out.push(gap > 0 ? `${left}${" ".repeat(gap)}${th.fg("dim", right)}` : truncateToWidth(`${left} ${right}`, width));
 			kinds.push(".");
 		}
-		if (rows.length === 0) out.push(th.fg("dim", " пока нет ответов модели")), kinds.push(".");
+		if (rows.length === 0) {
+			out.push(th.fg("dim", " пока нет ответов модели"));
+			kinds.push(".");
+		}
 		out.push("", th.fg("dim", " m — вернуться к ленте · esc — сбросить всё"));
 		kinds.push(".", ".");
 		return out;

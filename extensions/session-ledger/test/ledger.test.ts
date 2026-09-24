@@ -172,7 +172,7 @@ test("report renders tables and summary without throwing", () => {
 	assert.equal(fmtCost(0), "$0");
 	assert.equal(fmtCost(0.0042), "$0.0042");
 	assert.equal(fmtCost(0.25), "$0.250");
-	assert.equal(fmtCost(3.14159), "$3.14");
+	assert.equal(fmtCost(Math.PI), "$3.14");
 	assert.ok(summaryLine(ledger).startsWith("30d: $0.038"));
 	const sessionView = renderLedger(ledger, "session", 100);
 	assert.ok(sessionView.some((l) => l.includes("Auth fix")));

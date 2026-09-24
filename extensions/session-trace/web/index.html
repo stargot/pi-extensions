@@ -141,7 +141,7 @@
 		<label class="btn">выбрать файл<input type="file" id="pick" accept=".jsonl,.json"></label>
 		<span id="stats"></span>
 		<div class="controls">
-			<button id="play" title="play/pause (space)">▶</button>
+			<button type="button" id="play" title="play/pause (space)">▶</button>
 			<select id="speed" title="скорость">
 				<option value="0.5">0.5×</option>
 				<option value="1">1×</option>
@@ -152,10 +152,10 @@
 			</select>
 			<input type="range" id="slider" min="0" max="1000" value="0">
 			<span id="pos">--:--:--</span>
-			<button id="toend" title="в конец">⏭</button>
-			<button id="wbtn" class="hidden" title="живые task_batch-воркеры (клик — панель)">● 0</button>
+			<button type="button" id="toend" title="в конец">⏭</button>
+			<button type="button" id="wbtn" class="hidden" title="живые task_batch-воркеры (клик — панель)">● 0</button>
 			<input id="q" type="search" placeholder="фильтр…" spellcheck="false">
-			<button id="errs" title="только ошибки">⚠</button>
+			<button type="button" id="errs" title="только ошибки">⚠</button>
 		</div>
 	</header>
 	<main id="split">

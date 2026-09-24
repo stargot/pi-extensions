@@ -53,7 +53,7 @@ const result = (text: string, details?: unknown): AgentToolResult<unknown> => ({
 });
 const renderOpts = (expanded = false): ToolRenderResultOptions => ({ expanded, isPartial: false });
 const ctx = (isError: boolean) => ({ isError });
-const card = (content: string, details?: unknown, expanded = false): SubagentResultMessage => ({
+const card = (content: string, details?: unknown): SubagentResultMessage => ({
 	content,
 	details,
 });

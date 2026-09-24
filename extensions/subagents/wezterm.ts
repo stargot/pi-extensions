@@ -28,9 +28,6 @@ const PWSH = "pwsh";
 // Pure helpers moved to shared.ts; re-exported for existing callers/tests.
 export { computeStackPercent, parseSentinel, SENTINEL_PATTERN };
 
-let weztermAvailable: boolean | null = null;
-let pwshAvailable: boolean | null = null;
-
 function probe(command: string, cache: { value: boolean | null }): boolean {
 	if (cache.value !== null) return cache.value;
 	try {

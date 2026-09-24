@@ -12,12 +12,14 @@
 	},
 	"scripts": {
 		"test": "node --test extensions/**/test/*.test.ts",
-		"smoke": "pi --list-models -e ./extensions/ask-user-question.ts -e ./extensions/context-inspector/index.ts -e ./extensions/edit-guard/index.ts -e ./extensions/prompt-snippets/index.ts -e ./extensions/session-ledger/index.ts -e ./extensions/session-recall/index.ts -e ./extensions/session-trace/index.ts -e ./extensions/subagents/index.ts -e ./extensions/web/index.ts",
+		"smoke": "node scripts/smoke.mjs",
 		"stats": "node extensions/session-ledger/cli.ts",
 		"recall": "node extensions/session-recall/cli.ts",
 		"trace": "node extensions/session-trace/cli.ts",
 		"trace:list": "node extensions/session-trace/cli.ts --list",
-		"trace:web": "node extensions/session-trace/web/serve.ts"
+		"trace:web": "node extensions/session-trace/web/serve.ts",
+		"lint": "biome lint extensions",
+		"typecheck": "tsc --noEmit"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
@@ -45,6 +47,7 @@
 		"ws": "^8.21.3"
 	},
 	"devDependencies": {
+		"@biomejs/biome": "^2.5.14",
 		"@types/turndown": "^5.0.6",
 		"@types/ws": "^8.18.1",
 		"typescript": "^7.0.2"

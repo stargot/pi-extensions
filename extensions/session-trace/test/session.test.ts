@@ -86,7 +86,7 @@ test("GraphModel builds turns, chips, user/bash items and markers from entries",
 	assert.equal(m.sessionName, "Auth fix");
 
 	const kinds = m.items.map((i) => i.kind);
-	assert.deepEqual(kinds.filter((k, i) => k === "turn"), ["turn", "turn"]);
+	assert.deepEqual(kinds.filter((k) => k === "turn"), ["turn", "turn"]);
 	assert.ok(kinds.includes("user"));
 	assert.ok(kinds.includes("bash"));
 	assert.ok(kinds.includes("child"));
