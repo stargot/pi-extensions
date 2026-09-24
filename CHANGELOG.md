@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-24
+
 ### Added
 
 - **subagents**: `task_batch` — per-task таймаут `timeoutMs` (параметр модели;
@@ -183,4 +185,5 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   действительно рендерится (TruncatedText терял вторую строку); legacy-записи
   без `details.summary` больше не показывают карточку с «(no summary)».
 
+[0.3.0]: https://github.com/stargot/pi-extensions/releases/tag/v0.3.0
 [0.2.0]: https://github.com/stargot/pi-extensions/releases/tag/v0.2.0
