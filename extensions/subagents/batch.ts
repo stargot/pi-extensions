@@ -113,6 +113,15 @@ export function isFailedResult(r: BatchResult): boolean {
 	return r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted" || r.stopReason === "timeout";
 }
 
+/** Result for a task that never spawned because the batch was cancelled. */
+export function cancelledResult(agent: string, task: string): BatchResult {
+	const r = emptyResult(agent, task);
+	r.exitCode = 1;
+	r.stopReason = "aborted";
+	r.errorMessage = "cancelled before start";
+	return r;
+}
+
 // ── Pure logic ──
 
 export function finalOutput(messages: BatchMessage[]): string {

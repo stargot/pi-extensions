@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	batchWallTime,
+	cancelledResult,
 	emptyResult,
 	emptyUsage,
 	elapsedOf,
@@ -314,6 +315,14 @@ test("substitutePrevious: replacement output is data, not a pattern ($&, $$ surv
 	const out = 'git log --format="%h %s" && echo "$$" done$&';
 	assert.equal(substitutePrevious("Analyze: {previous}", out), `Analyze: ${out}`);
 	assert.equal(substitutePrevious("no placeholder", out), "no placeholder");
+});
+
+test("cancelledResult: counts as failed with aborted stopReason", () => {
+	const r = cancelledResult("scout", "task");
+	assert.equal(isFailedResult(r), true);
+	assert.equal(r.exitCode !== 0, true);
+	assert.equal(r.stopReason, "aborted");
+	assert.match(resultOutput(r), /cancelled/);
 });
 
 test("runHeadlessChild: abort marks the result aborted/failed, not success", async () => {

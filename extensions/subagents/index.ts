@@ -58,6 +58,7 @@ import {
 	MAX_CONCURRENCY,
 	MAX_PARALLEL_TASKS,
 	DEFAULT_CHILD_TIMEOUT_MS,
+	cancelledResult,
 	oneline,
 	progressBar,
 	resultOutput,
@@ -1505,6 +1506,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					emitTick = () => emitParallelUpdate();
 
 					const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
+						// Cancelled while queued: report as such instead of spawning a
+						// child that would be killed immediately — no wasted processes,
+						// no orphan session files.
+						if (signal?.aborted) {
+							const cancelled = cancelledResult(t.agent, t.task);
+							allResults[index] = cancelled;
+							emitParallelUpdate();
+							return cancelled;
+						}
 						allResults[index] = { ...allResults[index], queued: false }; // slot open — spawning now
 						emitParallelUpdate();
 						const result = await runSingle(t.agent, t.task, t.cwd, undefined, (r) => {
