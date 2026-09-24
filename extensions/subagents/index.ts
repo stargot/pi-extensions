@@ -38,6 +38,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.ts";
+import { killProcessTree } from "./proctree.ts";
 import { activityLabel, readActivityState, type SubagentActivityState } from "./activity.ts";
 import {
 	displayItems,
@@ -1876,15 +1877,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	/** Terminate a worker's whole process tree. Windows needs taskkill /T. */
 	const killWorkerTree = (pid: number): void => {
-		if (process.platform === "win32") {
-			execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
-		} else {
-			try {
-				process.kill(pid, "SIGTERM");
-			} catch {
-				// Already gone — fine.
-			}
-		}
+		killProcessTree(pid);
 	};
 
 	pi.registerCommand("workers", {
