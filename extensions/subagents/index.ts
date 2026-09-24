@@ -1632,17 +1632,21 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				const head = `${statusIcon(r)} ${theme.fg("accent", r.agent)}${elapsedTag(r)}`;
 				if (isQueued(r)) return `${head} ${theme.fg("muted", "queued")}`;
 				const bits: string[] = [];
-				if (isFailedResult(r)) {
-					const reason = oneline(r.errorMessage || r.stopReason || `exit ${r.exitCode}`);
-					bits.push(theme.fg("error", `failed (${reason})`));
-				} else {
-					const tools = summarizeTools(displayItems(r.messages));
-					if (tools) bits.push(theme.fg("muted", tools));
-					if (!isRunning(r)) {
-						const out = finalOutput(r.messages);
-						if (out) bits.push(theme.fg("dim", `→ ${formatTokens(out.length)}`));
+					if (isFailedResult(r)) {
+						const reason = oneline(r.errorMessage || r.stopReason || `exit ${r.exitCode}`);
+						bits.push(theme.fg("error", `failed (${reason})`));
+					} else {
+						const tools = summarizeTools(displayItems(r.messages));
+						if (tools) bits.push(theme.fg("muted", tools));
+						if (isRunning(r) && r.liveTool) {
+							// Mid-turn tool progress — arrives via tool_execution_start,
+							// so this updates without waiting for the turn to end.
+							bits.push(theme.fg("warning", `${r.liveTool.name}…`));
+						} else if (!isRunning(r)) {
+							const out = finalOutput(r.messages);
+							if (out) bits.push(theme.fg("dim", `→ ${formatTokens(out.length)}`));
+						}
 					}
-				}
 				return bits.length > 0 ? `${head} ${bits.join(" ")}` : head;
 			};
 			const collapsedItems = (items: ReturnType<typeof displayItems>, limit: number): string => {

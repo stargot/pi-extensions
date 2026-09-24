@@ -325,6 +325,17 @@ test("cancelledResult: counts as failed with aborted stopReason", () => {
 	assert.match(resultOutput(r), /cancelled/);
 });
 
+test("ingestBatchEvent: tool_execution_start/end track liveTool", () => {
+	const r = emptyResult("a", "t");
+	assert.equal(ingestBatchEvent(r, { type: "tool_execution_start", toolCallId: "1", toolName: "bash", args: {} }), true);
+	assert.deepEqual(r.liveTool, { name: "bash" });
+	assert.equal(ingestBatchEvent(r, { type: "tool_execution_end", toolCallId: "1" }), true);
+	assert.equal(r.liveTool, undefined);
+	// end without start is a no-op, unknown toolName is ignored
+	assert.equal(ingestBatchEvent(r, { type: "tool_execution_end", toolCallId: "2" }), false);
+	assert.equal(ingestBatchEvent(r, { type: "tool_execution_start" }), false);
+});
+
 test("runHeadlessChild: abort marks the result aborted/failed, not success", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-batch-abort-"));
 	const fixture = join(dir, "hang.js");

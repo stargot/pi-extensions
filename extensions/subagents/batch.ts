@@ -93,6 +93,8 @@ export interface BatchResult {
 	elapsedMs?: number;
 	/** Unix ms when the child exited (batch wall time = max end − min start). */
 	finishedAt?: number;
+	/** Tool currently executing in the child — live progress between turn ends. */
+	liveTool?: { name: string };
 }
 
 export function emptyResult(agent: string, task: string): BatchResult {
@@ -192,6 +194,26 @@ export function ingestBatchEvent(r: BatchResult, event: unknown): boolean {
 	if (type === "tool_result_end" && (event as { message?: BatchMessage }).message) {
 		r.messages.push((event as { message: BatchMessage }).message);
 		return true;
+	}
+
+	// Live tool progress: JSON mode emits these around each tool execution,
+	// before the owning turn's message_end arrives. Tracked outside r.messages
+	// — the transcript itself lands at message_end. Enables a mid-turn
+	// "→ bash…" hint in the task line instead of a bare spinner.
+	if (type === "tool_execution_start") {
+		const name = (event as { toolName?: string }).toolName;
+		if (name) {
+			r.liveTool = { name };
+			return true;
+		}
+		return false;
+	}
+	if (type === "tool_execution_end") {
+		if (r.liveTool) {
+			r.liveTool = undefined;
+			return true;
+		}
+		return false;
 	}
 
 	return false;
