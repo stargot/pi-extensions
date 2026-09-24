@@ -221,6 +221,22 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * /trace child card — one convention for both pane and batch children, so
+ * /trace and the web viewer render them identically. Best effort by design:
+ * a broken trace integration must never take a subagent down.
+ */
+function appendTraceCard(
+	api: { appendEntry: (type: string, body: unknown) => void } | null | undefined,
+	entry: { agent: string; task: string; session?: string; usage?: unknown; model?: string },
+): void {
+	try {
+		api?.appendEntry("session-trace:subagents", entry);
+	} catch {
+		// Optional integration.
+	}
+}
+
 function safeFilePart(s: string): string {
 	const cleaned = s
 		.toLowerCase()
@@ -387,17 +403,13 @@ function completeSubagent(running: RunningSubagent, result: { exitCode: number; 
 	const elapsedSec = Math.floor((Date.now() - running.startTime) / 1000);
 
 	// session-trace integration: child card in /trace (TUI) and web viewer.
-	try {
-		latestPi?.appendEntry("session-trace:subagents", {
-			agent: running.agentName || running.name,
-			task: running.task,
-			session: running.sessionFile,
-			usage: usage ?? undefined,
-			model: model ?? undefined,
-		});
-	} catch {
-		// Optional integration.
-	}
+	appendTraceCard(latestPi, {
+		agent: running.agentName || running.name,
+		task: running.task,
+		session: running.sessionFile,
+		usage: usage ?? undefined,
+		model: model ?? undefined,
+	});
 
 	const usageText = usage && (usage.input > 0 || usage.output > 0) ? formatUsage(usage) : undefined;
 	const elapsedText = fmtElapsed(elapsedSec);
@@ -1386,19 +1398,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					result.stderr += `⚠ Agent definition warnings for "${def.name}": ${def.warnings.join("; ")}.\n`;
 				}
 				// /trace child card — same convention as pane-based subagents.
-				try {
-					pi.appendEntry("session-trace:subagents", {
-						agent: def.name,
-						task,
-						session: result.sessionFile,
-						usage: result.usage.input || result.usage.output
-							? { input: result.usage.input, output: result.usage.output, cost: result.usage.cost }
-							: undefined,
-						model: result.model,
-					});
-				} catch {
-					// Optional integration.
-				}
+				appendTraceCard(pi, {
+					agent: def.name,
+					task,
+					session: result.sessionFile,
+					usage: result.usage.input || result.usage.output
+						? { input: result.usage.input, output: result.usage.output, cost: result.usage.cost }
+						: undefined,
+					model: result.model,
+				});
 				return result;
 			};
 
