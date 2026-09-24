@@ -59,6 +59,7 @@ import {
 	MAX_PARALLEL_TASKS,
 	DEFAULT_CHILD_TIMEOUT_MS,
 	cancelledResult,
+	compactResultForDetails,
 	oneline,
 	progressBar,
 	resultOutput,
@@ -1422,6 +1423,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				// ── Chain ──
 				if (hasChain && params.chain) {
 					const results: BatchResult[] = [];
+					// Compacted views for live updates — full transcripts stay in `results`
+					// (the model's answer and the final details need them) without being
+					// re-emitted wholesale on every child event.
+					const resultsCompact: BatchResult[] = [];
 					const handOff: number[] = [];
 					let previousOutput = "";
 
@@ -1438,15 +1443,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						let currentStep: BatchResult | null = null;
 						const chainUpdate = onUpdate
 							? (partial: { content?: unknown; details?: unknown }) => {
-									const current = (partial.details as BatchDetails | undefined)?.results[0];
-									if (current) {
-										onUpdate({
-											content: [{ type: "text", text: finalOutput(current.messages) || "(running...)" }],
-											details: makeBatchDetails("chain", [...results, current], handOff),
-										});
+										const current = (partial.details as BatchDetails | undefined)?.results[0];
+										if (current) {
+											onUpdate({
+												content: [{ type: "text", text: finalOutput(current.messages) || "(running...)" }],
+												details: makeBatchDetails("chain", [...resultsCompact, compactResultForDetails(current)], handOff),
+											});
+										}
 									}
-								}
-						: undefined;
+							: undefined;
 
 						// Ticks re-emit the current step so its spinner and elapsed keep moving.
 						emitTick = onUpdate
@@ -1462,6 +1467,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						});
 						emitTick = null;
 						results.push(result);
+						resultsCompact.push(compactResultForDetails(result));
 
 						if (isFailedResult(result)) {
 							return {
@@ -1500,7 +1506,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						const busy = allResults.some((r) => isRunning(r) || isQueued(r));
 						onUpdate({
 							content: [{ type: "text", text: parallelStatusLine(allResults) + (busy ? "..." : "") }],
-							details: makeBatchDetails("parallel", [...allResults]),
+							details: makeBatchDetails("parallel", allResults.map(compactResultForDetails)),
 						});
 					};
 					emitTick = () => emitParallelUpdate();
@@ -1545,7 +1551,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					if (!onUpdate || !latestSingle) return;
 					onUpdate({
 						content: [{ type: "text", text: finalOutput(latestSingle.messages) || "(running...)" }],
-						details: makeBatchDetails("single", [latestSingle]),
+						details: makeBatchDetails("single", [compactResultForDetails(latestSingle)]),
 					});
 				};
 				emitTick = emitSingle;

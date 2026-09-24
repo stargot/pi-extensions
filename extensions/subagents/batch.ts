@@ -39,6 +39,8 @@ export const STDERR_CAP = 64 * 1024;
  * tool call — and with it the parent's whole turn — forever. 0 disables.
  */
 export const DEFAULT_CHILD_TIMEOUT_MS = 30 * 60 * 1000;
+/** Per-message text cap for intermediate UI updates (see compactResultForDetails). */
+export const DETAIL_TEXT_CAP = 2 * 1024;
 
 // ── Types ──
 
@@ -308,6 +310,50 @@ export function formatUsageStats(
 }
 
 // ── Live progress: spinner, bar, durations ──
+
+/**
+ * Display-shaped copy of a result: keeps what the live card renders, drops
+ * the bulk payload. Intermediate updates re-emit every result on every child
+ * event, so details ride the full transcript otherwise — while the real one
+ * already lives in the child's session JSONL. Final results keep full
+ * messages; only onUpdate details are compacted.
+ */
+export function compactResultForDetails(r: BatchResult): BatchResult {
+	return {
+		...r,
+		messages: r.messages.map((m) => {
+			// toolResult payloads (file reads, bash output) are never rendered
+			// by the batch card — displayItems reads assistant messages only.
+			if (m.role === "toolResult") return { ...m, content: undefined };
+			if (!m.content) return m;
+			return {
+				...m,
+				content: m.content.map((part) => {
+					if (part.type === "text" && part.text && part.text.length > DETAIL_TEXT_CAP) {
+						return { ...part, text: `${part.text.slice(0, DETAIL_TEXT_CAP)}…` };
+					}
+					if (part.type === "toolCall" && part.arguments) {
+						// formatToolCall previews a few named fields; cap long
+						// string values (e.g. a write tool's content) instead of
+						// carrying the full payload through every update.
+						let slimmed = false;
+						const args: Record<string, unknown> = {};
+						for (const [k, v] of Object.entries(part.arguments)) {
+							if (typeof v === "string" && v.length > 512) {
+								args[k] = `${v.slice(0, 512)}…`;
+								slimmed = true;
+							} else {
+								args[k] = v;
+							}
+						}
+						return slimmed ? { ...part, arguments: args } : part;
+					}
+					return part;
+				}),
+			};
+		}),
+	};
+}
 
 export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 

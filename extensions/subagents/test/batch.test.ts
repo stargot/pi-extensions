@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
 	batchWallTime,
 	cancelledResult,
+	compactResultForDetails,
 	emptyResult,
 	emptyUsage,
 	elapsedOf,
@@ -334,6 +335,31 @@ test("ingestBatchEvent: tool_execution_start/end track liveTool", () => {
 	// end without start is a no-op, unknown toolName is ignored
 	assert.equal(ingestBatchEvent(r, { type: "tool_execution_end", toolCallId: "2" }), false);
 	assert.equal(ingestBatchEvent(r, { type: "tool_execution_start" }), false);
+});
+
+test("compactResultForDetails: drops toolResult payloads, caps long texts and args", () => {
+	const r = emptyResult("a", "t");
+	ingestBatchEvent(r, {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{ type: "text", text: "x".repeat(5000) },
+				{ type: "toolCall", name: "write", arguments: { path: "/a", content: "y".repeat(4000) } },
+			],
+		},
+	});
+	ingestBatchEvent(r, { type: "tool_result_end", message: { role: "toolResult", content: [{ type: "text", text: "z".repeat(9000) }] } });
+	const c = compactResultForDetails(r);
+	const assistant = c.messages.find((m) => m.role === "assistant");
+	const textPart = assistant?.content?.find((p) => p.type === "text") as { text: string };
+	assert.ok(textPart.text.length <= 2049, `text capped, got ${textPart.text.length}`);
+	const callPart = assistant?.content?.find((p) => p.type === "toolCall") as { arguments: { content: string } };
+	assert.ok(callPart.arguments.content.length <= 513, "arg strings capped");
+	const toolResult = c.messages.find((m) => m.role === "toolResult");
+	assert.equal(toolResult?.content, undefined, "toolResult payload dropped");
+	// Original untouched (updates are copies).
+	assert.equal((r.messages[0]?.content?.[0] as { text?: string }).text?.length, 5000);
 });
 
 test("runHeadlessChild: abort marks the result aborted/failed, not success", async () => {
