@@ -109,6 +109,14 @@ export function renderLauncherPs1(spec: LauncherSpec): string {
 		.join(" ");
 	lines.push(`& ${argLine}`);
 	lines.push("$code = $LASTEXITCODE");
+	// Heal the terminal before the sentinel: if pi dies without running its
+	// TUI teardown (fail-fast crash, e.g. 0xC0000409), the pane keeps the
+	// kitty-keyboard flags the TUI pushed (`ESC[>7u`). WezTerm then encodes
+	// every later keystroke as CSI-u and ConPTY leaks the fragments into
+	// pwsh input ("e[:3ux…" → ParserError). Pop the kitty stack, force its
+	// flags to 0, and clear bracketed-paste / alt-screen / hidden-cursor /
+	// SGR state. All no-ops after a clean exit.
+	lines.push('[Console]::Write("`e[<u`e[=0;1u`e[?2004l`e[?1049l`e[?25h`e[0m")');
 	lines.push(`Write-Host "__SUBAGENT_DONE_\${code}__"`);
 	lines.push(`Set-Content -LiteralPath ${ps1Literal(spec.doneFile)} -Value $code -NoNewline`);
 	lines.push("");
