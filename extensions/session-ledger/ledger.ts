@@ -4,8 +4,12 @@
  * Чистый модуль без runtime-зависимостей от pi: работает и в расширении, и в CLI, и в тестах.
  * Считает все записи файла независимо от ветки дерева: деньги потрачены на каждую.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
+import { addUsage, discoverSessionFiles } from "../shared/sessions.ts";
+
+// Ре-экспорт: /stats-расширение и CLI импортируют discovery отсюда (исторически).
+export { discoverSessionFiles };
 
 export interface Stats {
 	sessions: number;
@@ -193,11 +197,11 @@ export function parseSessionText(text: string, file: string): SessionSummary | u
 			// иначе строки разреза по моделям не сходятся с итогом.
 			const lastModel = Object.keys(summary.byModel).at(-1);
 			const targets = [summary.stats, bump(summary.byDay, dayOf(at)), ...(lastModel ? [summary.byModel[lastModel]] : [])];
-			const usage = entry.usage ? normalizeUsage(entry.usage) : undefined;
+			const usage = entry.usage;
 			for (const t of targets) {
 				if (entry.type === "branch_summary") t.branchSummaries += 1;
 				else t.compactions += 1;
-				if (usage) addTokens(t, usage);
+				if (usage) addUsage(t, usage);
 			}
 			continue;
 		}
@@ -212,11 +216,11 @@ export function parseSessionText(text: string, file: string): SessionSummary | u
 		if (message.role === "assistant") {
 			const modelKey = `${message.provider ?? "?"}/${message.model ?? "?"}`;
 			const day = dayOf(at);
-			const usage = normalizeUsage(message.usage ?? {});
+			const usage = message.usage;
 			const targets = [summary.stats, bump(summary.byModel, modelKey), bump(summary.byDay, day)];
 			for (const t of targets) {
 				t.turns += 1;
-				addTokens(t, usage);
+				addUsage(t, usage);
 				if (message.stopReason === "error") t.errors += 1;
 				if (message.stopReason === "aborted") t.aborted += 1;
 			}
@@ -250,31 +254,6 @@ export function parseSessionText(text: string, file: string): SessionSummary | u
 	if (!header) return undefined;
 	for (const stats of [...Object.values(summary.byModel), ...Object.values(summary.byDay)]) stats.sessions = 1;
 	return summary;
-}
-
-export function discoverSessionFiles(root: string): string[] {
-	const out: string[] = [];
-	const walk = (dir: string) => {
-		let names: string[];
-		try {
-			names = readdirSync(dir);
-		} catch {
-			return;
-		}
-		for (const name of names) {
-			const full = join(dir, name);
-			let isDir = false;
-			try {
-				isDir = statSync(full).isDirectory();
-			} catch {
-				continue;
-			}
-			if (isDir) walk(full);
-			else if (name.endsWith(".jsonl")) out.push(full);
-		}
-	};
-	walk(root);
-	return out.sort();
 }
 
 export function loadSessions(files: string[]): { sessions: SessionSummary[]; skipped: number } {
@@ -393,24 +372,6 @@ export function dayOf(ms: number): string {
 function bump<T extends Stats>(group: Record<string, T>, key: string): T {
 	if (!group[key]) group[key] = emptyStats() as T;
 	return group[key];
-}
-
-function normalizeUsage(usage: UsageLike): Required<Pick<UsageLike, "input" | "output" | "cacheRead" | "cacheWrite">> & { cost: number } {
-	return {
-		input: usage.input ?? 0,
-		output: usage.output ?? 0,
-		cacheRead: usage.cacheRead ?? 0,
-		cacheWrite: usage.cacheWrite ?? 0,
-		cost: usage.cost?.total ?? 0,
-	};
-}
-
-function addTokens(target: Stats, usage: ReturnType<typeof normalizeUsage>): void {
-	target.input += usage.input;
-	target.output += usage.output;
-	target.cacheRead += usage.cacheRead;
-	target.cacheWrite += usage.cacheWrite;
-	target.cost += usage.cost;
 }
 
 function toMs(timestamp: string | number | undefined): number {

@@ -9,6 +9,7 @@
  * Deliberately dependency-free so tests can run standalone.
  */
 import { readFileSync } from "node:fs";
+import { addUsage, emptyUsageTotals } from "../shared/sessions.ts";
 
 export interface SessionUsageTotals {
 	input: number;
@@ -60,7 +61,7 @@ export function summarizeSessionFile(jsonlPath: string, fallback: string): Sessi
 	let lastText = "";
 	let lastModel: string | null = null;
 	let lastError: string | null = null;
-	const usage: SessionUsageTotals = { input: 0, output: 0, cost: 0 };
+	const usage = emptyUsageTotals();
 	let sawUsage = false;
 
 	for (const line of raw.split("\n")) {
@@ -84,9 +85,7 @@ export function summarizeSessionFile(jsonlPath: string, fallback: string): Sessi
 		}
 		if (message.model) lastModel = message.model;
 		if (message.usage && (message.usage.input != null || message.usage.output != null)) {
-			usage.input += message.usage.input ?? 0;
-			usage.output += message.usage.output ?? 0;
-			usage.cost += message.usage.cost?.total ?? 0;
+			addUsage(usage, message.usage);
 			sawUsage = true;
 		}
 	}
@@ -98,7 +97,7 @@ export function summarizeSessionFile(jsonlPath: string, fallback: string): Sessi
 
 	return {
 		summary,
-		usage: sawUsage ? usage : null,
+		usage: sawUsage ? { input: usage.input, output: usage.output, cost: usage.cost } : null,
 		model: lastModel,
 	};
 }

@@ -11,7 +11,8 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
+import { resolveSessionsDir } from "../../shared/sessions.ts";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
@@ -39,7 +40,7 @@ export interface ServeHandle {
 }
 
 export function sessionsRoot(): string {
-	return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions");
+	return resolveSessionsDir();
 }
 
 /** Самая свежая .jsonl-сессия в дереве root (по mtime). */

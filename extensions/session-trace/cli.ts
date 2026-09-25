@@ -8,13 +8,13 @@
  *   node cli.ts -r <N|файл>       replay с начала (speed 8×)
  */
 import { openSync, readSync, closeSync, fstatSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { resolveSessionsDir } from "../shared/sessions.ts";
 import { TraceView } from "./graph.ts";
 import { oneLine } from "./session.ts";
 
-const SESSIONS_DIR = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions");
+const SESSIONS_DIR = resolveSessionsDir();
 
 interface SessionInfo {
 	file: string;

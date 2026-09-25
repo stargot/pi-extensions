@@ -4,8 +4,8 @@
  * Единица поиска — одно сообщение (user, assistant, tool, custom, summary) с датой, проектом и id записи.
  * Чистый модуль без runtime-зависимостей от pi: работает в расширении, CLI и тестах.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { discoverSessionFiles } from "../shared/sessions.ts";
 
 export type UnitRole = "user" | "assistant" | "tool" | "custom" | "summary";
 
@@ -142,30 +142,6 @@ export function extractUnits(text: string, file: string): Unit[] {
 	return units;
 }
 
-export function discoverSessionFiles(root: string): string[] {
-	const out: string[] = [];
-	const walk = (dir: string) => {
-		let names: string[];
-		try {
-			names = readdirSync(dir);
-		} catch {
-			return;
-		}
-		for (const name of names) {
-			const full = join(dir, name);
-			try {
-				if (statSync(full).isDirectory()) walk(full);
-				else if (name.endsWith(".jsonl")) out.push(full);
-			} catch {
-				// файл исчез между readdir и stat
-			}
-		}
-	};
-	walk(root);
-	return out.sort();
-}
-
-/** Обновляет кэш индекса: перечитывает только новые и изменившиеся файлы, удаляет пропавшие. */
 export function refreshIndex(root: string, cache: IndexCache, options: { exclude?: string } = {}): { units: Unit[]; files: number; reparsed: number } {
 	const files = discoverSessionFiles(root).filter((f) => !options.exclude || f !== options.exclude);
 	const seen = new Set(files);

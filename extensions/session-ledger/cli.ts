@@ -5,15 +5,14 @@
  *
  * Требует Node >= 22.18 (нативный strip типов). Каталог сессий: $PI_CODING_AGENT_DIR/sessions или ~/.pi/agent/sessions.
  */
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { buildLedger, discoverSessionFiles, GROUPS, groupRows, loadSessions, parseArgs, PERIODS } from "./ledger.ts";
+import { buildLedger, GROUPS, groupRows, loadSessions, parseArgs, PERIODS } from "./ledger.ts";
+import { discoverSessionFiles, resolveSessionsDir } from "../shared/sessions.ts";
 import { plainStyler, renderLedger } from "./report.ts";
 
 function main(argv: string[]): number {
 	let json = false;
 	let top = 5;
-	let dir = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions");
+	let dir = resolveSessionsDir();
 	const positional: string[] = [];
 
 	for (let i = 0; i < argv.length; i++) {

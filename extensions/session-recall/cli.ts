@@ -5,15 +5,14 @@
  *
  * Синтаксис запроса тот же, что у /recall: слова, "фразы", role:, project:, tool:.
  */
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { formatDate, type IndexCache, parseQuery, refreshIndex, search } from "./search.ts";
+import { resolveSessionsDir } from "../shared/sessions.ts";
 
 function main(argv: string[]): number {
 	let limit = 20;
 	let full = false;
 	let json = false;
-	let dir = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions");
+	let dir = resolveSessionsDir();
 	const words: string[] = [];
 
 	for (let i = 0; i < argv.length; i++) {
