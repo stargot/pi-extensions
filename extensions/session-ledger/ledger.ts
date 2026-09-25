@@ -6,47 +6,15 @@
  */
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { addUsage, discoverSessionFiles } from "../shared/sessions.ts";
+import { discoverSessionFiles } from "../shared/sessions.ts";
+import { dayOf, parseSessionCombined, type SessionSummary, type Stats } from "../shared/session-index.ts";
 
 // Ре-экспорт: /stats-расширение и CLI импортируют discovery отсюда (исторически).
 export { discoverSessionFiles };
 
-export interface Stats {
-	sessions: number;
-	turns: number;
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-	cost: number;
-	toolCalls: number;
-	toolErrors: number;
-	compactions: number;
-	branchSummaries: number;
-	errors: number;
-	aborted: number;
-}
-
-export interface ToolStats {
-	calls: number;
-	errors: number;
-}
-
-export interface SessionSummary {
-	file: string;
-	id: string;
-	cwd: string;
-	project: string;
-	name?: string;
-	firstPrompt?: string;
-	startedAt: number;
-	endedAt: number;
-	userMessages: number;
-	stats: Stats;
-	byModel: Record<string, Stats>;
-	byDay: Record<string, Stats>;
-	byTool: Record<string, ToolStats>;
-}
+// Канонические типы живут в shared/session-index.ts — ре-экспорт для совместимости.
+export type { Stats, ToolStats, SessionSummary } from "../shared/session-index.ts";
+export { dayOf, projectName } from "../shared/session-index.ts";
 
 export type GroupKey = "project" | "model" | "day" | "tool" | "session";
 export type Period = "today" | "yesterday" | "7d" | "30d" | "all";
@@ -119,141 +87,9 @@ export function cachePercent(s: Stats): number | null {
 	return prompt > 0 ? Math.round((s.cacheRead / prompt) * 1000) / 10 : null;
 }
 
-interface UsageLike {
-	input?: number;
-	output?: number;
-	cacheRead?: number;
-	cacheWrite?: number;
-	cost?: { total?: number };
-}
-
-interface RawEntry {
-	type?: string;
-	id?: string;
-	timestamp?: string | number;
-	cwd?: string;
-	name?: string;
-	message?: {
-		role?: string;
-		content?: unknown;
-		provider?: string;
-		model?: string;
-		usage?: UsageLike;
-		stopReason?: string;
-		toolName?: string;
-		isError?: boolean;
-		timestamp?: number;
-	};
-	usage?: UsageLike;
-}
-
 export function parseSessionText(text: string, file: string): SessionSummary | undefined {
-	const lines = text.split("\n");
-	let header: RawEntry | undefined;
-	const summary: SessionSummary = {
-		file,
-		id: "",
-		cwd: "",
-		project: "",
-		startedAt: 0,
-		endedAt: 0,
-		userMessages: 0,
-		stats: emptyStats(),
-		byModel: {},
-		byDay: {},
-		byTool: {},
-	};
-	summary.stats.sessions = 1;
-	const toolNameByCallId = new Map<string, string>();
-
-	for (const line of lines) {
-		if (!line.trim()) continue;
-		let entry: RawEntry;
-		try {
-			entry = JSON.parse(line) as RawEntry;
-		} catch {
-			continue;
-		}
-		if (!header) {
-			if (entry.type !== "session") return undefined;
-			header = entry;
-			summary.id = entry.id ?? "";
-			summary.cwd = entry.cwd ?? "";
-			summary.project = projectName(summary.cwd);
-			summary.startedAt = toMs(entry.timestamp);
-			summary.endedAt = summary.startedAt;
-			continue;
-		}
-
-		const at = toMs(entry.timestamp);
-		if (at > summary.endedAt) summary.endedAt = at;
-
-		if (entry.type === "session_info") {
-			summary.name = entry.name || undefined;
-			continue;
-		}
-		if (entry.type === "compaction" || entry.type === "branch_summary") {
-			// Расход суммаризации (компакция, итог ветки при /fork и /tree) относим к текущей модели сессии,
-			// иначе строки разреза по моделям не сходятся с итогом.
-			const lastModel = Object.keys(summary.byModel).at(-1);
-			const targets = [summary.stats, bump(summary.byDay, dayOf(at)), ...(lastModel ? [summary.byModel[lastModel]] : [])];
-			const usage = entry.usage;
-			for (const t of targets) {
-				if (entry.type === "branch_summary") t.branchSummaries += 1;
-				else t.compactions += 1;
-				if (usage) addUsage(t, usage);
-			}
-			continue;
-		}
-		if (entry.type !== "message" || !entry.message) continue;
-		const message = entry.message;
-
-		if (message.role === "user") {
-			summary.userMessages += 1;
-			if (!summary.firstPrompt) summary.firstPrompt = preview(textOf(message.content));
-			continue;
-		}
-		if (message.role === "assistant") {
-			const modelKey = `${message.provider ?? "?"}/${message.model ?? "?"}`;
-			const day = dayOf(at);
-			const usage = message.usage;
-			const targets = [summary.stats, bump(summary.byModel, modelKey), bump(summary.byDay, day)];
-			for (const t of targets) {
-				t.turns += 1;
-				addUsage(t, usage);
-				if (message.stopReason === "error") t.errors += 1;
-				if (message.stopReason === "aborted") t.aborted += 1;
-			}
-			for (const block of blocksOf(message.content)) {
-				if (block.type === "toolCall" && typeof block.name === "string") {
-					toolNameByCallId.set(String(block.id), block.name);
-				}
-			}
-			continue;
-		}
-		if (message.role === "toolResult") {
-			const name = message.toolName ?? toolNameByCallId.get(String((message as { toolCallId?: string }).toolCallId)) ?? "?";
-			if (!summary.byTool[name]) summary.byTool[name] = { calls: 0, errors: 0 };
-			const tool = summary.byTool[name];
-			tool.calls += 1;
-			const isError = message.isError === true;
-			if (isError) tool.errors += 1;
-			for (const t of [summary.stats, bump(summary.byDay, dayOf(at))]) {
-				t.toolCalls += 1;
-				if (isError) t.toolErrors += 1;
-			}
-			// Ошибки инструментов относим к модели, которая их вызвала: последней по времени.
-			const lastModel = Object.keys(summary.byModel).at(-1);
-			if (lastModel) {
-				summary.byModel[lastModel].toolCalls += 1;
-				if (isError) summary.byModel[lastModel].toolErrors += 1;
-			}
-		}
-	}
-
-	if (!header) return undefined;
-	for (const stats of [...Object.values(summary.byModel), ...Object.values(summary.byDay)]) stats.sessions = 1;
-	return summary;
+	// Обёртка над единым парсером (shared/session-index.ts) — совместимость с тестами.
+	return parseSessionCombined(text, file)?.summary;
 }
 
 export function loadSessions(files: string[]): { sessions: SessionSummary[]; skipped: number } {
@@ -355,47 +191,4 @@ export function groupRows(ledger: Ledger, by: GroupKey): Row[] {
 
 export function topSessions(ledger: Ledger, limit = 5): SessionSummary[] {
 	return [...ledger.sessions].sort((a, b) => b.stats.cost - a.stats.cost || b.stats.turns - a.stats.turns).slice(0, limit);
-}
-
-export function projectName(cwd: string): string {
-	const normalized = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-	return normalized.split("/").filter(Boolean).at(-1) ?? normalized ?? "?";
-}
-
-export function dayOf(ms: number): string {
-	if (!ms) return "unknown";
-	const d = new Date(ms);
-	const pad = (n: number) => String(n).padStart(2, "0");
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function bump<T extends Stats>(group: Record<string, T>, key: string): T {
-	if (!group[key]) group[key] = emptyStats() as T;
-	return group[key];
-}
-
-function toMs(timestamp: string | number | undefined): number {
-	if (typeof timestamp === "number") return timestamp;
-	if (typeof timestamp === "string") {
-		const ms = Date.parse(timestamp);
-		return Number.isFinite(ms) ? ms : 0;
-	}
-	return 0;
-}
-
-function blocksOf(content: unknown): Array<Record<string, unknown>> {
-	return Array.isArray(content) ? (content as Array<Record<string, unknown>>) : [];
-}
-
-function textOf(content: unknown): string {
-	if (typeof content === "string") return content;
-	return blocksOf(content)
-		.filter((b) => b.type === "text" && typeof b.text === "string")
-		.map((b) => b.text as string)
-		.join(" ");
-}
-
-function preview(text: string, max = 60): string {
-	const flat = text.replace(/\s+/g, " ").trim();
-	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }

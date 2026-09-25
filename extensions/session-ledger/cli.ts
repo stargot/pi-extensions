@@ -5,8 +5,9 @@
  *
  * Требует Node >= 22.18 (нативный strip типов). Каталог сессий: $PI_CODING_AGENT_DIR/sessions или ~/.pi/agent/sessions.
  */
-import { buildLedger, GROUPS, groupRows, loadSessions, parseArgs, PERIODS } from "./ledger.ts";
-import { discoverSessionFiles, resolveSessionsDir } from "../shared/sessions.ts";
+import { buildLedger, GROUPS, groupRows, parseArgs, PERIODS, type SessionSummary } from "./ledger.ts";
+import { loadIndex, refreshSharedIndex, saveIndex } from "../shared/session-index.ts";
+import { resolveSessionsDir } from "../shared/sessions.ts";
 import { plainStyler, renderLedger } from "./report.ts";
 
 function main(argv: string[]): number {
@@ -29,9 +30,13 @@ function main(argv: string[]): number {
 	}
 	const { period, by, project } = parseArgs(positional.join(" "));
 
-	const files = discoverSessionFiles(dir);
-	const { sessions, skipped } = loadSessions(files);
-	const ledger = buildLedger(sessions, period, { scanned: files.length, skipped, project });
+	// Персистентный индекс: полный разбор только изменившихся файлов.
+	const data = loadIndex(dir + ".session-index.json");
+	const refreshed = refreshSharedIndex(dir, data);
+	saveIndex(dir + ".session-index.json", data);
+	const sessions = Object.values(data.files).filter((r) => r.summary).map((r) => r.summary as SessionSummary);
+	const skipped = refreshed.files - sessions.length;
+	const ledger = buildLedger(sessions, period, { scanned: refreshed.files, skipped, project });
 
 	if (json) {
 		process.stdout.write(

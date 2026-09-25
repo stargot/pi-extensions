@@ -10,14 +10,16 @@
  */
 import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionCommandContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { loadIndex, refreshSharedIndex, saveIndex } from "../shared/session-index.ts";
 import { ScrollReport } from "../shared/scroll-report.ts";
-import { formatDate, type Hit, highlight, type IndexCache, parseQuery, refreshIndex, ROLES, search } from "./search.ts";
+import { formatDate, type Hit, highlight, parseQuery, ROLES, search } from "./search.ts";
 import { ResultsView } from "./view.ts";
 
 const LIMIT = 50;
 
 export default function (pi: ExtensionAPI) {
-	const cache: IndexCache = new Map();
+	// Персистентный индекс: полный рескан только при первом запуске или изменении файлов.
+	const indexFile = () => join(getAgentDir(), "cache", "session-index.json");
 	const sessionsDir = () => join(getAgentDir(), "sessions");
 
 	const describe = (hit: Hit) => {
@@ -73,7 +75,9 @@ export default function (pi: ExtensionAPI) {
 			if (!queryText) return;
 
 			const query = parseQuery(queryText);
-			const index = refreshIndex(sessionsDir(), cache, { exclude: ctx.sessionManager.getSessionFile() });
+			const data = loadIndex(indexFile());
+			const index = { files: refreshSharedIndex(sessionsDir(), data, { exclude: ctx.sessionManager.getSessionFile() }).files, units: Object.values(data.files).flatMap((r) => r.units) };
+			saveIndex(indexFile(), data);
 			const { hits, total } = search(index.units, query, { limit: LIMIT });
 
 			if (ctx.mode !== "tui") {

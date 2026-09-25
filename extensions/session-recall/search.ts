@@ -6,26 +6,14 @@
  */
 import { readFileSync, statSync } from "node:fs";
 import { discoverSessionFiles } from "../shared/sessions.ts";
+import { parseSessionCombined, type Unit, type UnitRole } from "../shared/session-index.ts";
 
-export type UnitRole = "user" | "assistant" | "tool" | "custom" | "summary";
-
-export interface Unit {
-	file: string;
-	sessionId: string;
-	sessionName?: string;
-	project: string;
-	cwd: string;
-	entryId: string;
-	role: UnitRole;
-	/** Имя инструмента для role === "tool". */
-	tool?: string;
-	timestamp: number;
-	text: string;
-}
+// Канонические типы живут в shared/session-index.ts — ре-экспорт для совместимости.
+export type { Unit, UnitRole } from "../shared/session-index.ts";
 
 export interface Hit {
 	unit: Unit;
-	/** Число вхождений всех термов. */
+	/** BM25-lite скор × затухание свежести. */
 	score: number;
 	/** Фрагмент вокруг первого вхождения. */
 	snippet: string;
@@ -35,6 +23,8 @@ export interface Hit {
 
 export interface Query {
 	terms: string[];
+	/** Quoted phrases — весят ×2 в скоринге. Ключ отсутствует, если фраз нет. */
+	phrases?: string[];
 	role?: UnitRole;
 	project?: string;
 	tool?: string;
@@ -56,9 +46,11 @@ export const ROLES: UnitRole[] = ["user", "assistant", "tool", "custom", "summar
  */
 export function parseQuery(input: string): Query {
 	const query: Query = { terms: [] };
+	const phrases: string[] = [];
 	const re = /"([^"]+)"|(\S+)/g;
 	for (const match of input.matchAll(re)) {
 		const token = match[1] ?? match[2] ?? "";
+		if (match[1]) phrases.push(match[1]);
 		const filter = /^(role|project|tool):(.+)$/.exec(token);
 		if (filter && !match[1]) {
 			const [, key, value] = filter;
@@ -69,77 +61,13 @@ export function parseQuery(input: string): Query {
 		}
 		if (token) query.terms.push(token);
 	}
+	if (phrases.length > 0) query.phrases = phrases;
 	return query;
 }
 
-interface RawEntry {
-	type?: string;
-	id?: string;
-	timestamp?: string | number;
-	cwd?: string;
-	name?: string;
-	summary?: string;
-	message?: {
-		role?: string;
-		content?: unknown;
-		toolName?: string;
-		customType?: string;
-	};
-}
-
 export function extractUnits(text: string, file: string): Unit[] {
-	const units: Unit[] = [];
-	let sessionId = "";
-	let cwd = "";
-	let project = "";
-	let sessionName: string | undefined;
-	let headerSeen = false;
-
-	for (const line of text.split("\n")) {
-		if (!line.trim()) continue;
-		let entry: RawEntry;
-		try {
-			entry = JSON.parse(line) as RawEntry;
-		} catch {
-			continue;
-		}
-		if (!headerSeen) {
-			if (entry.type !== "session") return [];
-			headerSeen = true;
-			sessionId = entry.id ?? "";
-			cwd = entry.cwd ?? "";
-			project = projectName(cwd);
-			continue;
-		}
-		const base = { file, sessionId, project, cwd, entryId: entry.id ?? "", timestamp: toMs(entry.timestamp) };
-
-		if (entry.type === "session_info") {
-			sessionName = entry.name || undefined;
-			continue;
-		}
-		if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.summary) {
-			units.push({ ...base, role: "summary", text: entry.summary });
-			continue;
-		}
-		if (entry.type !== "message" || !entry.message) continue;
-		const message = entry.message;
-		if (message.role === "user") {
-			const t = textOf(message.content);
-			if (t) units.push({ ...base, role: "user", text: t });
-		} else if (message.role === "assistant") {
-			const t = assistantText(message.content);
-			if (t) units.push({ ...base, role: "assistant", text: t });
-		} else if (message.role === "toolResult") {
-			const t = textOf(message.content);
-			if (t) units.push({ ...base, role: "tool", tool: message.toolName ?? "?", text: t });
-		} else if (message.role === "custom") {
-			const t = textOf(message.content);
-			if (t) units.push({ ...base, role: "custom", tool: message.customType, text: t });
-		}
-	}
-	// Имя сессии становится известно позже первых сообщений, поэтому проставляем в конце.
-	if (sessionName) for (const u of units) u.sessionName = sessionName;
-	return units;
+	// Обёртка над единым парсером (shared/session-index.ts) — совместимость с тестами.
+	return parseSessionCombined(text, file)?.units ?? [];
 }
 
 export function refreshIndex(root: string, cache: IndexCache, options: { exclude?: string } = {}): { units: Unit[]; files: number; reparsed: number } {
@@ -179,22 +107,40 @@ export function search(units: Unit[], query: Query, options: { limit?: number; s
 	const limit = options.limit ?? 50;
 	const radius = options.snippetRadius ?? 60;
 	const terms = query.terms.map((t) => t.toLowerCase()).filter(Boolean);
+	const phrases = (query.phrases ?? []).map((t) => t.toLowerCase());
 	const project = query.project?.toLowerCase();
 	const hits: Hit[] = [];
 
+	// Предфильтрация + сбор df (число документов с термом) для idf по отфильтрованной коллекции.
+	const corpus: Array<{ unit: Unit; lower: string }> = [];
 	for (const unit of units) {
 		if (query.role && unit.role !== query.role) continue;
 		if (project && !unit.project.toLowerCase().includes(project) && !unit.cwd.toLowerCase().includes(project)) continue;
 		if (query.tool && (unit.tool ?? "").toLowerCase() !== query.tool) continue;
+		corpus.push({ unit, lower: unit.text.toLowerCase() });
+	}
+	const df = new Map<string, number>();
+	for (const { lower } of corpus) {
+		for (const term of terms) {
+			if (lower.includes(term)) df.set(term, (df.get(term) ?? 0) + 1);
+		}
+	}
+	const totalDocs = corpus.length || 1;
+	// Свежесть: 1.0 сейчас → 0.5 через 30 дней → далее плавно вниз.
+	const recency = (timestamp: number): number => {
+		const days = Math.max(0, (Date.now() - timestamp) / 86_400_000);
+		return 1 / (1 + days / 30);
+	};
+
+	for (const { unit, lower } of corpus) {
 		if (terms.length === 0) {
 			hits.push({ unit, score: 0, snippet: makeSnippet(unit.text, 0, 0, radius), position: 0 });
 			continue;
 		}
-		const lower = unit.text.toLowerCase();
-		let score = 0;
+		let ok = true;
 		let first = -1;
 		let firstLen = 0;
-		let ok = true;
+		let bm = 0;
 		for (const term of terms) {
 			let idx = lower.indexOf(term);
 			if (idx < 0) {
@@ -205,16 +151,20 @@ export function search(units: Unit[], query: Query, options: { limit?: number; s
 				first = idx;
 				firstLen = term.length;
 			}
+			let tf = 0;
 			while (idx >= 0) {
-				score += 1;
+				tf += 1;
 				idx = lower.indexOf(term, idx + term.length);
 			}
+			const idf = Math.log(1 + totalDocs / (df.get(term) ?? 1));
+			bm += tf * idf * (phrases.includes(term) ? 2 : 1);
 		}
 		if (!ok) continue;
-		hits.push({ unit, score, snippet: makeSnippet(unit.text, first, firstLen, radius), position: first });
+		hits.push({ unit, score: bm * recency(unit.timestamp), snippet: makeSnippet(unit.text, first, firstLen, radius), position: first });
 	}
 
-	hits.sort((a, b) => b.unit.timestamp - a.unit.timestamp || b.score - a.score);
+	// Скор решает, при равенстве — свежее выше.
+	hits.sort((a, b) => b.score - a.score || b.unit.timestamp - a.unit.timestamp);
 	return { hits: hits.slice(0, limit), total: hits.length };
 }
 
@@ -246,35 +196,4 @@ export function formatDate(ms: number): string {
 	const d = new Date(ms);
 	const pad = (n: number) => String(n).padStart(2, "0");
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function toMs(timestamp: string | number | undefined): number {
-	if (typeof timestamp === "number") return timestamp;
-	if (typeof timestamp === "string") {
-		const ms = Date.parse(timestamp);
-		return Number.isFinite(ms) ? ms : 0;
-	}
-	return 0;
-}
-
-function blocksOf(content: unknown): Array<Record<string, unknown>> {
-	return Array.isArray(content) ? (content as Array<Record<string, unknown>>) : [];
-}
-
-function textOf(content: unknown): string {
-	if (typeof content === "string") return content.trim();
-	return blocksOf(content)
-		.filter((b) => b.type === "text" && typeof b.text === "string")
-		.map((b) => (b.text as string).trim())
-		.filter(Boolean)
-		.join("\n");
-}
-
-function assistantText(content: unknown): string {
-	const parts: string[] = [];
-	for (const block of blocksOf(content)) {
-		if (block.type === "text" && typeof block.text === "string") parts.push(block.text.trim());
-		else if (block.type === "toolCall") parts.push(`→ ${String(block.name)} ${JSON.stringify(block.arguments ?? {})}`);
-	}
-	return parts.filter(Boolean).join("\n");
 }

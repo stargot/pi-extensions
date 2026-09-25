@@ -50,24 +50,32 @@ test("parseQuery handles words, quoted phrases and filters", () => {
 	assert.deepEqual(parseQuery("fix wezterm"), { terms: ["fix", "wezterm"] });
 	assert.deepEqual(parseQuery('"session plugin" role:user project:Alpha tool:Edit'), {
 		terms: ["session plugin"],
+		phrases: ["session plugin"],
 		role: "user",
 		project: "Alpha",
 		tool: "edit",
 	});
 	assert.deepEqual(parseQuery("role:bogus x"), { terms: ["x"] });
-	assert.deepEqual(parseQuery('"role:user"'), { terms: ["role:user"] });
+	assert.deepEqual(parseQuery('"role:user"'), { terms: ["role:user"], phrases: ["role:user"] });
 });
 
-test("search requires all terms, ranks by recency, applies filters and snippets", () => {
+test("search: BM25 ranks term density first, then filters and snippets apply", () => {
 	const units = extractUnits(sessionText(), "/x/s1.jsonl");
 	const all = search(units, parseQuery("wezterm"));
 	assert.equal(all.total, 4);
-	assert.equal(all.hits[0].unit.role, "summary");
+	// Ответ ассистента упоминает wezterm дважды (текст + путь в вызове) — плотность выигрывает.
+	assert.equal(all.hits[0].unit.role, "assistant");
 	assert.ok(all.hits.every((h) => h.snippet.toLowerCase().includes("wezterm")));
+	// Скор убывает по хитам.
+	for (let i = 1; i < all.hits.length; i++) assert.ok(all.hits[i - 1].score >= all.hits[i].score);
 
 	const both = search(units, parseQuery("wezterm plugin"));
 	assert.equal(both.total, 1);
 	assert.equal(both.hits[0].unit.role, "user");
+
+	// Фраза весит ×2: хит с точной фразой выше хита с одним совпадением терма.
+	const phrase = search(units, parseQuery('"wezterm work"'));
+	assert.equal(phrase.hits[0].unit.role, "summary");
 
 	assert.equal(search(units, parseQuery("wezterm role:tool")).total, 1);
 	assert.equal(search(units, parseQuery("wezterm tool:edit")).total, 1);
@@ -76,6 +84,20 @@ test("search requires all terms, ranks by recency, applies filters and snippets"
 	assert.equal(search(units, parseQuery('"not found"')).hits[0].unit.role, "tool");
 	assert.equal(search(units, parseQuery("wezterm"), { limit: 2 }).hits.length, 2);
 	assert.equal(search(units, parseQuery("nomatch")).total, 0);
+});
+
+test("search: recency breaks ties — fresher identical text ranks higher", () => {
+	const old = extractUnits(
+		["{\"type\":\"session\",\"version\":3,\"id\":\"old\",\"timestamp\":\"2025-01-01T00:00:00.000Z\",\"cwd\":\"/a\"}", "{\"type\":\"message\",\"id\":\"u1\",\"timestamp\":\"2025-01-01T00:00:01.000Z\",\"message\":{\"role\":\"user\",\"content\":\"needle\"}}"].join("\n"),
+		"/old.jsonl",
+	);
+	const fresh = extractUnits(
+		["{\"type\":\"session\",\"version\":3,\"id\":\"new\",\"timestamp\":\"2026-09-01T00:00:00.000Z\",\"cwd\":\"/a\"}", "{\"type\":\"message\",\"id\":\"u1\",\"timestamp\":\"2026-09-01T00:00:01.000Z\",\"message\":{\"role\":\"user\",\"content\":\"needle\"}}"].join("\n"),
+		"/new.jsonl",
+	);
+	const ranked = search([...old, ...fresh], parseQuery("needle"));
+	assert.equal(ranked.hits[0].unit.file, "/new.jsonl");
+	assert.equal(ranked.hits[1].unit.file, "/old.jsonl");
 });
 
 test("makeSnippet and highlight", () => {

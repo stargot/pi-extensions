@@ -12,16 +12,25 @@
 import { join } from "node:path";
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { ScrollReport } from "../shared/scroll-report.ts";
-import { buildLedger, discoverSessionFiles, GROUPS, loadSessions, parseArgs, PERIODS, type StatsArgs } from "./ledger.ts";
+import { buildLedger, GROUPS, parseArgs, PERIODS, type SessionSummary, type StatsArgs } from "./ledger.ts";
+import { loadIndex, refreshSharedIndex, saveIndex } from "../shared/session-index.ts";
 import { renderLedger, summaryLine } from "./report.ts";
 
 export default function (pi: ExtensionAPI) {
 	const sessionsDir = () => join(getAgentDir(), "sessions");
 
+	const indexFile = () => join(getAgentDir(), "cache", "session-index.json");
+
 	const build = (args: StatsArgs) => {
-		const files = discoverSessionFiles(sessionsDir());
-		const { sessions, skipped } = loadSessions(files);
-		return buildLedger(sessions, args.period, { scanned: files.length, skipped, project: args.project });
+		// Персистентный индекс: полный разбор только изменившихся файлов.
+		const data = loadIndex(indexFile());
+		const refreshed = refreshSharedIndex(sessionsDir(), data);
+		saveIndex(indexFile(), data);
+		const sessions = Object.values(data.files)
+			.filter((r) => r.summary)
+			.map((r) => r.summary as SessionSummary);
+		const skipped = refreshed.files - sessions.length;
+		return buildLedger(sessions, args.period, { scanned: refreshed.files, skipped, project: args.project });
 	};
 
 	pi.registerCommand("stats", {
