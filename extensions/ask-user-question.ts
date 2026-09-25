@@ -42,7 +42,7 @@ interface OtherAnswer {
 	value: string;
 }
 
-type AskAnswer = TextAnswer | OptionAnswer | OtherAnswer;
+export type AskAnswer = TextAnswer | OptionAnswer | OtherAnswer;
 type AskUserQuestionStatus = "answered" | "cancelled" | "unavailable";
 type AskUserQuestionMode = "text" | "single-select" | "multi-select";
 
@@ -90,7 +90,7 @@ const AskUserQuestionParams = Type.Object({
 	),
 });
 
-function normalizeOptions(options: Array<{ label: string; value?: string; description?: string }> | undefined): AskOption[] {
+export function normalizeOptions(options: Array<{ label: string; value?: string; description?: string }> | undefined): AskOption[] {
 	return (options || [])
 		.map((option) => ({
 			label: option.label.trim(),
@@ -100,7 +100,7 @@ function normalizeOptions(options: Array<{ label: string; value?: string; descri
 		.filter((option) => option.label.length > 0);
 }
 
-function getOtherLabel(options: AskOption[]): string {
+export function getOtherLabel(options: AskOption[]): string {
 	return options.some((option) => option.label.toLowerCase() === "other") ? "Other (custom)" : "Other";
 }
 
@@ -124,7 +124,7 @@ function addWrapped(lines: string[], text: string, width: number, indent = ""): 
 	}
 }
 
-function formatAnswerForModel(answer: AskAnswer): string {
+export function formatAnswerForModel(answer: AskAnswer): string {
 	switch (answer.type) {
 		case "text":
 			return answer.label;
@@ -146,7 +146,7 @@ function answerSortRank(answer: AskAnswer): number {
 	}
 }
 
-function sortAnswers(answers: AskAnswer[]): AskAnswer[] {
+export function sortAnswers(answers: AskAnswer[]): AskAnswer[] {
 	return [...answers].sort((a, b) => answerSortRank(a) - answerSortRank(b));
 }
 
@@ -168,7 +168,7 @@ function buildStructuredResult(
 	} as AskUserQuestionResultDetails;
 }
 
-function cancelledResult(question: string, mode: AskUserQuestionMode, context?: string) {
+export function cancelledResult(question: string, mode: AskUserQuestionMode, context?: string) {
 	const message = "User cancelled the question";
 	return {
 		content: [{ type: "text" as const, text: message }],
@@ -176,14 +176,14 @@ function cancelledResult(question: string, mode: AskUserQuestionMode, context?: 
 	};
 }
 
-function unavailableResult(question: string, mode: AskUserQuestionMode, message: string, context?: string) {
+export function unavailableResult(question: string, mode: AskUserQuestionMode, message: string, context?: string) {
 	return {
 		content: [{ type: "text" as const, text: message }],
 		details: buildStructuredResult("unavailable", question, mode, [], context, message),
 	};
 }
 
-function buildResult(question: string, context: string | undefined, mode: AskUserQuestionMode, answers: AskAnswer[]) {
+export function buildResult(question: string, context: string | undefined, mode: AskUserQuestionMode, answers: AskAnswer[]) {
 	let text: string;
 	if (mode === "text") {
 		const answer = answers[0];

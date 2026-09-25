@@ -32,10 +32,10 @@ interface Snippet {
 	body: string;
 }
 
-const snippetsDir = join(getAgentDir(), "snippets");
+const snippetsDir = process.env.PI_SNIPPETS_DIR ?? join(getAgentDir(), "snippets");
 const WIDGET_ID = "prompt-snippets";
 
-function parseSnippet(filename: string, raw: string): Snippet | null {
+export function parseSnippet(filename: string, raw: string): Snippet | null {
 	const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
 	if (!match) return null;
 
@@ -60,7 +60,7 @@ function parseSnippet(filename: string, raw: string): Snippet | null {
 }
 
 /** Load all snippets, sorted: prepend group first, append group last, each by (order, name). */
-function loadSnippets(): Snippet[] {
+export function loadSnippets(): Snippet[] {
 	if (!existsSync(snippetsDir)) return [];
 	const snippets: Snippet[] = [];
 	for (const file of readdirSync(snippetsDir)) {
@@ -77,6 +77,16 @@ function loadSnippets(): Snippet[] {
 		...snippets.filter((s) => s.placement === "prepend").sort(byOrder),
 		...snippets.filter((s) => s.placement === "append").sort(byOrder),
 	];
+}
+
+/**
+ * Mix the active snippet bodies around the typed text: prepend group first
+ * (in loadSnippets order), then the text, then the append group.
+ */
+export function applySnippets(active: Snippet[], text: string): string {
+	const prependBodies = active.filter((s) => s.placement === "prepend").map((s) => s.body);
+	const appendBodies = active.filter((s) => s.placement === "append").map((s) => s.body);
+	return [...prependBodies, text, ...appendBodies].join("\n\n");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -305,11 +315,9 @@ export default function (pi: ExtensionAPI) {
 
 		if (active.length === 0) return; // all toggled snippets vanished from disk
 
-		const prependBodies = active.filter((s) => s.placement === "prepend").map((s) => s.body);
-		const appendBodies = active.filter((s) => s.placement === "append").map((s) => s.body);
 		return {
 			action: "transform",
-			text: [...prependBodies, event.text, ...appendBodies].join("\n\n"),
+			text: applySnippets(active, event.text),
 		};
 	});
 
