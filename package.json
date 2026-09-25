@@ -32,6 +32,7 @@
 			"./extensions/context-inspector/index.ts",
 			"./extensions/edit-guard/index.ts",
 			"./extensions/prompt-snippets/index.ts",
+			"./extensions/session-handoff/index.ts",
 			"./extensions/session-ledger/index.ts",
 			"./extensions/session-recall/index.ts",
 			"./extensions/session-trace/index.ts",
