@@ -1,7 +1,7 @@
 # PLAN: слияние стороннего web-fetch в пакет pi-web
 
 Дата: 2026-09-17.
-Источники: `C:\Users\starg\.pi\agent\excluded-extensions\web-fetch\index.ts` (~700 строк, сторонний),
+Источники: `~/.pi/agent\excluded-extensions\web-fetch\index.ts` (~700 строк, сторонний),
 этот репо (`extensions/web-search/`), доки pi (`docs/extensions.md`, `docs/packages.md`).
 Зафиксированные решения пользователя (1–6) не пересматриваются; задача 10 — чек-лист их приёмки.
 
@@ -285,7 +285,7 @@ extensions/web/
 ## Verification (всё целиком)
 
 ```powershell
-cd C:\Users\starg\.pi\agent\git\github.com\stargot\pi-extensions
+cd ~/.pi/agent\git\github.com\stargot\pi-extensions
 npm test                                        # 167 старых + все новые, 0 fail
 npx tsc -p tsconfig.json                        # без ошибок типов
 pi --list-models -e ./extensions/web/index.ts   # оба инструмента регистрируются

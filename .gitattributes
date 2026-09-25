@@ -1,0 +1,17 @@
+# Normalize line endings: everything text in the index (LF), working tree
+# per-platform. Prevents CRLF fixtures from leaking into string-sensitive
+# tests when the repo is cloned on Windows.
+* text=auto
+
+# Windows scripts must keep CRLF regardless of platform.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Source stays LF everywhere.
+*.ts text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf

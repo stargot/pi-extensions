@@ -6,7 +6,7 @@ function baseSpec(overrides: Partial<Parameters<typeof renderLauncherPs1>[0]> = 
 	return {
 		name: "scout",
 		id: "scout-abc123",
-		piPath: "C:\\Users\\Ivan\\AppData\\Roaming\\npm\\pi.cmd",
+		piPath: "C:\\Users\\tester\\AppData\\Roaming\\npm\\pi.cmd",
 		sessionFile: "C:\\pi\\sessions\\subagents\\2026.jsonl",
 		extensionPaths: ["C:\\ext\\subagent-done.ts"],
 		noExtensions: false,
@@ -27,7 +27,7 @@ test("renderLauncherPs1: env, cd, pi invocation, sentinel, done sidecar", () => 
 	assert.match(ps1, /--session 'C:\\pi\\sessions\\subagents\\2026\.jsonl'/);
 	assert.match(ps1, /-e 'C:\\ext\\subagent-done\.ts'/);
 	assert.match(ps1, /--model 'zai\/glm-5\.3-flash'/);
-	assert.match(ps1, /& 'C:\\Users\\Ivan\\AppData\\Roaming\\npm\\pi\.cmd' --session/);
+	assert.match(ps1, /& 'C:\\Users\\tester\\AppData\\Roaming\\npm\\pi\.cmd' --session/);
 	assert.match(ps1, /'@C:\\artifacts\\context\\scout\.md'/);
 	assert.match(ps1, /Write-Host "__SUBAGENT_DONE_\$\{code\}__"/);
 	assert.match(ps1, /Set-Content -LiteralPath '.*\.done' -Value \$code -NoNewline/);

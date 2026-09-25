@@ -46,7 +46,7 @@ JS-страниц и страниц за авторизацией делаетс
    (поведение как сейчас без Jina).
 4. Zero внешних API, всё localhost.
 5. Сервер только на 127.0.0.1 + shared token; SSRF-гард остаётся ДО renderFn.
-6. Новый репо `C:\Users\starg\.pi\agent\git\github.com\stargot\pi-web-companion`
+6. Новый репо `~/.pi/agent\git\github.com\stargot\pi-web-companion`
    (git init + README делает worker; GitHub-remote и push — ГЕЙТ пользователя).
    Бандл расширения — esbuild.
 
@@ -215,7 +215,7 @@ Unreleased: **Removed** Jina Reader, **Added** browser bridge (порты, то�
 ### Фаза A — pi-web-companion (параллельный трек после 0.1)
 
 **A1 [S] Скелет репо.**
-`C:\Users\starg\.pi\agent\git\github.com\stargot\pi-web-companion`: `git init`,
+`~/.pi/agent\git\github.com\stargot\pi-web-companion`: `git init`,
 README-stub, `.gitignore` (dist/, node_modules/), `package.json` (private, type module;
 deps: `@mozilla/readability`, `turndown`; devDeps: `esbuild`, `@types/chrome`),
 `build.mjs` (esbuild: `src/background.ts` → `dist/background.js` iife,
@@ -336,7 +336,7 @@ pi-extensions:
   `bridge.test.ts`.
 
 pi-web-companion (новое репо,
-`C:\Users\starg\.pi\agent\git\github.com\stargot\pi-web-companion`):
+`~/.pi/agent\git\github.com\stargot\pi-web-companion`):
 - `manifest.json`, `build.mjs`, `gen-icons.mjs`, `package.json`, `README.md`,
   `.gitignore`
 - `src/shared/protocol.ts`, `src/background.ts`, `src/content/extract.ts`,
