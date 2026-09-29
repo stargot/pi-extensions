@@ -20,7 +20,9 @@
 Требуется Node >= 22.18.
 
 ```bash
+npm run check  # гейт: lint + format-check + type + test (то же гоняет CI)
 npm test       # тесты всех расширений
+npm run format # отформатировать код (biome)
 npm run smoke  # проверить, что расширения грузятся в pi
 ```
 
