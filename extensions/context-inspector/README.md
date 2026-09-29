@@ -52,9 +52,10 @@ pi -e ./extensions/context-inspector/index.ts
 
 ## Разработка
 
+Из корня репозитория:
+
 ```bash
+npm run check     # lint + format-check + type + test
 npm test          # node --test, без зависимостей от pi
 npm run smoke     # pi --list-models -e ..., проверяет загрузку factory
 ```
-
-Для проверки типов нужны junction-ссылки на глобальную установку pi в `node_modules/@earendil-works` и `node_modules/@types`, затем `npx -p typescript tsc -p tsconfig.json`.
