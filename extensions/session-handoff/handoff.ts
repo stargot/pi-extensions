@@ -49,7 +49,7 @@ export function capLine(text: string, n: number): string {
 	return flat.length > n ? `${flat.slice(0, Math.max(n - 1, 0))}…` : flat;
 }
 
-/** Безопасное имя файла: D:\Repos\demo → d--projects-pi-extensions. */
+/** Безопасное имя файла: D:\Repos\demo → d-repos-demo. */
 export function projectSlug(projectDir: string): string {
 	return (
 		projectDir
