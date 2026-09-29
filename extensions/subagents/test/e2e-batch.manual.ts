@@ -7,7 +7,11 @@ import { execFileSync } from "node:child_process";
 import { finalOutput, runHeadlessChild } from "../batch.ts";
 
 const where = execFileSync("where.exe", ["pi"], { encoding: "utf8" });
-const piPath = where.split(/\r?\n/).map((l) => l.trim()).find((l) => l.toLowerCase().endsWith("pi.cmd")) ?? "";
+const piPath =
+	where
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.find((l) => l.toLowerCase().endsWith("pi.cmd")) ?? "";
 if (!piPath) {
 	console.error("pi.cmd not found");
 	process.exit(1);
@@ -29,7 +33,12 @@ const result = await runHeadlessChild({
 const elapsed = Date.now() - t0;
 console.log("exitCode:", result.exitCode, "| elapsed:", elapsed + "ms");
 console.log("output:", finalOutput(result.messages));
-console.log("model:", result.model, "| usage:", `${result.usage.input} in / ${result.usage.output} out / $${result.usage.cost.toFixed(4)}`);
+console.log(
+	"model:",
+	result.model,
+	"| usage:",
+	`${result.usage.input} in / ${result.usage.output} out / $${result.usage.cost.toFixed(4)}`,
+);
 console.log("session:", result.sessionFile, "| exists:", result.sessionFile ? existsSync(result.sessionFile) : false);
 if (result.stderr.trim()) console.log("stderr:", result.stderr.trim().slice(0, 300));
 const ok = result.exitCode === 0 && finalOutput(result.messages).includes("HEADLESS_OK_7");

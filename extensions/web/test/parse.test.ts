@@ -53,10 +53,7 @@ test("parseDdgResults: empty page yields no results", () => {
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const REAL_PAGE = readFileSync(
-	fileURLToPath(new URL("./fixtures/ddg-sample.html", import.meta.url)),
-	"utf8",
-);
+const REAL_PAGE = readFileSync(fileURLToPath(new URL("./fixtures/ddg-sample.html", import.meta.url)), "utf8");
 
 test("parseDdgResults: real DDG snapshot — 10 results, entities and <b> handled", () => {
 	const results = parseDdgResults(REAL_PAGE);

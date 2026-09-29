@@ -38,10 +38,7 @@ export function cancelSidecarPath(sessionFile: string): string {
 }
 
 /** Verdict of an `.exit` sidecar body — what pollTick should do with it. */
-export type ExitSidecarVerdict =
-	| { kind: "error"; errorMessage?: string }
-	| { kind: "cancelled" }
-	| { kind: "unknown" };
+export type ExitSidecarVerdict = { kind: "error"; errorMessage?: string } | { kind: "cancelled" } | { kind: "unknown" };
 
 /**
  * Classify a raw `.exit` sidecar body written by the child extension:

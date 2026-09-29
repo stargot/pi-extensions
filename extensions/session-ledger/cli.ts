@@ -34,7 +34,9 @@ function main(argv: string[]): number {
 	const data = loadIndex(dir + ".session-index.json");
 	const refreshed = refreshSharedIndex(dir, data);
 	saveIndex(dir + ".session-index.json", data);
-	const sessions = Object.values(data.files).filter((r) => r.summary).map((r) => r.summary as SessionSummary);
+	const sessions = Object.values(data.files)
+		.filter((r) => r.summary)
+		.map((r) => r.summary as SessionSummary);
 	const skipped = refreshed.files - sessions.length;
 	const ledger = buildLedger(sessions, period, { scanned: refreshed.files, skipped, project });
 

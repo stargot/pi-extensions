@@ -46,7 +46,14 @@ test("analyzeSystemPrompt splits known parts and leaves the rest as base prompt"
 test("analyzeSystemPrompt measures the real <available_skills> block when present", () => {
 	const block = `<available_skills>\n${"<skill>x</skill>\n".repeat(20)}</available_skills>`;
 	const prompt = `BASE\n${block}\nCurrent working directory: /p`;
-	const skill = { name: "a", description: "b", filePath: "/p/a/SKILL.md", baseDir: "/p/a", sourceInfo: {}, disableModelInvocation: false };
+	const skill = {
+		name: "a",
+		description: "b",
+		filePath: "/p/a/SKILL.md",
+		baseDir: "/p/a",
+		sourceInfo: {},
+		disableModelInvocation: false,
+	};
 	const result = analyzeSystemPrompt(prompt, { cwd: "/p", skills: [skill] as never });
 	const part = result.parts.find((p) => p.label === "skills (1)");
 	assert.equal(part?.chars, block.length);
@@ -97,9 +104,19 @@ test("analyzeEntries groups by role and tool, finds largest, tracks compaction",
 		{
 			type: "message",
 			id: "m3",
-			message: { role: "toolResult", toolName: "bash", toolCallId: "t2", content: [{ type: "text", text: "b".repeat(800) }], timestamp: 0 },
+			message: {
+				role: "toolResult",
+				toolName: "bash",
+				toolCallId: "t2",
+				content: [{ type: "text", text: "b".repeat(800) }],
+				timestamp: 0,
+			},
 		},
-		{ type: "message", id: "m4", message: { role: "custom", customType: "plan", content: "plan text", display: true, timestamp: 0 } },
+		{
+			type: "message",
+			id: "m4",
+			message: { role: "custom", customType: "plan", content: "plan text", display: true, timestamp: 0 },
+		},
 		{ type: "model_change", id: "x", provider: "p", modelId: "m" },
 	];
 	const result = analyzeEntries(entries as never, textEstimate, { largest: 2 });
@@ -131,7 +148,10 @@ test("analyzePayload detects anthropic shape", () => {
 		{
 			model: "claude",
 			system: [{ type: "text", text: "S".repeat(400) }],
-			tools: [{ name: "read", input_schema: {} }, { name: "bash", input_schema: {} }],
+			tools: [
+				{ name: "read", input_schema: {} },
+				{ name: "bash", input_schema: {} },
+			],
 			messages: [{ role: "user", content: "hi" }],
 		},
 		123,

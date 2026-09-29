@@ -87,9 +87,7 @@ class TestClient {
 			this.ws.once("error", reject);
 		});
 		this.closed = new Promise((resolve) => {
-			this.ws.on("close", (code, reason) =>
-				resolve({ code, reason: reason.toString() }),
-			);
+			this.ws.on("close", (code, reason) => resolve({ code, reason: reason.toString() }));
 		});
 		this.ws.on("message", (data) => {
 			const message = JSON.parse(String(data)) as BridgeMessage;
@@ -104,28 +102,18 @@ class TestClient {
 	}
 
 	/** Say hello with `token` and await the server's verdict. */
-	async hello(
-		token = TOKEN,
-	): Promise<Extract<BridgeMessage, { type: "hello_ok" | "hello_err" }>> {
+	async hello(token = TOKEN): Promise<Extract<BridgeMessage, { type: "hello_ok" | "hello_err" }>> {
 		await this.open;
 		this.send(helloMsg(token));
-		return this.next(
-			(message) => message.type === "hello_ok" || message.type === "hello_err",
-		);
+		return this.next((message) => message.type === "hello_ok" || message.type === "hello_err");
 	}
 
 	/** Next message matching the predicate (scans the backlog first). */
-	async next<T extends BridgeMessage>(
-		match: (message: BridgeMessage) => boolean,
-		ms = 2_000,
-	): Promise<T> {
+	async next<T extends BridgeMessage>(match: (message: BridgeMessage) => boolean, ms = 2_000): Promise<T> {
 		const index = this.received.findIndex(match);
 		if (index >= 0) return this.received.splice(index, 1)[0] as T;
 		return new Promise<T>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new Error("timed out waiting for a message")),
-				ms,
-			);
+			const timer = setTimeout(() => reject(new Error("timed out waiting for a message")), ms);
 			this.#waiters.push({
 				match,
 				resolve: (message) => {
@@ -144,14 +132,8 @@ class TestClient {
 const isJob = (m: BridgeMessage): boolean => m.type === "job";
 const isError = (m: BridgeMessage): boolean => m.type === "error";
 
-const LONG_MARKDOWN = `${"# Long enough\n\n".repeat(10)}body text`.slice(
-	0,
-	MIN_MARKDOWN_LENGTH + 20,
-);
-const OK_RESULT = (
-	id: string,
-	markdown = LONG_MARKDOWN,
-): ResultMsg => ({
+const LONG_MARKDOWN = `${"# Long enough\n\n".repeat(10)}body text`.slice(0, MIN_MARKDOWN_LENGTH + 20);
+const OK_RESULT = (id: string, markdown = LONG_MARKDOWN): ResultMsg => ({
 	v: 1,
 	type: "result",
 	id,
@@ -210,10 +192,7 @@ test("evil web Origin is rejected with 403 at upgrade", async () => {
 test("extension origins pass the origin filter to token auth", async () => {
 	const bridge = await startBridge(bridgeConfig());
 	try {
-		for (const origin of [
-			"chrome-extension://abcdefghijklmnop",
-			"moz-extension://uuid-here",
-		]) {
+		for (const origin of ["chrome-extension://abcdefghijklmnop", "moz-extension://uuid-here"]) {
 			const client = new TestClient(bridge.port, { origin });
 			const reply = await client.hello();
 			assert.equal(reply.type, "hello_ok");
@@ -425,9 +404,7 @@ test("render(url, signal) aborts the job immediately → null", async () => {
 test("every port taken → disabled handle (never throws), render → null", async () => {
 	const holder = await startBridge(bridgeConfig());
 	try {
-		const bridge = await startBridge(
-			bridgeConfig({ ports: [holder.port] }),
-		);
+		const bridge = await startBridge(bridgeConfig({ ports: [holder.port] }));
 		assert.equal(bridge.status, "disabled");
 		assert.match(bridge.disabledReason ?? "", /no free port/);
 		assert.equal(bridge.port, 0);
@@ -442,9 +419,7 @@ test("every port taken → disabled handle (never throws), render → null", asy
 test("the range is tried in order: taken port skipped, 0 binds", async () => {
 	const holder = await startBridge(bridgeConfig());
 	try {
-		const bridge = await startBridge(
-			bridgeConfig({ ports: [holder.port, 0] }),
-		);
+		const bridge = await startBridge(bridgeConfig({ ports: [holder.port, 0] }));
 		assert.equal(bridge.status, "listening");
 		assert.notEqual(bridge.port, holder.port);
 		await bridge.close();
@@ -467,18 +442,14 @@ test("token pairing: missing file → generated, persisted, reused", async () =>
 	const dir = mkdtempSync(join(tmpdir(), "bridge-token-"));
 	const file = join(dir, "nested", "web-bridge-token"); // exercises mkdir -p
 	try {
-		const first = await startBridge(
-			bridgeConfig({ token: undefined, tokenFile: file }),
-		);
+		const first = await startBridge(bridgeConfig({ token: undefined, tokenFile: file }));
 		const stored = readFileSync(file, "utf8").trim();
 		// crypto.randomBytes(32) → base64url: 43 chars from the url-safe alphabet.
 		assert.equal(stored.length, 43);
 		assert.match(stored, /^[A-Za-z0-9_-]+$/);
 
 		// A second bridge reading the same file pairs with the same token…
-		const second = await startBridge(
-			bridgeConfig({ token: undefined, tokenFile: file }),
-		);
+		const second = await startBridge(bridgeConfig({ token: undefined, tokenFile: file }));
 		const client = new TestClient(second.port);
 		const reply = await client.hello(stored);
 		assert.equal(reply.type, "hello_ok");

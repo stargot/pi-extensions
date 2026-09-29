@@ -71,12 +71,17 @@ export default function (pi: ExtensionAPI) {
 		},
 		handler: async (args, ctx) => {
 			let queryText = (args ?? "").trim();
-			if (!queryText && ctx.hasUI) queryText = (await ctx.ui.input("Recall: search all sessions", "words, \"phrase\", role:user project:name"))?.trim() ?? "";
+			if (!queryText && ctx.hasUI)
+				queryText =
+					(await ctx.ui.input("Recall: search all sessions", 'words, "phrase", role:user project:name'))?.trim() ?? "";
 			if (!queryText) return;
 
 			const query = parseQuery(queryText);
 			const data = loadIndex(indexFile());
-			const index = { files: refreshSharedIndex(sessionsDir(), data, { exclude: ctx.sessionManager.getSessionFile() }).files, units: Object.values(data.files).flatMap((r) => r.units) };
+			const index = {
+				files: refreshSharedIndex(sessionsDir(), data, { exclude: ctx.sessionManager.getSessionFile() }).files,
+				units: Object.values(data.files).flatMap((r) => r.units),
+			};
 			saveIndex(indexFile(), data);
 			const { hits, total } = search(index.units, query, { limit: LIMIT });
 
@@ -102,7 +107,11 @@ export default function (pi: ExtensionAPI) {
 			});
 			if (!picked) return;
 
-			const action = await ctx.ui.select(describe(picked), ["Show full message", "Insert snippet into editor", "Switch to that session"]);
+			const action = await ctx.ui.select(describe(picked), [
+				"Show full message",
+				"Insert snippet into editor",
+				"Switch to that session",
+			]);
 			if (action === "Show full message") {
 				await showFull(ctx, picked, query.terms);
 			} else if (action === "Insert snippet into editor") {

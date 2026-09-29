@@ -118,11 +118,10 @@ export interface CreatePaneOptions {
  * panes it names (auto-collapse closes them). A dead stacking target falls
  * back to the parent pane; when both are gone there is nowhere to split.
  */
-export function selectSplitTarget(opts: {
-	stackingTarget?: string;
-	parentPaneId: string;
-	livePaneIds: Set<string>;
-}): { target: string; stacking: boolean } {
+export function selectSplitTarget(opts: { stackingTarget?: string; parentPaneId: string; livePaneIds: Set<string> }): {
+	target: string;
+	stacking: boolean;
+} {
 	if (opts.stackingTarget && opts.livePaneIds.has(opts.stackingTarget)) {
 		return { target: opts.stackingTarget, stacking: true };
 	}
@@ -207,12 +206,7 @@ function launchScript(paneId: string, ps1Path: string): void {
 	// Windows paths cannot contain `"`, so double quotes are unambiguous and
 	// work under pwsh, cmd and bash alike. One argv element on purpose: herdr
 	// joins COMMAND args with spaces, so quoting must survive on our side.
-	runHerdr([
-		"pane",
-		"run",
-		paneId,
-		`${PWSH} -NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -File "${ps1Path}"`,
-	]);
+	runHerdr(["pane", "run", paneId, `${PWSH} -NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -File "${ps1Path}"`]);
 }
 
 /** Send text to a pane and submit it (pane run = text + Enter, one write). */

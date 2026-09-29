@@ -62,8 +62,12 @@ export function renderReport(s: Snapshot, width: number, st: Styler = plainStyle
 	const muted = (text: string) => st.fg("muted", text);
 	const hr = () => lines.push(st.fg("borderMuted", "─".repeat(Math.min(w, 100))));
 
-	const modelText = s.model ? `${s.model.id} (${s.model.provider}) · window ${fmtTokens(s.model.contextWindow)}` : "model: unknown";
-	lines.push(`${st.bold(st.fg("accent", " Context inspector"))}  ${muted(modelText)}  ${dim(new Date(s.at).toLocaleTimeString())}`);
+	const modelText = s.model
+		? `${s.model.id} (${s.model.provider}) · window ${fmtTokens(s.model.contextWindow)}`
+		: "model: unknown";
+	lines.push(
+		`${st.bold(st.fg("accent", " Context inspector"))}  ${muted(modelText)}  ${dim(new Date(s.at).toLocaleTimeString())}`,
+	);
 	hr();
 
 	// Занятость окна
@@ -71,7 +75,10 @@ export function renderReport(s: Snapshot, width: number, st: Styler = plainStyle
 	if (occ) {
 		const ratio = occ.tokens !== null ? occ.tokens / occ.contextWindow : 0;
 		const color: Color = ratio > 0.85 ? "error" : ratio > 0.6 ? "warning" : "success";
-		const tokensText = occ.tokens !== null ? `${fmtTokens(occ.tokens)} / ${fmtTokens(occ.contextWindow)}  ${Math.round(occ.percent ?? 0)}%` : `? / ${fmtTokens(occ.contextWindow)}`;
+		const tokensText =
+			occ.tokens !== null
+				? `${fmtTokens(occ.tokens)} / ${fmtTokens(occ.contextWindow)}  ${Math.round(occ.percent ?? 0)}%`
+				: `? / ${fmtTokens(occ.contextWindow)}`;
 		lines.push(`${label("Occupancy")}${tokensText.padEnd(26)} ${st.fg(color, bar(ratio, 24))}`);
 		const c = s.compaction;
 		lines.push(
@@ -102,7 +109,9 @@ export function renderReport(s: Snapshot, width: number, st: Styler = plainStyle
 		if (r.systemTokens !== undefined) bits.push(`system ${fmtTokens(r.systemTokens)}`);
 		if (r.toolsTokens !== undefined) bits.push(`tools ${fmtTokens(r.toolsTokens)} (${r.toolCount})`);
 		if (r.messagesTokens !== undefined) bits.push(`messages ${fmtTokens(r.messagesTokens)} (${r.messageCount})`);
-		lines.push(`${label("Last payload")}${bits.join(" · ")} ${dim(`· ${r.shape} · ${new Date(r.at).toLocaleTimeString()}`)}`);
+		lines.push(
+			`${label("Last payload")}${bits.join(" · ")} ${dim(`· ${r.shape} · ${new Date(r.at).toLocaleTimeString()}`)}`,
+		);
 	} else {
 		lines.push(`${label("Last payload")}${dim("no request captured yet in this process")}`);
 	}
@@ -110,11 +119,15 @@ export function renderReport(s: Snapshot, width: number, st: Styler = plainStyle
 	lines.push("");
 
 	// Системный промпт
-	lines.push(`${label("System prompt")}${st.bold(fmtTokens(s.system.totalTokens))} tokens ${dim(`· ${s.system.totalChars} chars`)}`);
+	lines.push(
+		`${label("System prompt")}${st.bold(fmtTokens(s.system.totalTokens))} tokens ${dim(`· ${s.system.totalChars} chars`)}`,
+	);
 	const sysMax = Math.max(1, ...s.system.parts.map((p) => p.tokens));
 	for (const p of s.system.parts) {
 		const detail = p.detail ? dim(`  ${p.detail}`) : "";
-		lines.push(`  ${muted(bar(p.tokens / sysMax, 12))}  ${p.label.padEnd(28)} ${fmtTokens(p.tokens).padStart(7)}${detail}`);
+		lines.push(
+			`  ${muted(bar(p.tokens / sysMax, 12))}  ${p.label.padEnd(28)} ${fmtTokens(p.tokens).padStart(7)}${detail}`,
+		);
 	}
 	lines.push("");
 
@@ -125,13 +138,17 @@ export function renderReport(s: Snapshot, width: number, st: Styler = plainStyle
 	const toolMax = Math.max(1, ...s.tools.items.map((t) => t.tokens));
 	for (const t of s.tools.items) {
 		const name = t.active ? st.fg("toolTitle", t.name) : dim(`${t.name} (inactive)`);
-		lines.push(`  ${muted(bar(t.tokens / toolMax, 12))}  ${padVisible(name, t.name.length + (t.active ? 0 : 11), 28)} ${fmtTokens(t.tokens).padStart(7)}`);
+		lines.push(
+			`  ${muted(bar(t.tokens / toolMax, 12))}  ${padVisible(name, t.name.length + (t.active ? 0 : 11), 28)} ${fmtTokens(t.tokens).padStart(7)}`,
+		);
 	}
 	lines.push("");
 
 	// Сообщения
 	const m = s.messages;
-	lines.push(`${label("Messages")}${st.bold(fmtTokens(m.totalTokens))} tokens ${dim(`· ${m.count} entries in context`)}`);
+	lines.push(
+		`${label("Messages")}${st.bold(fmtTokens(m.totalTokens))} tokens ${dim(`· ${m.count} entries in context`)}`,
+	);
 	if (m.compaction) {
 		lines.push(
 			`  ${muted("compaction summary")} ${fmtTokens(m.compaction.summaryTokens)} tokens ${dim(`(replaced ${fmtTokens(m.compaction.tokensBefore)})`)}`,

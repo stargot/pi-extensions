@@ -88,7 +88,8 @@ export class ResultsView implements Component {
 			const active = index === this.selected;
 			const u = hit.unit;
 			const marker = active ? th.fg("accent", "▶ ") : "  ";
-			const role = u.role === "tool" ? `tool:${u.tool ?? "?"}` : u.role === "custom" ? `custom:${u.tool ?? "?"}` : u.role;
+			const role =
+				u.role === "tool" ? `tool:${u.tool ?? "?"}` : u.role === "custom" ? `custom:${u.tool ?? "?"}` : u.role;
 			const name = u.sessionName ? `  ${th.fg("dim", u.sessionName)}` : "";
 			const head = `${marker}${th.fg("dim", formatDate(u.timestamp))}  ${th.fg("toolTitle", u.project)}  ${th.fg("muted", role)}${name}`;
 			const body = `    ${highlight(hit.snippet, this.terms, (s) => th.fg("warning", th.bold(s)))}`;

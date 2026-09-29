@@ -44,12 +44,10 @@ export default function (pi: ExtensionAPI) {
 				completionsAt = Date.now();
 				SessionManager.list(process.cwd())
 					.then((sessions) => {
-						completions = sessions
-							.slice(0, 20)
-							.map((s) => ({
-								value: s.path,
-								label: `${basename(s.path)}${s.modified ? ` · ${new Date(s.modified).toLocaleString()}` : ""}`,
-							}));
+						completions = sessions.slice(0, 20).map((s) => ({
+							value: s.path,
+							label: `${basename(s.path)}${s.modified ? ` · ${new Date(s.modified).toLocaleString()}` : ""}`,
+						}));
 					})
 					.catch(() => {
 						completions = [];

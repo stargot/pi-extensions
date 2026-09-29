@@ -3,7 +3,10 @@ import { test } from "node:test";
 import { cancelSidecarPath, classifyExitSidecar, resolveInterrupt } from "../shared.ts";
 
 test("cancelSidecarPath: appends .cancel to the session file", () => {
-	assert.equal(cancelSidecarPath("/tmp/sessions/2025-01-01_scout-abc.jsonl"), "/tmp/sessions/2025-01-01_scout-abc.jsonl.cancel");
+	assert.equal(
+		cancelSidecarPath("/tmp/sessions/2025-01-01_scout-abc.jsonl"),
+		"/tmp/sessions/2025-01-01_scout-abc.jsonl.cancel",
+	);
 	assert.equal(cancelSidecarPath("s.jsonl"), "s.jsonl.cancel");
 });
 
@@ -46,7 +49,7 @@ test("classifyExitSidecar: empty or missing errorMessage → unknown", () => {
 test("classifyExitSidecar: garbage input → unknown", () => {
 	assert.deepEqual(classifyExitSidecar("not json at all"), { kind: "unknown" });
 	assert.deepEqual(classifyExitSidecar('"just a string"'), { kind: "unknown" });
-	assert.deepEqual(classifyExitSidecar('[1,2]'), { kind: "unknown" });
+	assert.deepEqual(classifyExitSidecar("[1,2]"), { kind: "unknown" });
 });
 
 test("classifyExitSidecar: empty string → unknown", () => {

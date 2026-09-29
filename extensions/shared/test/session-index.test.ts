@@ -19,7 +19,12 @@ import { loadIndex, parseSessionCombined, refreshSharedIndex, saveIndex } from "
 function sessionText(opts: { cwd?: string; name?: string } = {}): string {
 	const lines: unknown[] = [
 		{ type: "session", version: 3, id: "s1", timestamp: "2026-09-05T12:00:00.000Z", cwd: opts.cwd ?? "/work/alpha" },
-		{ type: "message", id: "u1", timestamp: "2026-09-05T12:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "How did we fix the WezTerm session plugin?" }] } },
+		{
+			type: "message",
+			id: "u1",
+			timestamp: "2026-09-05T12:00:01.000Z",
+			message: { role: "user", content: [{ type: "text", text: "How did we fix the WezTerm session plugin?" }] },
+		},
 		{
 			type: "message",
 			id: "a1",
@@ -37,9 +42,31 @@ function sessionText(opts: { cwd?: string; name?: string } = {}): string {
 				],
 			},
 		},
-		{ type: "message", id: "t1", timestamp: "2026-09-05T12:00:03.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "edit", content: [{ type: "text", text: "oldText not found" }], isError: true } },
-		{ type: "message", id: "k1", timestamp: "2026-09-05T12:00:04.000Z", message: { role: "custom", customType: "plan", content: "Plan: migrate config" } },
-		{ type: "compaction", id: "z1", timestamp: "2026-09-05T12:00:05.000Z", summary: "Summary: wezterm work done", usage: { input: 50, output: 5, cost: { total: 0.002 } } },
+		{
+			type: "message",
+			id: "t1",
+			timestamp: "2026-09-05T12:00:03.000Z",
+			message: {
+				role: "toolResult",
+				toolCallId: "c1",
+				toolName: "edit",
+				content: [{ type: "text", text: "oldText not found" }],
+				isError: true,
+			},
+		},
+		{
+			type: "message",
+			id: "k1",
+			timestamp: "2026-09-05T12:00:04.000Z",
+			message: { role: "custom", customType: "plan", content: "Plan: migrate config" },
+		},
+		{
+			type: "compaction",
+			id: "z1",
+			timestamp: "2026-09-05T12:00:05.000Z",
+			summary: "Summary: wezterm work done",
+			usage: { input: 50, output: 5, cost: { total: 0.002 } },
+		},
 	];
 	if (opts.name) lines.push({ type: "session_info", id: "n1", timestamp: "2026-09-05T12:00:06.000Z", name: opts.name });
 	return `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
@@ -70,7 +97,10 @@ test("loadIndex/saveIndex: roundtrip, corrupt file, version mismatch", () => {
 	const file = join(dir, "cache", "session-index.json");
 	try {
 		const combined = parseSessionCombined(sessionText(), "/x/s1.jsonl")!;
-		saveIndex(file, { version: 1, files: { "/x/s1.jsonl": { mtimeMs: 1, size: 2, summary: combined.summary, units: combined.units } } });
+		saveIndex(file, {
+			version: 1,
+			files: { "/x/s1.jsonl": { mtimeMs: 1, size: 2, summary: combined.summary, units: combined.units } },
+		});
 		const loaded = loadIndex(file);
 		assert.equal(loaded.version, 1);
 		assert.deepEqual(loaded.files["/x/s1.jsonl"]?.summary, combined.summary);
@@ -105,7 +135,11 @@ test("refreshSharedIndex: incremental by mtime+size, drops removed, honors exclu
 		const second = refreshSharedIndex(root, data);
 		assert.equal(second.changed, 0);
 
-		writeFileSync(b, sessionText({ cwd: "/work/beta" }) + `${JSON.stringify({ type: "message", id: "u9", timestamp: "2026-09-06T00:00:00.000Z", message: { role: "user", content: "later" } })}\n`);
+		writeFileSync(
+			b,
+			sessionText({ cwd: "/work/beta" }) +
+				`${JSON.stringify({ type: "message", id: "u9", timestamp: "2026-09-06T00:00:00.000Z", message: { role: "user", content: "later" } })}\n`,
+		);
 		utimesSync(b, new Date(), new Date(Date.now() + 5000));
 		const third = refreshSharedIndex(root, data);
 		assert.equal(third.changed, 1);
@@ -130,7 +164,10 @@ test("refreshSharedIndex: headerless file is skipped and unit text is capped", (
 	try {
 		writeFileSync(join(root, "noheader.jsonl"), '{"type":"message"}\n');
 		const huge = "z".repeat(10_000);
-		writeFileSync(join(root, "big.jsonl"), `${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: "2026-09-05T12:00:00.000Z", cwd: "/a" })}\n${JSON.stringify({ type: "message", id: "u1", timestamp: "2026-09-05T12:00:01.000Z", message: { role: "user", content: huge } })}\n`);
+		writeFileSync(
+			join(root, "big.jsonl"),
+			`${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: "2026-09-05T12:00:00.000Z", cwd: "/a" })}\n${JSON.stringify({ type: "message", id: "u1", timestamp: "2026-09-05T12:00:01.000Z", message: { role: "user", content: huge } })}\n`,
+		);
 
 		const data = loadIndex(file);
 		refreshSharedIndex(root, data);

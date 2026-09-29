@@ -185,15 +185,18 @@ let cachedPiPath: string | null = null;
 
 /** Spawn/rename state shared with subagent-done.ts via a process-global. */
 function publishRunningChildrenCount(): void {
-	(globalThis as Record<symbol, unknown>)[Symbol.for("pi-subagents/running-children-count")] =
-		() => runningSubagents.size;
+	(globalThis as Record<symbol, unknown>)[Symbol.for("pi-subagents/running-children-count")] = () =>
+		runningSubagents.size;
 }
 publishRunningChildrenCount();
 
 function allowedAgentsInChild(): Set<string> | null {
 	const raw = process.env.PI_SUBAGENT_ALLOWED;
 	if (!raw) return null;
-	const names = raw.split(",").map((s) => s.trim()).filter(Boolean);
+	const names = raw
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
 	return new Set(names);
 }
 
@@ -234,7 +237,10 @@ function resolvePiPath(): string {
 	if (cachedPiPath) return cachedPiPath;
 	try {
 		const out = execFileSync("where.exe", ["pi"], { encoding: "utf8", windowsHide: true });
-		const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+		const lines = out
+			.split(/\r?\n/)
+			.map((l) => l.trim())
+			.filter(Boolean);
 		const cmd = lines.find((l) => l.toLowerCase().endsWith("pi.cmd"));
 		cachedPiPath = cmd ?? lines[0] ?? "";
 	} catch {
@@ -352,7 +358,10 @@ function updateWidget(): void {
 
 // ── Completion / steering ──
 
-function completeSubagent(running: RunningSubagent, result: { exitCode: number; errorMessage?: string; crashed?: boolean; cancelled?: boolean }): void {
+function completeSubagent(
+	running: RunningSubagent,
+	result: { exitCode: number; errorMessage?: string; crashed?: boolean; cancelled?: boolean },
+): void {
 	runningSubagents.delete(running.id);
 	publishRunningChildrenCount();
 
@@ -455,8 +464,7 @@ function completeSubagent(running: RunningSubagent, result: { exitCode: number; 
 	// cancelled runs close like successes (a cancelled pane has nothing left
 	// to inspect). Interactive (auto-exit: false) agents never collapse —
 	// their pane lives until the user closes it.
-	const paneShouldCollapse =
-		cancelled || (running.autoExit && !result.errorMessage && result.exitCode === 0);
+	const paneShouldCollapse = cancelled || (running.autoExit && !result.errorMessage && result.exitCode === 0);
 	if (paneShouldCollapse) {
 		closePane(running.paneId);
 		columnPanes = columnPanes.filter((id) => id !== running.paneId);
@@ -512,9 +520,7 @@ function observeActivity(running: RunningSubagent, now: number): void {
 		}
 	}
 	const stalledCandidate =
-		running.autoExit &&
-		running.activity.state !== null &&
-		now - running.activity.lastChangeAt > STALLED_AFTER_MS;
+		running.autoExit && running.activity.state !== null && now - running.activity.lastChangeAt > STALLED_AFTER_MS;
 	if (stalledCandidate && !running.activity.stalled) {
 		running.activity.stalled = true;
 		notifyStalled(running, true);
@@ -685,7 +691,11 @@ function buildLauncherSpec(opts: {
 	};
 }
 
-function doSpawn(ctx: ExtensionContext, params: SpawnParams, sctx: SpawnContext): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
+function doSpawn(
+	ctx: ExtensionContext,
+	params: SpawnParams,
+	sctx: SpawnContext,
+): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
 	const allowed = allowedAgentsInChild();
 	if (allowed && !allowed.has(params.agent)) {
 		throw new Error(
@@ -796,14 +806,19 @@ function doSpawn(ctx: ExtensionContext, params: SpawnParams, sctx: SpawnContext)
 					`its result as a steer message that wakes you up and starts a new turn — you do not need to do anything to receive it. ` +
 					`Meanwhile: keep working on other independent tasks, or end your turn immediately. ` +
 					`To send additional instructions later: subagent_message({ name: "${name}", message: "…" }).` +
-				(def.warnings.length > 0 ? `\n⚠ Definition warnings for "${def.name}": ${def.warnings.join("; ")}.` : ""),
+					(def.warnings.length > 0 ? `\n⚠ Definition warnings for "${def.name}": ${def.warnings.join("; ")}.` : ""),
 			},
 		],
 		details: { id, name, agent: def.name, pane: paneId, session: sessionFile },
 	};
 }
 
-function doResume(ctx: ExtensionContext, sctx: SpawnContext, entry: RegistryEntry & { paneId?: string }, message: string): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
+function doResume(
+	ctx: ExtensionContext,
+	sctx: SpawnContext,
+	entry: RegistryEntry & { paneId?: string },
+	message: string,
+): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
 	const name = entry.name;
 	const id = `${safeFilePart(name)}-${randomUUID().slice(0, 8)}`;
 	const startTime = Date.now();
@@ -963,7 +978,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			agent: Type.String({ description: "Which agent to spawn (must be known and permitted)" }),
 			task: Type.String({ description: "Task/prompt for the sub-agent" }),
 			name: Type.Optional(
-				Type.String({ description: "Display name for the pane and widget. Must be unique — duplicates are auto-suffixed (scout, scout-2, …)" }),
+				Type.String({
+					description:
+						"Display name for the pane and widget. Must be unique — duplicates are auto-suffixed (scout, scout-2, …)",
+				}),
 			),
 			model: Type.Optional(Type.String({ description: "Model override (overrides agent default)" })),
 			cwd: Type.Optional(
@@ -1120,7 +1138,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 								text: `Subagent "${name}" is not running — nothing to cancel (it already finished; use subagent_message to resume it).`,
 							},
 						],
-					details: { name, status: "not-running" },
+						details: { name, status: "not-running" },
 					};
 				}
 				const known = [...new Set([...Object.keys(registry), ...runningSubagents.keys()])];
@@ -1284,7 +1302,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "task_batch",
 		label: "Task Batch",
-			description:
+		description:
 			"Run headless subagent tasks in isolated pi processes (blocking, batch mode). " +
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder). " +
 			"Uses JSON mode to capture structured output from subagents. " +
@@ -1350,7 +1368,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			): Promise<BatchResult> => {
 				const def = defs.get(agentName);
 				if (!def) {
-					const available = Array.from(defs.keys()).map((n) => `"${n}"`).join(", ") || "none";
+					const available =
+						Array.from(defs.keys())
+							.map((n) => `"${n}"`)
+							.join(", ") || "none";
 					const r = emptyResult(agentName, task);
 					r.exitCode = 1;
 					r.stderr = `Unknown agent: "${agentName}". Available agents: ${available}.`;
@@ -1383,9 +1404,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					agent: def.name,
 					task,
 					session: result.sessionFile,
-					usage: result.usage.input || result.usage.output
-						? { input: result.usage.input, output: result.usage.output, cost: result.usage.cost }
-						: undefined,
+					usage:
+						result.usage.input || result.usage.output
+							? { input: result.usage.input, output: result.usage.output, cost: result.usage.cost }
+							: undefined,
 					model: result.model,
 				});
 				return result;
@@ -1396,7 +1418,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			if (modeCount !== 1) {
 				const available = Array.from(defs.keys()).join(", ") || "none";
 				return {
-					content: [{ type: "text", text: `Invalid parameters. Provide exactly one mode (agent+task, tasks, or chain).\nAvailable agents: ${available}` }],
+					content: [
+						{
+							type: "text",
+							text: `Invalid parameters. Provide exactly one mode (agent+task, tasks, or chain).\nAvailable agents: ${available}`,
+						},
+					],
 					details: makeBatchDetails("single", []),
 				};
 			}
@@ -1431,14 +1458,18 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						let currentStep: BatchResult | null = null;
 						const chainUpdate = onUpdate
 							? (partial: { content?: unknown; details?: unknown }) => {
-										const current = (partial.details as BatchDetails | undefined)?.results[0];
-										if (current) {
-											onUpdate({
-												content: [{ type: "text", text: finalOutput(current.messages) || "(running...)" }],
-												details: makeBatchDetails("chain", [...resultsCompact, compactResultForDetails(current)], handOff),
-											});
-										}
+									const current = (partial.details as BatchDetails | undefined)?.results[0];
+									if (current) {
+										onUpdate({
+											content: [{ type: "text", text: finalOutput(current.messages) || "(running...)" }],
+											details: makeBatchDetails(
+												"chain",
+												[...resultsCompact, compactResultForDetails(current)],
+												handOff,
+											),
+										});
 									}
+								}
 							: undefined;
 
 						// Ticks re-emit the current step so its spinner and elapsed keep moving.
@@ -1459,7 +1490,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 						if (isFailedResult(result)) {
 							return {
-								content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${resultOutput(result)}` }],
+								content: [
+									{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${resultOutput(result)}` },
+								],
 								details: makeBatchDetails("chain", results, handOff),
 								isError: true,
 							};
@@ -1467,7 +1500,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						previousOutput = finalOutput(result.messages);
 					}
 					return {
-						content: [{ type: "text", text: finalOutput(results[results.length - 1]?.messages ?? []) || "(no output)" }],
+						content: [
+							{ type: "text", text: finalOutput(results[results.length - 1]?.messages ?? []) || "(no output)" },
+						],
 						details: makeBatchDetails("chain", results, handOff),
 					};
 				}
@@ -1476,7 +1511,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				if (hasTasks && params.tasks) {
 					if (params.tasks.length > MAX_PARALLEL_TASKS) {
 						return {
-							content: [{ type: "text", text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.` }],
+							content: [
+								{
+									type: "text",
+									text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
+								},
+							],
 							details: makeBatchDetails("parallel", []),
 						};
 					}
@@ -1528,7 +1568,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						return `### [${r.agent}] ${status}\n\n${truncateOutput(resultOutput(r))}`;
 					});
 					return {
-						content: [{ type: "text", text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}` }],
+						content: [
+							{
+								type: "text",
+								text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
+							},
+						],
 						details: makeBatchDetails("parallel", results),
 					};
 				}
@@ -1570,9 +1615,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				// Pipeline on one line: research ─▶ analyze ─▶ report (+2)
 				const shown = chain.slice(0, 4).map((s) => theme.fg("accent", s.agent));
 				const rest = chain.length - shown.length;
-				const pipeline =
-					shown.join(theme.fg("muted", " ─▶ ")) + (rest > 0 ? theme.fg("muted", ` (+${rest})`) : "");
-				return new Text(theme.fg("toolTitle", theme.bold("task_batch ")) + theme.fg("muted", "chain: ") + pipeline, 0, 0);
+				const pipeline = shown.join(theme.fg("muted", " ─▶ ")) + (rest > 0 ? theme.fg("muted", ` (+${rest})`) : "");
+				return new Text(
+					theme.fg("toolTitle", theme.bold("task_batch ")) + theme.fg("muted", "chain: ") + pipeline,
+					0,
+					0,
+				);
 			}
 			if (tasks && tasks.length > 0) {
 				// Agent chips: roles are what matters, task texts truncate meaninglessly.
@@ -1604,7 +1652,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const details = result.details as BatchDetails | undefined;
 			if (!details || details.results.length === 0) {
 				const first = result.content[0] as { type?: string; text?: string } | undefined;
-				return new Text(first?.type === "text" ? first.text ?? "(no output)" : "(no output)", 0, 0);
+				return new Text(first?.type === "text" ? (first.text ?? "(no output)") : "(no output)", 0, 0);
 			}
 
 			const mdTheme = getMarkdownTheme();
@@ -1619,28 +1667,27 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				return ms === undefined ? "" : ` ${theme.fg("dim", formatDuration(ms))}`;
 			};
 			// Verdict chips and error banners come from the shared render helpers.
-			const stderrExcerpt = (r: BatchResult): string =>
-				isFailedResult(r) && r.stderr ? firstLines(r.stderr, 3) : "";
+			const stderrExcerpt = (r: BatchResult): string => (isFailedResult(r) && r.stderr ? firstLines(r.stderr, 3) : "");
 			// One line per task for the collapsed parallel view (No.7).
 			const taskLine = (r: BatchResult): string => {
 				const head = `${statusIcon(r)} ${theme.fg("accent", r.agent)}${elapsedTag(r)}`;
 				if (isQueued(r)) return `${head} ${theme.fg("muted", "queued")}`;
 				const bits: string[] = [];
-					if (isFailedResult(r)) {
-						const reason = oneline(r.errorMessage || r.stopReason || `exit ${r.exitCode}`);
-						bits.push(theme.fg("error", `failed (${reason})`));
-					} else {
-						const tools = summarizeTools(displayItems(r.messages));
-						if (tools) bits.push(theme.fg("muted", tools));
-						if (isRunning(r) && r.liveTool) {
-							// Mid-turn tool progress — arrives via tool_execution_start,
-							// so this updates without waiting for the turn to end.
-							bits.push(theme.fg("warning", `${r.liveTool.name}…`));
-						} else if (!isRunning(r)) {
-							const out = finalOutput(r.messages);
-							if (out) bits.push(theme.fg("dim", `→ ${formatTokens(out.length)}`));
-						}
+				if (isFailedResult(r)) {
+					const reason = oneline(r.errorMessage || r.stopReason || `exit ${r.exitCode}`);
+					bits.push(theme.fg("error", `failed (${reason})`));
+				} else {
+					const tools = summarizeTools(displayItems(r.messages));
+					if (tools) bits.push(theme.fg("muted", tools));
+					if (isRunning(r) && r.liveTool) {
+						// Mid-turn tool progress — arrives via tool_execution_start,
+						// so this updates without waiting for the turn to end.
+						bits.push(theme.fg("warning", `${r.liveTool.name}…`));
+					} else if (!isRunning(r)) {
+						const out = finalOutput(r.messages);
+						if (out) bits.push(theme.fg("dim", `→ ${formatTokens(out.length)}`));
 					}
+				}
 				return bits.length > 0 ? `${head} ${bits.join(" ")}` : head;
 			};
 			const collapsedItems = (items: ReturnType<typeof displayItems>, limit: number): string => {
@@ -1650,7 +1697,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
 				for (const item of toShow) {
 					if (item.type === "text") {
-						const preview = expanded ? item.text ?? "" : (item.text ?? "").split("\n").slice(0, 3).join("\n");
+						const preview = expanded ? (item.text ?? "") : (item.text ?? "").split("\n").slice(0, 3).join("\n");
 						text += `${theme.fg("toolOutput", preview)}\n`;
 					} else {
 						text += `${theme.fg("muted", "→ ") + formatToolCall(item.name ?? "", item.args ?? {}, theme.fg)}\n`;
@@ -1710,7 +1757,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				const r = details.results[0];
 				const isError = isFailedResult(r);
 				const isBusy = isRunning(r);
-				const icon = isBusy ? theme.fg("warning", spinnerFrame()) : isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+				const icon = isBusy
+					? theme.fg("warning", spinnerFrame())
+					: isError
+						? theme.fg("error", "✗")
+						: theme.fg("success", "✓");
 				const items = displayItems(r.messages);
 				if (expanded) {
 					const container = new Container();
@@ -1773,7 +1824,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					activeCount > 0 ? `${spinnerFrame()} CHAIN ${doneCount}/${total}` : `CHAIN ${successCount}/${total}`,
 				);
 				const bar = theme.fg("muted", `[${progressBar(doneCount, total)}] `);
-				const tailBits = activeCount > 0 ? [] : [costWallTag(details.results), failedTag(details.results)].filter((s) => s.length > 0);
+				const tailBits =
+					activeCount > 0 ? [] : [costWallTag(details.results), failedTag(details.results)].filter((s) => s.length > 0);
 				if (expanded) {
 					const container = new Container();
 					container.addChild(new Text(`${head} ${bar}${tailBits.map((s) => ` ${s}`).join("")}`, 0, 0));
@@ -1781,8 +1833,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					for (let i = 0; i < details.results.length; i++) {
 						const r = details.results[i];
 						const handIn = details.handOff?.[i] ?? 0;
-						const hand =
-							i > 0 && handIn > 0 ? theme.fg("muted", ` ← +${formatTokens(handIn)}`) : "";
+						const hand = i > 0 && handIn > 0 ? theme.fg("muted", ` ← +${formatTokens(handIn)}`) : "";
 						const stepHeader = `${statusIcon(r)} ${theme.fg("muted", `Step ${r.step ?? i + 1} ·`)} ${theme.fg(
 							"accent",
 							r.agent,
@@ -1917,23 +1968,25 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
 			if (parts[0] === "kill") {
 				const target = parts[1];
-			if (!target) {
+				if (!target) {
 					ctx.ui.notify("Usage: /workers kill <id|pid>", "warning");
 					return;
-			}
+				}
 				const { workers } = readRunningWorkers(runningIndexPath(subagentSessionsRoot()));
-			const worker =
-					workers.find((w) => w.id === target) ?? workers.find((w) => String(w.pid) === target);
-			if (!worker) {
+				const worker = workers.find((w) => w.id === target) ?? workers.find((w) => String(w.pid) === target);
+				if (!worker) {
 					ctx.ui.notify(`No live worker matching "${target}".`, "error");
 					return;
-			}
-			try {
+				}
+				try {
 					killWorkerTree(worker.pid);
 					ctx.ui.notify(`Killed ${worker.label} (pid ${worker.pid}). The batch tool will report the exit.`, "info");
-			} catch (err) {
-					ctx.ui.notify(`Failed to kill pid ${worker.pid}: ${err instanceof Error ? err.message : String(err)}`, "error");
-			}
+				} catch (err) {
+					ctx.ui.notify(
+						`Failed to kill pid ${worker.pid}: ${err instanceof Error ? err.message : String(err)}`,
+						"error",
+					);
+				}
 				return;
 			}
 
@@ -1948,10 +2001,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				const modeTag = w.mode ? ` ${w.mode}${stepTag}` : "";
 				return `${w.id} · pid ${w.pid} · ${formatElapsed(now - w.startedAt)} · ${w.model ?? "?"}${modeTag}\n  ${oneline(w.task, 90)}\n  ${w.sessionFile}`;
 			});
-			ctx.ui.notify(`Live workers (${workers.length}):
+			ctx.ui.notify(
+				`Live workers (${workers.length}):
 
 ${lines.join("\n\n")}\n
-/workers kill <id|pid> to terminate.`, "info");
+/workers kill <id|pid> to terminate.`,
+				"info",
+			);
 		},
 	});
 
@@ -1959,5 +2015,7 @@ ${lines.join("\n\n")}\n
 
 	// Completion card lives in render.ts (testable in isolation); this only
 	// wires it up.
-	pi.registerMessageRenderer("subagent_result", (message, options, theme) => subagentResultCard(message, options, theme));
+	pi.registerMessageRenderer("subagent_result", (message, options, theme) =>
+		subagentResultCard(message, options, theme),
+	);
 }

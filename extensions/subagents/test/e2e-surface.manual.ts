@@ -24,13 +24,23 @@ const spec = {
 	doneFile,
 	env: { PI_SUBAGENT_NAME: "e2e-test" },
 } as const;
-const rendered = renderLauncherPs1({ ...spec, appendSystemPrompt: undefined, tools: undefined, excludeTools: undefined, model: undefined, thinking: undefined, cwd: dir } as never)
-	.replace(/^& 'pwsh'.*$/m, [
+const rendered = renderLauncherPs1({
+	...spec,
+	appendSystemPrompt: undefined,
+	tools: undefined,
+	excludeTools: undefined,
+	model: undefined,
+	thinking: undefined,
+	cwd: dir,
+} as never).replace(
+	/^& 'pwsh'.*$/m,
+	[
 		"Write-Host 'E2E_SUBAGENT_WORKING'",
 		"Start-Sleep -Seconds 2",
 		"Write-Host 'E2E_SUBAGENT_SUMMARY all good'",
 		"$code = 0",
-	].join("\r\n"));
+	].join("\r\n"),
+);
 const scriptPath = join(dir, "launcher.ps1");
 writeFileSync(scriptPath, rendered, "utf8");
 
@@ -47,10 +57,21 @@ for (let i = 0; i < 30; i++) {
 		break;
 	}
 	const sentinel = parseSentinel(readScreenTail(pane, 4));
-	if (sentinel !== null) { exitCode = sentinel; viaSentinel = true; break; }
+	if (sentinel !== null) {
+		exitCode = sentinel;
+		viaSentinel = true;
+		break;
+	}
 }
 const screen = readScreenTail(pane, 12);
-console.log("exitCode:", exitCode, "| via:", viaSentinel ? "sentinel" : "done-file", "| elapsed:", Date.now() - t0 + "ms");
+console.log(
+	"exitCode:",
+	exitCode,
+	"| via:",
+	viaSentinel ? "sentinel" : "done-file",
+	"| elapsed:",
+	Date.now() - t0 + "ms",
+);
 console.log("working marker visible:", screen.includes("E2E_SUBAGENT_WORKING"));
 console.log("summary visible:", screen.includes("E2E_SUBAGENT_SUMMARY all good"));
 

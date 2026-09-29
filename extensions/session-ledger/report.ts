@@ -1,7 +1,16 @@
 /**
  * session-ledger: табличный отчёт из Ledger. Стилизация через минимальный интерфейс, совместимый с Theme.
  */
-import { cachePercent, type GroupKey, groupRows, type Ledger, type Row, type Stats, topSessions, dayOf } from "./ledger.ts";
+import {
+	cachePercent,
+	type GroupKey,
+	groupRows,
+	type Ledger,
+	type Row,
+	type Stats,
+	topSessions,
+	dayOf,
+} from "./ledger.ts";
 
 export type Color = "accent" | "success" | "error" | "warning" | "muted" | "dim" | "text" | "toolTitle" | "borderMuted";
 
@@ -56,7 +65,8 @@ function columnsFor(by: GroupKey): Column[] {
 				title: "err%",
 				align: "right",
 				value: (r) => fmtPercent(errorRate(r.stats)),
-				color: (r) => ((errorRate(r.stats) ?? 0) >= 20 ? "error" : (errorRate(r.stats) ?? 0) >= 10 ? "warning" : undefined),
+				color: (r) =>
+					(errorRate(r.stats) ?? 0) >= 20 ? "error" : (errorRate(r.stats) ?? 0) >= 10 ? "warning" : undefined,
 			},
 			{ title: "sessions", align: "right", value: (r) => String(r.stats.sessions) },
 		];
@@ -83,7 +93,8 @@ function columnsFor(by: GroupKey): Column[] {
 			title: "err%",
 			align: "right",
 			value: (r) => fmtPercent(errorRate(r.stats)),
-			color: (r) => ((errorRate(r.stats) ?? 0) >= 20 ? "error" : (errorRate(r.stats) ?? 0) >= 10 ? "warning" : undefined),
+			color: (r) =>
+				(errorRate(r.stats) ?? 0) >= 20 ? "error" : (errorRate(r.stats) ?? 0) >= 10 ? "warning" : undefined,
 		},
 		{ title: "compact", align: "right", value: (r) => String(r.stats.compactions) },
 	];
@@ -131,7 +142,13 @@ export function renderTable(rows: Row[], by: GroupKey, total: Stats | undefined,
 	return lines;
 }
 
-export function renderLedger(ledger: Ledger, by: GroupKey, width: number, st: Styler = plainStyler, options: { top?: number } = {}): string[] {
+export function renderLedger(
+	ledger: Ledger,
+	by: GroupKey,
+	width: number,
+	st: Styler = plainStyler,
+	options: { top?: number } = {},
+): string[] {
 	const lines: string[] = [];
 	const dim = (t: string) => st.fg("dim", t);
 	const muted = (t: string) => st.fg("muted", t);
@@ -168,7 +185,11 @@ export function renderLedger(ledger: Ledger, by: GroupKey, width: number, st: St
 		}
 	}
 	lines.push("");
-	lines.push(dim("Cost comes from pi's per-message usage.cost; models without pricing show $0. Sessions count in a period if any entry falls into it."));
+	lines.push(
+		dim(
+			"Cost comes from pi's per-message usage.cost; models without pricing show $0. Sessions count in a period if any entry falls into it.",
+		),
+	);
 	return lines;
 }
 

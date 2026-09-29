@@ -54,7 +54,15 @@ function scanSession(file: string): SessionInfo | undefined {
 			}
 			if (e.type === "message" && e.message?.role === "user" && !preview) {
 				const c = e.message.content;
-				preview = oneLine(typeof c === "string" ? c : (c ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join(" "), 64);
+				preview = oneLine(
+					typeof c === "string"
+						? c
+						: (c ?? [])
+								.filter((b: any) => b?.type === "text")
+								.map((b: any) => b.text)
+								.join(" "),
+					64,
+				);
 			}
 			if (cwd && preview) break;
 		}

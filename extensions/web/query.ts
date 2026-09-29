@@ -35,16 +35,12 @@ export function clampCount(count: number | undefined): number {
 }
 
 function stripWrappingQuotes(value: string): string {
-	return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
-		? value.slice(1, -1).trim()
-		: value;
+	return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1).trim() : value;
 }
 
 function cleanItems(values?: string[]): string[] {
 	if (!values) return [];
-	return values
-		.map((value) => stripWrappingQuotes(value.trim().replace(/\s+/g, " ")))
-		.filter(Boolean);
+	return values.map((value) => stripWrappingQuotes(value.trim().replace(/\s+/g, " "))).filter(Boolean);
 }
 
 function cleanQuery(value?: string): string | undefined {
@@ -60,7 +56,10 @@ function cleanQuery(value?: string): string | undefined {
 export function normalizeSite(site?: string): string | undefined {
 	if (typeof site !== "string") return undefined;
 
-	let value = site.trim().replace(/^site:/i, "").trim();
+	let value = site
+		.trim()
+		.replace(/^site:/i, "")
+		.trim();
 	if (!value) return undefined;
 
 	try {
@@ -128,7 +127,5 @@ export function decodeDdgHref(href: string): string {
 
 export function formatResults(results: SearchResult[]): string {
 	if (results.length === 0) return "No results found.";
-	return results
-		.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
-		.join("\n\n");
+	return results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join("\n\n");
 }

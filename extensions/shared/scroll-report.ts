@@ -79,8 +79,12 @@ export class ScrollReport implements Component {
 		const maxOffset = Math.max(0, all.length - rows);
 		if (this.offset > maxOffset) this.offset = maxOffset;
 		const slice = all.slice(this.offset, this.offset + rows);
-		const position = all.length > rows ? ` ${this.offset + 1}-${Math.min(all.length, this.offset + rows)}/${all.length}` : "";
-		const help = this.theme.fg("dim", `↑↓ PgUp PgDn Home End scroll · r refresh · q/esc close${position}${this.helpSuffix}`);
+		const position =
+			all.length > rows ? ` ${this.offset + 1}-${Math.min(all.length, this.offset + rows)}/${all.length}` : "";
+		const help = this.theme.fg(
+			"dim",
+			`↑↓ PgUp PgDn Home End scroll · r refresh · q/esc close${position}${this.helpSuffix}`,
+		);
 		return [...slice, truncateToWidth(help, width)];
 	}
 

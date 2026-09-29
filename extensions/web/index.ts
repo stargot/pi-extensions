@@ -23,12 +23,7 @@
  * where the pairing token lives (or why the bridge is disabled).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-	readBridgeConfig,
-	resolveTokenFilePath,
-	startBridge,
-	type BridgeHandle,
-} from "./fetch/bridge.ts";
+import { readBridgeConfig, resolveTokenFilePath, startBridge, type BridgeHandle } from "./fetch/bridge.ts";
 import { dedupeInFlight } from "./fetch/in-flight.ts";
 import { registerWebFetch } from "./fetch/tool.ts";
 import registerWebSearch from "./search.ts";
@@ -109,9 +104,7 @@ export default function (pi: ExtensionAPI) {
 		void ensureBridge().catch((error: unknown) => {
 			// Belt and braces: ensureBridge already catches its own failures;
 			// this guard only covers an unexpected throw in the plumbing.
-			console.warn(
-				`[pi-web] browser bridge startup error: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			console.warn(`[pi-web] browser bridge startup error: ${error instanceof Error ? error.message : String(error)}`);
 		});
 	});
 
@@ -122,13 +115,11 @@ export default function (pi: ExtensionAPI) {
 	registerWebSearch(pi);
 	registerWebFetch(pi, {
 		// No bridge → renderFn resolves null → fetcher's honest empty outcome.
-		renderFn: (url, signal) =>
-			bridge ? bridge.render(url, signal) : Promise.resolve(null),
+		renderFn: (url, signal) => (bridge ? bridge.render(url, signal) : Promise.resolve(null)),
 	});
 
 	pi.registerCommand("bridge", {
-		description:
-			"Show the local browser-bridge status (port, companion clients, token file)",
+		description: "Show the local browser-bridge status (port, companion clients, token file)",
 		handler: async (_args, ctx) => {
 			if (bridge) {
 				ctx.ui.notify(
@@ -142,10 +133,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`browser bridge disabled: ${bridgeDisabledReason}`, "warning");
 				return;
 			}
-			ctx.ui.notify(
-				"bridge not started (session not active or startup error)",
-				"warning",
-			);
+			ctx.ui.notify("bridge not started (session not active or startup error)", "warning");
 		},
 	});
 }

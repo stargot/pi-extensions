@@ -367,7 +367,7 @@ function blockLength(text: string, open: string, close: string): number | undefi
 }
 
 function stringify(value: unknown): string {
-	return typeof value === "string" ? value : JSON.stringify(value) ?? "";
+	return typeof value === "string" ? value : (JSON.stringify(value) ?? "");
 }
 
 function preview(text: string, max = 80): string {

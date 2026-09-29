@@ -58,7 +58,9 @@ export interface SubagentErrorInfo {
  * stopReason:"error" (auto-retry exhausted, provider overload, …).
  * Returns null for normal or aborted turns.
  */
-export function findLatestAssistantError(messages: Array<{ role?: string; stopReason?: string; errorMessage?: string }> | undefined): SubagentErrorInfo | null {
+export function findLatestAssistantError(
+	messages: Array<{ role?: string; stopReason?: string; errorMessage?: string }> | undefined,
+): SubagentErrorInfo | null {
 	if (!messages) return null;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
@@ -154,7 +156,8 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_end", (event, ctx) => {
 		lastCtx = ctx;
-		const messages = (event as { messages?: Array<{ role?: string; stopReason?: string; errorMessage?: string }> }).messages;
+		const messages = (event as { messages?: Array<{ role?: string; stopReason?: string; errorMessage?: string }> })
+			.messages;
 
 		// Cancelled run: report and exit unconditionally. The normal logic
 		// below would keep an aborted turn's pane open for inspection — exactly
@@ -174,8 +177,7 @@ export default function (pi: ExtensionAPI) {
 
 		// Stay open while work is in flight: children still reporting back.
 		const hasPendingChildren = runningChildrenCount() > 0;
-		const shouldExit =
-			autoExit && !hasPendingChildren && shouldAutoExitOnAgentEnd(messages);
+		const shouldExit = autoExit && !hasPendingChildren && shouldAutoExitOnAgentEnd(messages);
 
 		if (shouldExit) {
 			// Report error turns through the sidecar so the parent's watcher
@@ -183,10 +185,7 @@ export default function (pi: ExtensionAPI) {
 			const errorInfo = findLatestAssistantError(messages);
 			if (errorInfo && sessionFile) {
 				try {
-					writeFileSync(
-						`${sessionFile}.exit`,
-						JSON.stringify({ type: "error", errorMessage: errorInfo.errorMessage }),
-					);
+					writeFileSync(`${sessionFile}.exit`, JSON.stringify({ type: "error", errorMessage: errorInfo.errorMessage }));
 				} catch {
 					// Best effort — the watcher falls back to the transcript.
 				}

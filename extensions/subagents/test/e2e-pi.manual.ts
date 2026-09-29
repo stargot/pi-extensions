@@ -13,7 +13,11 @@ import { createSubagentPane, listPaneIds, readScreenTail, parseSentinel } from "
 import { summarizeSessionFile } from "../session-read.ts";
 
 const where = execFileSync("where.exe", ["pi"], { encoding: "utf8" });
-const piPath = where.split(/\r?\n/).map((l) => l.trim()).find((l) => l.toLowerCase().endsWith("pi.cmd")) ?? "";
+const piPath =
+	where
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.find((l) => l.toLowerCase().endsWith("pi.cmd")) ?? "";
 if (!piPath) {
 	console.error("pi.cmd not found");
 	process.exit(1);
@@ -73,7 +77,7 @@ writeFileSync(scriptPath, renderLauncherPs1(spec), "utf8");
 const invocationLine = readFileSync(scriptPath, "utf8")
 	.split("\r\n")
 	.find((l) => l.startsWith("& "));
-if (!invocationLine || ((invocationLine.match(/'/g) ?? []).length) % 2 !== 0) {
+if (!invocationLine || (invocationLine.match(/'/g) ?? []).length % 2 !== 0) {
 	console.error("INVOCATION LINE BROKEN:", invocationLine);
 	process.exit(1);
 }

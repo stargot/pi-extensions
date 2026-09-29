@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-	BRIDGE_GRACE_MS,
-	JOB_TIMEOUT_MS,
-	MAX_CHARS,
-} from "../fetch/bridge-protocol.ts";
+import { BRIDGE_GRACE_MS, JOB_TIMEOUT_MS, MAX_CHARS } from "../fetch/bridge-protocol.ts";
 import {
 	MAX_IN_FLIGHT_PER_CLIENT,
 	MAX_QUEUE,
@@ -77,7 +73,10 @@ function deliveryLog() {
 
 async function isSettled(promise: Promise<unknown>): Promise<boolean> {
 	return Promise.race([
-		promise.then(() => true, () => true),
+		promise.then(
+			() => true,
+			() => true,
+		),
 		Promise.resolve().then(() => false),
 		// A settled promise wins the race after one microtask hop; a pending
 		// one loses to the synchronous `false`. (Never rejects in practice.)
@@ -234,19 +233,24 @@ test("queue is FIFO with a single busy client", async () => {
 	// strictly in arrival order.
 	assert.equal(core.resolve(j1.id, RESULT), true);
 	await j1.promise;
-	assert.deepEqual(got.map((g) => g.id), [j1.id, j2.id]);
+	assert.deepEqual(
+		got.map((g) => g.id),
+		[j1.id, j2.id],
+	);
 	assert.equal(core.resolve(j2.id, RESULT), true);
 	await j2.promise;
-	assert.deepEqual(got.map((g) => g.id), [j1.id, j2.id, j3.id]);
+	assert.deepEqual(
+		got.map((g) => g.id),
+		[j1.id, j2.id, j3.id],
+	);
 	assert.equal(core.fail(j3.id, "render-failed"), true);
 	await j3.promise;
-	assert.deepEqual(got.map((g) => g.id), [j1.id, j2.id, j3.id, j4.id]);
+	assert.deepEqual(
+		got.map((g) => g.id),
+		[j1.id, j2.id, j3.id, j4.id],
+	);
 	assert.equal(core.resolve(j4.id, RESULT), true);
-	assert.deepEqual(await Promise.all([j2.promise, j3.promise, j4.promise]), [
-		RESULT,
-		null,
-		RESULT,
-	]);
+	assert.deepEqual(await Promise.all([j2.promise, j3.promise, j4.promise]), [RESULT, null, RESULT]);
 });
 
 test("queue overflow fails the arriving job immediately (reject the arrival)", async () => {

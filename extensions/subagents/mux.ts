@@ -31,11 +31,7 @@ export interface CreatePaneOptions {
  * Pure selection logic — exported for tests. The regression case: both
  * HERDR_ENV=1 and WEZTERM_PANE set (pi inside a herdr pane) must pick herdr.
  */
-export function selectBackend(
-	env: NodeJS.ProcessEnv,
-	herdrOk: boolean,
-	weztermOk: boolean,
-): MuxBackend | null {
+export function selectBackend(env: NodeJS.ProcessEnv, herdrOk: boolean, weztermOk: boolean): MuxBackend | null {
 	if (env.HERDR_ENV === "1") return herdrOk ? "herdr" : null;
 	if (env.WEZTERM_PANE) return weztermOk ? "wezterm" : null;
 	return null;

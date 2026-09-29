@@ -328,7 +328,10 @@ test("cancelledResult: counts as failed with aborted stopReason", () => {
 
 test("ingestBatchEvent: tool_execution_start/end track liveTool", () => {
 	const r = emptyResult("a", "t");
-	assert.equal(ingestBatchEvent(r, { type: "tool_execution_start", toolCallId: "1", toolName: "bash", args: {} }), true);
+	assert.equal(
+		ingestBatchEvent(r, { type: "tool_execution_start", toolCallId: "1", toolName: "bash", args: {} }),
+		true,
+	);
 	assert.deepEqual(r.liveTool, { name: "bash" });
 	assert.equal(ingestBatchEvent(r, { type: "tool_execution_end", toolCallId: "1" }), true);
 	assert.equal(r.liveTool, undefined);
@@ -349,7 +352,10 @@ test("compactResultForDetails: drops toolResult payloads, caps long texts and ar
 			],
 		},
 	});
-	ingestBatchEvent(r, { type: "tool_result_end", message: { role: "toolResult", content: [{ type: "text", text: "z".repeat(9000) }] } });
+	ingestBatchEvent(r, {
+		type: "tool_result_end",
+		message: { role: "toolResult", content: [{ type: "text", text: "z".repeat(9000) }] },
+	});
 	const c = compactResultForDetails(r);
 	const assistant = c.messages.find((m) => m.role === "assistant");
 	const textPart = assistant?.content?.find((p) => p.type === "text") as { text: string };

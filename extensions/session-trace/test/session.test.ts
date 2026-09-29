@@ -41,7 +41,13 @@ function sessionEntries(): unknown[] {
 			type: "message",
 			id: "t1",
 			timestamp: iso(1, 9),
-			message: { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "ok" }], isError: false },
+			message: {
+				role: "toolResult",
+				toolCallId: "c1",
+				toolName: "read",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+			},
 		},
 		{
 			type: "message",
@@ -59,7 +65,13 @@ function sessionEntries(): unknown[] {
 			type: "message",
 			id: "t2",
 			timestamp: iso(2, 4),
-			message: { role: "toolResult", toolCallId: "c2", toolName: "edit", content: [{ type: "text", text: "not found" }], isError: true },
+			message: {
+				role: "toolResult",
+				toolCallId: "c2",
+				toolName: "edit",
+				content: [{ type: "text", text: "not found" }],
+				isError: true,
+			},
 		},
 		{
 			type: "message",
@@ -75,7 +87,13 @@ function sessionEntries(): unknown[] {
 			id: "ch1",
 			timestamp: iso(3, 1),
 			customType: "session-trace:subagents",
-			data: { agent: "scout", task: "поищи в коде", session: "C:\\s\\child.jsonl", usage: { output: 700, cost: 0.005 }, model: "glm-5.2" },
+			data: {
+				agent: "scout",
+				task: "поищи в коде",
+				session: "C:\\s\\child.jsonl",
+				usage: { output: 700, cost: 0.005 },
+				model: "glm-5.2",
+			},
 		},
 	];
 }
@@ -86,20 +104,27 @@ test("GraphModel builds turns, chips, user/bash items and markers from entries",
 	assert.equal(m.sessionName, "Auth fix");
 
 	const kinds = m.items.map((i) => i.kind);
-	assert.deepEqual(kinds.filter((k) => k === "turn"), ["turn", "turn"]);
+	assert.deepEqual(
+		kinds.filter((k) => k === "turn"),
+		["turn", "turn"],
+	);
 	assert.ok(kinds.includes("user"));
 	assert.ok(kinds.includes("bash"));
 	assert.ok(kinds.includes("child"));
 
 	// Маркеры: model_change, thinking, compaction, branch_summary, label
-	const markers = m.items.filter((i): i is Extract<(typeof m.items)[number], { kind: "marker" }> => i.kind === "marker");
+	const markers = m.items.filter(
+		(i): i is Extract<(typeof m.items)[number], { kind: "marker" }> => i.kind === "marker",
+	);
 	assert.deepEqual(
 		markers.map((x) => x.icon),
 		["⚙", "✦", "↻", "⑂", "⚑"],
 	);
 
 	// Первый ход: чип read → ok, thinking и текст обрезаны до одной строки
-	const t1 = m.items.find((i): i is Extract<(typeof m.items)[number], { kind: "turn" }> => i.kind === "turn" && i.index === 1)!;
+	const t1 = m.items.find(
+		(i): i is Extract<(typeof m.items)[number], { kind: "turn" }> => i.kind === "turn" && i.index === 1,
+	)!;
 	assert.equal(t1.model, "glm-5.3");
 	assert.equal(t1.tokensOut, 50);
 	assert.equal(t1.chips.length, 1);
@@ -110,7 +135,9 @@ test("GraphModel builds turns, chips, user/bash items and markers from entries",
 	assert.equal(t1.text, "Читаю файл");
 
 	// Второй ход: чип edit → error; bash с ненулевым exitCode
-	const t2 = m.items.find((i): i is Extract<(typeof m.items)[number], { kind: "turn" }> => i.kind === "turn" && i.index === 2)!;
+	const t2 = m.items.find(
+		(i): i is Extract<(typeof m.items)[number], { kind: "turn" }> => i.kind === "turn" && i.index === 2,
+	)!;
 	assert.equal(t2.chips[0].status, "error");
 	const bash = m.items.find((i): i is Extract<(typeof m.items)[number], { kind: "bash" }> => i.kind === "bash")!;
 	assert.equal(bash.exitCode, 1);
@@ -150,7 +177,11 @@ test("child links are accepted under the legacy pitrace:subagents type too", () 
 	assert.ok(child);
 	assert.equal(child.session, "C:\\s\\old.jsonl");
 	// прочие custom-записи по-прежнему игнорируются
-	assert.equal(feed(new GraphModel(), [{ type: "custom", id: "x", customType: "other:thing", data: { session: "y" } }]).items.length, 0);
+	assert.equal(
+		feed(new GraphModel(), [{ type: "custom", id: "x", customType: "other:thing", data: { session: "y" } }]).items
+			.length,
+		0,
+	);
 });
 
 test("GraphModel tolerates broken and unknown entries", () => {

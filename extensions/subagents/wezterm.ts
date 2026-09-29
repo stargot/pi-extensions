@@ -131,17 +131,7 @@ export function createSubagentPane(opts: CreatePaneOptions): string {
 	}
 
 	args.push("--cwd", opts.cwd);
-	args.push(
-		"--",
-		PWSH,
-		"-NoLogo",
-		"-NoProfile",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-NoExit",
-		"-File",
-		opts.ps1Path,
-	);
+	args.push("--", PWSH, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-File", opts.ps1Path);
 
 	const out = runWezterm(args).trim();
 	if (!/^\d+$/.test(out)) {

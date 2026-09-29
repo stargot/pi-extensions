@@ -11,13 +11,7 @@
  */
 
 import assert from "node:assert/strict";
-import fsModule, {
-	existsSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import fsModule, { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -32,10 +26,7 @@ import {
 // ── parsePortRange ──────────────────────────────────────────────────
 
 test("parsePortRange: valid ranges and single ports", () => {
-	assert.deepEqual(
-		parsePortRange("8790-8799"),
-		[8790, 8791, 8792, 8793, 8794, 8795, 8796, 8797, 8798, 8799],
-	);
+	assert.deepEqual(parsePortRange("8790-8799"), [8790, 8791, 8792, 8793, 8794, 8795, 8796, 8797, 8798, 8799]);
 	assert.deepEqual(parsePortRange("8800"), [8800]);
 	// Surrounding whitespace is tolerated (env vars pick it up easily).
 	assert.deepEqual(parsePortRange("  9090-9091 "), [9090, 9091]);
@@ -86,10 +77,7 @@ test("readBridgeConfig: PI_WEB_BRIDGE_PORT > PI_WEB_BRIDGE_PORTS > default", () 
 	assert.deepEqual(readBridgeConfig({ PI_WEB_BRIDGE_PORT: "9001" }).ports, [9001]);
 	// PI_WEB_BRIDGE_PORTS carries the range grammar — a single port too.
 	assert.deepEqual(readBridgeConfig({ PI_WEB_BRIDGE_PORTS: "9002" }).ports, [9002]);
-	assert.deepEqual(
-		readBridgeConfig({ PI_WEB_BRIDGE_PORTS: "9002-9004" }).ports,
-		[9002, 9003, 9004],
-	);
+	assert.deepEqual(readBridgeConfig({ PI_WEB_BRIDGE_PORTS: "9002-9004" }).ports, [9002, 9003, 9004]);
 	// The single-port override wins when both are set.
 	assert.deepEqual(
 		readBridgeConfig({
@@ -107,10 +95,7 @@ test("readBridgeConfig: an invalid port env degrades to the default, never throw
 	assert.deepEqual(invalid.ports, parsePortRange("8790-8799"));
 	// PI_WEB_BRIDGE_PORT is single-port-only: a range value is invalid for
 	// it (the range grammar lives in PI_WEB_BRIDGE_PORTS) and degrades.
-	assert.deepEqual(
-		readBridgeConfig({ PI_WEB_BRIDGE_PORT: "9001-9003" }).ports,
-		parsePortRange("8790-8799"),
-	);
+	assert.deepEqual(readBridgeConfig({ PI_WEB_BRIDGE_PORT: "9001-9003" }).ports, parsePortRange("8790-8799"));
 	// Out-of-bounds range is invalid the same way.
 	const outOfBounds = readBridgeConfig({ PI_WEB_BRIDGE_PORTS: "700-800" });
 	assert.deepEqual(outOfBounds.ports, parsePortRange("8790-8799"));
@@ -212,18 +197,22 @@ test("loadOrCreateToken: two parallel first starts race → both adopt ONE token
 		// kept their own, the companion (paired with one of them) could not
 		// authenticate the other bridge.
 		const realWrite = fsModule.writeFileSync;
-		t.mock.method(fsModule, "writeFileSync", (
-			path: Parameters<typeof realWrite>[0],
-			_data: Parameters<typeof realWrite>[1],
-			_options?: Parameters<typeof realWrite>[2],
-		) => {
-			// The rival's atomic O_EXCL create wins the race…
-			realWrite(path, `${rivalToken}\n`, { mode: 0o600, flag: "wx" });
-			// …and our own create loses with EEXIST (file already exists).
-			const error = new Error("EEXIST: file already exists") as NodeJS.ErrnoException;
-			error.code = "EEXIST";
-			throw error;
-		});
+		t.mock.method(
+			fsModule,
+			"writeFileSync",
+			(
+				path: Parameters<typeof realWrite>[0],
+				_data: Parameters<typeof realWrite>[1],
+				_options?: Parameters<typeof realWrite>[2],
+			) => {
+				// The rival's atomic O_EXCL create wins the race…
+				realWrite(path, `${rivalToken}\n`, { mode: 0o600, flag: "wx" });
+				// …and our own create loses with EEXIST (file already exists).
+				const error = new Error("EEXIST: file already exists") as NodeJS.ErrnoException;
+				error.code = "EEXIST";
+				throw error;
+			},
+		);
 
 		// The loser of the race must not keep its freshly generated token:
 		assert.equal(loadOrCreateToken(file), rivalToken, "the rival's token is adopted");

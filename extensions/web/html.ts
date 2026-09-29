@@ -24,44 +24,172 @@
  */
 
 const VOID_ELEMENTS = new Set([
-	"area", "base", "br", "col", "embed", "hr", "img", "input",
-	"link", "meta", "param", "source", "track", "wbr",
+	"area",
+	"base",
+	"br",
+	"col",
+	"embed",
+	"hr",
+	"img",
+	"input",
+	"link",
+	"meta",
+	"param",
+	"source",
+	"track",
+	"wbr",
 ]);
 
 const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp"]);
 
 /** Curated HTML5 named entities (real names only) + numeric forms are always handled. */
 const NAMED_ENTITIES: Record<string, string> = {
-	amp: "&", AMP: "&", lt: "<", LT: "<", gt: ">", GT: ">",
-	quot: '"', QUOT: '"', apos: "'", nbsp: " ",
-	iexcl: "¡", cent: "¢", pound: "£", curren: "¤", yen: "¥",
-	brvbar: "¦", sect: "§", uml: "¨", copy: "©", COPY: "©",
-	ordf: "ª", laquo: "«", not: "¬", shy: "­", reg: "®", REG: "®",
-	macr: "¯", deg: "°", plusmn: "±", sup2: "²", sup3: "³", acute: "´",
-	micro: "µ", para: "¶", middot: "·", cedil: "¸", sup1: "¹",
-	ordm: "º", raquo: "»", frac14: "¼", frac12: "½", frac34: "¾",
-	iquest: "¿", times: "×", divide: "÷",
-	Agrave: "À", Aacute: "Á", Acirc: "Â", Atilde: "Ã", Auml: "Ä",
-	Aring: "Å", AElig: "Æ", Ccedil: "Ç", Egrave: "È", Eacute: "É",
-	Ecirc: "Ê", Euml: "Ë", Igrave: "Ì", Iacute: "Í", Icirc: "Î",
-	Iuml: "Ï", ETH: "Ð", Ntilde: "Ñ", Ograve: "Ò", Oacute: "Ó",
-	Ocirc: "Ô", Otilde: "Õ", Ouml: "Ö", Oslash: "Ø", Ugrave: "Ù",
-	Uacute: "Ú", Ucirc: "Û", Uuml: "Ü", Yacute: "Ý", szlig: "ß",
-	agrave: "à", aacute: "á", acirc: "â", atilde: "ã", auml: "ä",
-	aring: "å", aelig: "æ", ccedil: "ç", egrave: "è", eacute: "é",
-	ecirc: "ê", euml: "ë", igrave: "ì", iacute: "í", icirc: "î",
-	iuml: "ï", eth: "ð", ntilde: "ñ", ograve: "ò", oacute: "ó",
-	ocirc: "ô", otilde: "õ", ouml: "ö", oslash: "ø", ugrave: "ù",
-	uacute: "ú", ucirc: "û", uuml: "ü", yacute: "ý", yuml: "ÿ",
-	ensp: " ", emsp: " ", thinsp: " ", zwnj: "‌", zwj: "‍",
-	lrm: "‎", rlm: "‏", ndash: "–", mdash: "—", lsquo: "‘",
-	rsquo: "’", sbquo: "‚", ldquo: "“", rdquo: "”", bdquo: "„",
-	dagger: "†", Dagger: "‡", bull: "•", hellip: "…", permil: "‰",
-	prime: "′", Prime: "″", lsaquo: "‹", rsaquo: "›", oline: "‾",
-	frasl: "⁄", euro: "€", trade: "™", TRADE: "™",
-	larr: "←", uarr: "↑", rarr: "→", darr: "↓", harr: "↔",
-	minus: "−", lowast: "∗", infin: "∞", ne: "≠", equiv: "≡",
-	le: "≤", ge: "≥",
+	amp: "&",
+	AMP: "&",
+	lt: "<",
+	LT: "<",
+	gt: ">",
+	GT: ">",
+	quot: '"',
+	QUOT: '"',
+	apos: "'",
+	nbsp: " ",
+	iexcl: "¡",
+	cent: "¢",
+	pound: "£",
+	curren: "¤",
+	yen: "¥",
+	brvbar: "¦",
+	sect: "§",
+	uml: "¨",
+	copy: "©",
+	COPY: "©",
+	ordf: "ª",
+	laquo: "«",
+	not: "¬",
+	shy: "­",
+	reg: "®",
+	REG: "®",
+	macr: "¯",
+	deg: "°",
+	plusmn: "±",
+	sup2: "²",
+	sup3: "³",
+	acute: "´",
+	micro: "µ",
+	para: "¶",
+	middot: "·",
+	cedil: "¸",
+	sup1: "¹",
+	ordm: "º",
+	raquo: "»",
+	frac14: "¼",
+	frac12: "½",
+	frac34: "¾",
+	iquest: "¿",
+	times: "×",
+	divide: "÷",
+	Agrave: "À",
+	Aacute: "Á",
+	Acirc: "Â",
+	Atilde: "Ã",
+	Auml: "Ä",
+	Aring: "Å",
+	AElig: "Æ",
+	Ccedil: "Ç",
+	Egrave: "È",
+	Eacute: "É",
+	Ecirc: "Ê",
+	Euml: "Ë",
+	Igrave: "Ì",
+	Iacute: "Í",
+	Icirc: "Î",
+	Iuml: "Ï",
+	ETH: "Ð",
+	Ntilde: "Ñ",
+	Ograve: "Ò",
+	Oacute: "Ó",
+	Ocirc: "Ô",
+	Otilde: "Õ",
+	Ouml: "Ö",
+	Oslash: "Ø",
+	Ugrave: "Ù",
+	Uacute: "Ú",
+	Ucirc: "Û",
+	Uuml: "Ü",
+	Yacute: "Ý",
+	szlig: "ß",
+	agrave: "à",
+	aacute: "á",
+	acirc: "â",
+	atilde: "ã",
+	auml: "ä",
+	aring: "å",
+	aelig: "æ",
+	ccedil: "ç",
+	egrave: "è",
+	eacute: "é",
+	ecirc: "ê",
+	euml: "ë",
+	igrave: "ì",
+	iacute: "í",
+	icirc: "î",
+	iuml: "ï",
+	eth: "ð",
+	ntilde: "ñ",
+	ograve: "ò",
+	oacute: "ó",
+	ocirc: "ô",
+	otilde: "õ",
+	ouml: "ö",
+	oslash: "ø",
+	ugrave: "ù",
+	uacute: "ú",
+	ucirc: "û",
+	uuml: "ü",
+	yacute: "ý",
+	yuml: "ÿ",
+	ensp: " ",
+	emsp: " ",
+	thinsp: " ",
+	zwnj: "‌",
+	zwj: "‍",
+	lrm: "‎",
+	rlm: "‏",
+	ndash: "–",
+	mdash: "—",
+	lsquo: "‘",
+	rsquo: "’",
+	sbquo: "‚",
+	ldquo: "“",
+	rdquo: "”",
+	bdquo: "„",
+	dagger: "†",
+	Dagger: "‡",
+	bull: "•",
+	hellip: "…",
+	permil: "‰",
+	prime: "′",
+	Prime: "″",
+	lsaquo: "‹",
+	rsaquo: "›",
+	oline: "‾",
+	frasl: "⁄",
+	euro: "€",
+	trade: "™",
+	TRADE: "™",
+	larr: "←",
+	uarr: "↑",
+	rarr: "→",
+	darr: "↓",
+	harr: "↔",
+	minus: "−",
+	lowast: "∗",
+	infin: "∞",
+	ne: "≠",
+	equiv: "≡",
+	le: "≤",
+	ge: "≥",
 };
 
 export function decodeEntities(text: string): string {
@@ -70,12 +198,8 @@ export function decodeEntities(text: string): string {
 	// must match a known entity — no prefix matching, so `&ampersand` survives.
 	return text.replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);?/g, (match, body: string) => {
 		if (body[0] === "#") {
-			const code = body[1] === "x" || body[1] === "X"
-				? parseInt(body.slice(2), 16)
-				: parseInt(body.slice(1), 10);
-			return Number.isFinite(code) && code > 0 && code <= 0x10ffff
-				? String.fromCodePoint(code)
-				: match;
+			const code = body[1] === "x" || body[1] === "X" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+			return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
 		}
 		return NAMED_ENTITIES[body] ?? match;
 	});
@@ -195,13 +319,21 @@ function parseOpenTag(
 		}
 
 		let j = i;
-		while (j < html.length && (html[j] === " " || html[j] === "\t" || html[j] === "\n" || html[j] === "\f" || html[j] === "\r")) j++;
+		while (
+			j < html.length &&
+			(html[j] === " " || html[j] === "\t" || html[j] === "\n" || html[j] === "\f" || html[j] === "\r")
+		)
+			j++;
 		if (html[j] !== "=") {
 			attrs[name] = "";
 			continue; // value-less attribute; i still points after the name
 		}
 		i = j + 1;
-		while (i < html.length && (html[i] === " " || html[i] === "\t" || html[i] === "\n" || html[i] === "\f" || html[i] === "\r")) i++;
+		while (
+			i < html.length &&
+			(html[i] === " " || html[i] === "\t" || html[i] === "\n" || html[i] === "\f" || html[i] === "\r")
+		)
+			i++;
 		const quote = html[i];
 		if (quote === '"' || quote === "'") {
 			const close = html.indexOf(quote, i + 1);

@@ -180,7 +180,9 @@ function fail(message: string): never {
 function openBrowser(url: string): void {
 	const cmd = process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
 	const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-	spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true }).on("error", () => {}).unref();
+	spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true })
+		.on("error", () => {})
+		.unref();
 }
 
 async function main(): Promise<void> {
@@ -207,7 +209,9 @@ async function main(): Promise<void> {
 					await fetch(`http://127.0.0.1:${port}/load`, { method: "POST", body: JSON.stringify({ file }) });
 				}
 				if (open) openBrowser(`http://127.0.0.1:${port}/`);
-				process.stdout.write(`session-trace web: сервер уже запущен, файл переключён: ${file ? basename(file) : "—"}\n`);
+				process.stdout.write(
+					`session-trace web: сервер уже запущен, файл переключён: ${file ? basename(file) : "—"}\n`,
+				);
 				return;
 			}
 		} catch {
@@ -222,7 +226,9 @@ async function main(): Promise<void> {
 		);
 		if (open) openBrowser(handle.url);
 	} catch (error) {
-		fail(`не удалось занять порт ${port}: ${(error as Error).message}. Укажите другой --port или остановите старый сервер.`);
+		fail(
+			`не удалось занять порт ${port}: ${(error as Error).message}. Укажите другой --port или остановите старый сервер.`,
+		);
 	}
 }
 

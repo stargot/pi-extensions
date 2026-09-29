@@ -71,7 +71,10 @@ test("buildResult: single-select and multi-select formats", () => {
 	const single = buildResult("Q?", undefined, "single-select", [option(2, "Second")]);
 	assert.equal(single.content[0].text, "User selected: 2. Second");
 
-	const multi = buildResult("Q?", undefined, "multi-select", [option(1, "First"), { type: "other", value: "", label: "own" }]);
+	const multi = buildResult("Q?", undefined, "multi-select", [
+		option(1, "First"),
+		{ type: "other", value: "", label: "own" },
+	]);
 	assert.equal(multi.content[0].text, "User selected:\n- 1. First\n- Other: own");
 });
 

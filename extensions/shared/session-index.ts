@@ -186,7 +186,10 @@ function assistantTextWithCalls(content: unknown): string {
  * ledger) и Unit[] (поиск recall). Возвращает undefined, если первый
  * значимый вход — не заголовок сессии (не парсим «мусорные» файлы).
  */
-export function parseSessionCombined(text: string, file: string): { summary: SessionSummary; units: Unit[] } | undefined {
+export function parseSessionCombined(
+	text: string,
+	file: string,
+): { summary: SessionSummary; units: Unit[] } | undefined {
 	let header: RawEntry | undefined;
 	const summary: SessionSummary = {
 		file,
@@ -254,7 +257,11 @@ export function parseSessionCombined(text: string, file: string): { summary: Ses
 			// Расход суммаризации относим к текущей модели сессии, иначе строки
 			// разреза по моделям не сходятся с итогом.
 			const lastModel = Object.keys(summary.byModel).at(-1);
-			const targets = [summary.stats, bump(summary.byDay, dayOf(at)), ...(lastModel ? [summary.byModel[lastModel]] : [])];
+			const targets = [
+				summary.stats,
+				bump(summary.byDay, dayOf(at)),
+				...(lastModel ? [summary.byModel[lastModel]] : []),
+			];
 			const usage = entry.usage;
 			for (const t of targets) {
 				if (entry.type === "branch_summary") t.branchSummaries += 1;
@@ -426,7 +433,10 @@ export function refreshSharedIndex(
 				mtimeMs,
 				size,
 				summary: parsed.summary,
-				units: parsed.units.map((u) => ({ ...u, text: u.text.length > UNIT_TEXT_CACHE_CAP ? `${u.text.slice(0, UNIT_TEXT_CACHE_CAP)}…` : u.text })),
+				units: parsed.units.map((u) => ({
+					...u,
+					text: u.text.length > UNIT_TEXT_CACHE_CAP ? `${u.text.slice(0, UNIT_TEXT_CACHE_CAP)}…` : u.text,
+				})),
 			};
 			changed += 1;
 		} catch {

@@ -44,7 +44,9 @@ function main(argv: string[]): number {
 	for (const hit of hits) {
 		const u = hit.unit;
 		const role = u.role === "tool" ? `tool:${u.tool ?? "?"}` : u.role;
-		process.stdout.write(`${formatDate(u.timestamp)}  ${u.project}  ${role}${u.sessionName ? `  ${u.sessionName}` : ""}\n`);
+		process.stdout.write(
+			`${formatDate(u.timestamp)}  ${u.project}  ${role}${u.sessionName ? `  ${u.sessionName}` : ""}\n`,
+		);
 		process.stdout.write(`  ${u.file}  #${u.entryId}\n`);
 		process.stdout.write(full ? `${u.text}\n\n` : `  ${hit.snippet}\n\n`);
 	}

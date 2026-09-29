@@ -1,17 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-	combineSignals,
-	isAbort,
-	readBodyCapped,
-	sleep,
-	withRetry,
-} from "../http.ts";
+import { combineSignals, isAbort, readBodyCapped, sleep, withRetry } from "../http.ts";
 
 const enc = new TextEncoder();
 
-const transient = (error: unknown): boolean =>
-	(error as { transient?: boolean })?.transient === true;
+const transient = (error: unknown): boolean => (error as { transient?: boolean })?.transient === true;
 
 function transientError(status: number): Error {
 	return Object.assign(new Error(`HTTP ${status} (transient)`), {
@@ -19,10 +12,7 @@ function transientError(status: number): Error {
 	});
 }
 
-function streamOf(
-	chunks: Uint8Array[],
-	onCancel?: () => void,
-): ReadableStream<Uint8Array> {
+function streamOf(chunks: Uint8Array[], onCancel?: () => void): ReadableStream<Uint8Array> {
 	return new ReadableStream<Uint8Array>({
 		start(controller) {
 			for (const chunk of chunks) controller.enqueue(chunk);
@@ -38,10 +28,7 @@ function streamOf(
 // own — like a real network body. Needed for cancel assertions: on an
 // already-closed stream reader.cancel() is a spec no-op (source cancel is
 // not called), which is not the situation being tested.
-function endlessStream(
-	makeChunk: () => Uint8Array,
-	onCancel?: () => void,
-): ReadableStream<Uint8Array> {
+function endlessStream(makeChunk: () => Uint8Array, onCancel?: () => void): ReadableStream<Uint8Array> {
 	return new ReadableStream<Uint8Array>({
 		pull(controller) {
 			controller.enqueue(makeChunk());
@@ -101,10 +88,7 @@ test("readBodyCapped: small body passes bit-for-bit", async () => {
 });
 
 test("readBodyCapped: chunks are concatenated in order", async () => {
-	const result = await readBodyCapped(
-		fakeResponse(streamOf([enc.encode("hello "), enc.encode("cap")])),
-		64,
-	);
+	const result = await readBodyCapped(fakeResponse(streamOf([enc.encode("hello "), enc.encode("cap")])), 64);
 	assert.ok(result.ok);
 	assert.deepEqual(result.buffer, enc.encode("hello cap"));
 });
@@ -147,10 +131,7 @@ test("readBodyCapped: cap crossed mid-stream, remaining chunks never pulled", as
 test("readBodyCapped: lying content-length is ignored — cap on actual bytes", async () => {
 	// 1000 real bytes behind a (stubbed) response; a real-world lying header
 	// claims fewer. readBodyCapped never reads headers, so the cap bites.
-	const result = await readBodyCapped(
-		fakeResponse(endlessStream(() => new Uint8Array(1000))),
-		500,
-	);
+	const result = await readBodyCapped(fakeResponse(endlessStream(() => new Uint8Array(1000))), 500);
 	assert.ok(!result.ok);
 	assert.equal(result.kind, "too-large");
 	assert.equal(result.received, 1000);

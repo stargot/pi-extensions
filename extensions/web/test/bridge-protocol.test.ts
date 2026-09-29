@@ -71,12 +71,7 @@ test("parseBridgeMessage: every message type parses", () => {
 });
 
 test("parseBridgeMessage: result ok:false parses for each failure reason", () => {
-	for (const reason of [
-		"timeout",
-		"navigation-failed",
-		"render-failed",
-		"unreadable",
-	] as const) {
+	for (const reason of ["timeout", "navigation-failed", "render-failed", "unreadable"] as const) {
 		const wire = { v: 1, type: "result", id: "j1", ok: false, reason };
 		assert.deepEqual(parseBridgeMessage(JSON.stringify(wire)), wire, reason);
 	}

@@ -79,7 +79,9 @@ export default function (pi: ExtensionAPI) {
 			model: model
 				? { provider: model.provider, id: model.id, contextWindow: model.contextWindow, maxTokens: model.maxTokens }
 				: undefined,
-			occupancy: usage ? { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent } : undefined,
+			occupancy: usage
+				? { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent }
+				: undefined,
 			compaction: compactionInfo(contextWindow, readCompactionSettings(ctx.cwd)),
 			system: analyzeSystemPrompt(prompt, options),
 			tools: analyzeTools(pi.getAllTools(), pi.getActiveTools()),
@@ -108,7 +110,11 @@ export default function (pi: ExtensionAPI) {
 			const file = join(ctx.cwd, CONFIG_DIR_NAME, "context-inspector.jsonl");
 			mkdirSync(dirname(file), { recursive: true });
 			const snapshot = buildSnapshot(ctx);
-			appendFileSync(file, `${JSON.stringify({ reason, session: ctx.sessionManager.getSessionFile(), ...snapshot })}\n`, "utf8");
+			appendFileSync(
+				file,
+				`${JSON.stringify({ reason, session: ctx.sessionManager.getSessionFile(), ...snapshot })}\n`,
+				"utf8",
+			);
 		} catch {
 			// лог опционален
 		}

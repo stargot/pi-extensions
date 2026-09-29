@@ -188,12 +188,7 @@ export function readActivityState(activityFile: string, runningChildId: string):
 		return { ok: false, reason: "invalid" };
 	}
 	const state = parsed as SubagentActivityState;
-	if (
-		!state ||
-		typeof state !== "object" ||
-		state.version !== 1 ||
-		typeof state.sequence !== "number"
-	) {
+	if (!state || typeof state !== "object" || state.version !== 1 || typeof state.sequence !== "number") {
 		return { ok: false, reason: "invalid" };
 	}
 	if (state.runningChildId !== runningChildId) {

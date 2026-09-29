@@ -87,8 +87,12 @@ test("legacyResultSummary: empty summary (envelope only) → empty string", () =
 });
 
 test("legacyResultSummary: mid-summary lines that resemble envelope prefixes are kept", () => {
-	const body = ['Sub-agent "x" (scout) finished in 5s.', "Report:\nUsage: unknown.\nSub-agent \"y\" mentioned.", FOLLOW_UP].join("\n");
-	assert.equal(legacyResultSummary(body), "Report:\nUsage: unknown.\nSub-agent \"y\" mentioned.");
+	const body = [
+		'Sub-agent "x" (scout) finished in 5s.',
+		'Report:\nUsage: unknown.\nSub-agent "y" mentioned.',
+		FOLLOW_UP,
+	].join("\n");
+	assert.equal(legacyResultSummary(body), 'Report:\nUsage: unknown.\nSub-agent "y" mentioned.');
 });
 
 // ── subagent_result card ──
@@ -102,7 +106,11 @@ test("card: legacy one-paragraph body renders its summary, not (no summary) — 
 
 test("card: new details — verdict, usage, summary", () => {
 	const out = flat(
-		subagentResultCard(card("", { name: "x", status: "finished", elapsedSec: 5, summary: "Done.", usageText: "1k in, 0 out" }), cardOpts(), fakeTheme),
+		subagentResultCard(
+			card("", { name: "x", status: "finished", elapsedSec: 5, summary: "Done.", usageText: "1k in, 0 out" }),
+			cardOpts(),
+			fakeTheme,
+		),
 	);
 	assert.match(out, /✓ FINISHED/);
 	assert.match(out, /\bx\b/);
@@ -142,7 +150,9 @@ test("card: expanded — task stays on one line (TruncatedText), session shown",
 // ── subagent (spawn) ──
 
 test("subagent result: spawned chip with name, pane, agent", () => {
-	const out = flat(renderSubagentResult(result("", { name: "scout", agent: "scout", pane: 7 }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentResult(result("", { name: "scout", agent: "scout", pane: 7 }), renderOpts(), fakeTheme, ctx(false)),
+	);
 	assert.match(out, /SPAWNED/);
 	assert.match(out, /scout/);
 	assert.match(out, /pane 7/);
@@ -156,21 +166,37 @@ test("subagent result: isError → error banner", () => {
 // ── subagent_message ──
 
 test("subagent_message result: resumed", () => {
-	const out = flat(renderSubagentMessageResult(result("", { resumed: true, agent: "scout", name: "scout", pane: 3 }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentMessageResult(
+			result("", { resumed: true, agent: "scout", name: "scout", pane: 3 }),
+			renderOpts(),
+			fakeTheme,
+			ctx(false),
+		),
+	);
 	assert.match(out, /RESUMED/);
 	assert.match(out, /scout/);
 	assert.match(out, /pane 3/);
 });
 
 test("subagent_message result: steered + interrupted", () => {
-	const out = flat(renderSubagentMessageResult(result("", { name: "scout", status: "steered", interrupted: true }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentMessageResult(
+			result("", { name: "scout", status: "steered", interrupted: true }),
+			renderOpts(),
+			fakeTheme,
+			ctx(false),
+		),
+	);
 	assert.match(out, /STEERED/);
 	assert.match(out, /scout/);
 	assert.match(out, /interrupted/);
 });
 
 test("subagent_message result: steered without interrupt → no interrupted tag", () => {
-	const out = flat(renderSubagentMessageResult(result("", { name: "scout", status: "steered" }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentMessageResult(result("", { name: "scout", status: "steered" }), renderOpts(), fakeTheme, ctx(false)),
+	);
 	assert.match(out, /STEERED/);
 	assert.doesNotMatch(out, /interrupted/);
 });
@@ -183,13 +209,27 @@ test("subagent_message result: isError → error banner", () => {
 // ── subagent_cancel ──
 
 test("subagent_cancel result: cancelling", () => {
-	const out = flat(renderSubagentCancelResult(result("", { name: "scout", status: "cancelling" }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentCancelResult(
+			result("", { name: "scout", status: "cancelling" }),
+			renderOpts(),
+			fakeTheme,
+			ctx(false),
+		),
+	);
 	assert.match(out, /CANCELLING/);
 	assert.match(out, /scout/);
 });
 
 test("subagent_cancel result: already-finished", () => {
-	const out = flat(renderSubagentCancelResult(result("", { name: "scout", status: "already-finished" }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentCancelResult(
+			result("", { name: "scout", status: "already-finished" }),
+			renderOpts(),
+			fakeTheme,
+			ctx(false),
+		),
+	);
 	assert.match(out, /already finished/);
 });
 
@@ -216,7 +256,14 @@ const agentDef = {
 };
 
 test("subagents_list result: new details with agents — names, meta, description", () => {
-	const out = flat(renderSubagentsListResult(result("", { count: 1, names: ["scout"], agents: [agentDef] }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentsListResult(
+			result("", { count: 1, names: ["scout"], agents: [agentDef] }),
+			renderOpts(),
+			fakeTheme,
+			ctx(false),
+		),
+	);
 	assert.match(out, /✓ 1 definitions/);
 	assert.match(out, /scout/);
 	assert.match(out, /\(project · auto-exit · tools: default\)/);
@@ -224,7 +271,9 @@ test("subagents_list result: new details with agents — names, meta, descriptio
 });
 
 test("subagents_list result: legacy details {count, names} → definitions listed, not 'no definitions found'", () => {
-	const out = flat(renderSubagentsListResult(result("", { count: 2, names: ["alpha", "beta"] }), renderOpts(), fakeTheme, ctx(false)));
+	const out = flat(
+		renderSubagentsListResult(result("", { count: 2, names: ["alpha", "beta"] }), renderOpts(), fakeTheme, ctx(false)),
+	);
 	assert.match(out, /✓ 2 definitions/);
 	assert.match(out, /alpha/);
 	assert.match(out, /beta/);

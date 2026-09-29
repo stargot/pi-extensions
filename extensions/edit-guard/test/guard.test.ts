@@ -92,7 +92,10 @@ test("guard: безнадёжный oldText — block с строкой и сн�
 
 test("guard: несуществующий файл — undefined, без телеметрии", async () => {
 	const { f, run } = setup();
-	const result = await run({ path: join(tmpdir(), "edit-guard-nope-", "missing.ts"), edits: [{ oldText: "a", newText: "b" }] });
+	const result = await run({
+		path: join(tmpdir(), "edit-guard-nope-", "missing.ts"),
+		edits: [{ oldText: "a", newText: "b" }],
+	});
 	assert.equal(result, undefined);
 	assert.equal(f.entries.length, 0);
 });
@@ -118,7 +121,10 @@ test("guard: смешанные edits — одна плохая блокируе
 	assert.match(result?.reason ?? "", /edits\[1\]/);
 	const entry = f.entries[0].data as { action: string; edits: { index: number; method: string }[] };
 	assert.equal(entry.action, "blocked");
-	assert.deepEqual(entry.edits.map((e) => e.method), ["whitespace", "not-found"]);
+	assert.deepEqual(
+		entry.edits.map((e) => e.method),
+		["whitespace", "not-found"],
+	);
 });
 
 test("guard: относительный путь резолвится от cwd", async () => {
@@ -139,7 +145,12 @@ test("guard: относительный путь резолвится от cwd",
 test("guard: не-edit событие отсекается до чтения файла", async () => {
 	const f = fakePi();
 	// isToolCallEventType различает по toolName — имитируем bash-событие.
-	const event = { type: "tool_call", toolCallId: "t2", toolName: "bash", input: { command: "ls" } } as unknown as ToolCallEvent;
+	const event = {
+		type: "tool_call",
+		toolCallId: "t2",
+		toolName: "bash",
+		input: { command: "ls" },
+	} as unknown as ToolCallEvent;
 	const result = await f.handler!(event, { cwd: tmpdir() });
 	assert.equal(result, undefined);
 	assert.equal(f.entries.length, 0);

@@ -90,7 +90,9 @@ const AskUserQuestionParams = Type.Object({
 	),
 });
 
-export function normalizeOptions(options: Array<{ label: string; value?: string; description?: string }> | undefined): AskOption[] {
+export function normalizeOptions(
+	options: Array<{ label: string; value?: string; description?: string }> | undefined,
+): AskOption[] {
 	return (options || [])
 		.map((option) => ({
 			label: option.label.trim(),
@@ -183,7 +185,12 @@ export function unavailableResult(question: string, mode: AskUserQuestionMode, m
 	};
 }
 
-export function buildResult(question: string, context: string | undefined, mode: AskUserQuestionMode, answers: AskAnswer[]) {
+export function buildResult(
+	question: string,
+	context: string | undefined,
+	mode: AskUserQuestionMode,
+	answers: AskAnswer[],
+) {
 	let text: string;
 	if (mode === "text") {
 		const answer = answers[0];
@@ -476,9 +483,7 @@ async function askMultiChoice(
 
 				if (item.isSubmit) {
 					const label = selected.size > 0 ? `✓ ${item.label} (${selected.size} selected)` : `○ ${item.label}`;
-					const styled = isFocused
-						? theme.fg("accent", label)
-						: theme.fg(selected.size > 0 ? "success" : "dim", label);
+					const styled = isFocused ? theme.fg("accent", label) : theme.fg(selected.size > 0 ? "success" : "dim", label);
 					add(`${prefix}${styled}`);
 					continue;
 				}
@@ -497,9 +502,7 @@ async function askMultiChoice(
 				const checked = selected.has(item.id);
 				const marker = checked ? "[x]" : "[ ]";
 				const label = `${marker} ${item.index}. ${item.label}`;
-				const styled = isFocused
-					? theme.fg("accent", label)
-					: theme.fg(checked ? "success" : "text", label);
+				const styled = isFocused ? theme.fg("accent", label) : theme.fg(checked ? "success" : "text", label);
 				add(`${prefix}${styled}`);
 				if (item.description) {
 					addWrapped(lines, theme.fg("muted", item.description), width, "     ");
@@ -552,7 +555,9 @@ function getSharedUiLock() {
 			withLock<T>(fn: () => T | Promise<T>): Promise<T> {
 				const prev = chain;
 				let release: () => void;
-				chain = new Promise<void>((r) => { release = r; });
+				chain = new Promise<void>((r) => {
+					release = r;
+				});
 				return prev.then(fn).finally(() => release!());
 			},
 		};
@@ -587,7 +592,8 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const options = normalizeOptions(params.options);
 			const context = params.details?.trim() || undefined;
-			const mode: AskUserQuestionMode = options.length === 0 ? "text" : params.multiSelect ? "multi-select" : "single-select";
+			const mode: AskUserQuestionMode =
+				options.length === 0 ? "text" : params.multiSelect ? "multi-select" : "single-select";
 
 			if (signal?.aborted) {
 				return cancelledResult(params.question, mode, context);
@@ -626,7 +632,9 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme) {
-			const options = normalizeOptions(args.options as Array<{ label: string; value?: string; description?: string }> | undefined);
+			const options = normalizeOptions(
+				args.options as Array<{ label: string; value?: string; description?: string }> | undefined,
+			);
 			let text = theme.fg("toolTitle", theme.bold("ask_user_question ")) + theme.fg("muted", args.question);
 			if (args.multiSelect) {
 				text += theme.fg("dim", " [multi-select]");

@@ -13,6 +13,8 @@
 		"unpdf": "^1.8.1"
 	},
 	"pi": {
-		"extensions": ["./index.ts"]
+		"extensions": [
+			"./index.ts"
+		]
 	}
 }

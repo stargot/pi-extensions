@@ -19,9 +19,7 @@ export function parseDdgResults(html: string): SearchResult[] {
 		const href = link.getAttribute("href") ?? "";
 		const url = decodeDdgHref(href);
 		const title = link.textContent.replace(/\s+/g, " ").trim();
-		const snippet = (el.querySelector("a.result__snippet")?.textContent ?? "")
-			.replace(/\s+/g, " ")
-			.trim();
+		const snippet = (el.querySelector("a.result__snippet")?.textContent ?? "").replace(/\s+/g, " ").trim();
 		if (!title || !url || !/^https?:\/\//i.test(url)) continue;
 		results.push({ title, url, snippet });
 	}

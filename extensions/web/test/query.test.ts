@@ -61,14 +61,8 @@ test("clampCount: rounds into [1, 10], defaults to 5", () => {
 
 test("decodeDdgHref: unwraps relative and absolute redirectors, passes real URLs", () => {
 	const inner = "https%3A%2F%2Fexample.com%2Fpage%3Fa%3D1";
-	assert.equal(
-		decodeDdgHref(`//duckduckgo.com/l/?uddg=${inner}&rut=abc`),
-		"https://example.com/page?a=1",
-	);
-	assert.equal(
-		decodeDdgHref(`https://duckduckgo.com/l/?uddg=${inner}`),
-		"https://example.com/page?a=1",
-	);
+	assert.equal(decodeDdgHref(`//duckduckgo.com/l/?uddg=${inner}&rut=abc`), "https://example.com/page?a=1");
+	assert.equal(decodeDdgHref(`https://duckduckgo.com/l/?uddg=${inner}`), "https://example.com/page?a=1");
 	assert.equal(decodeDdgHref("https://example.com/direct"), "https://example.com/direct");
 	// Relative links must NOT be resolved against the DDG origin — they are
 	// returned as-is and filtered downstream by the scheme check.

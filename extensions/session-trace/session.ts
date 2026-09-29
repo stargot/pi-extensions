@@ -89,7 +89,9 @@ export function fmtMoney(c: number): string {
 }
 
 export function oneLine(s: unknown, max = 80): string {
-	const t = String(s ?? "").replace(/\s+/g, " ").trim();
+	const t = String(s ?? "")
+		.replace(/\s+/g, " ")
+		.trim();
 	return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 

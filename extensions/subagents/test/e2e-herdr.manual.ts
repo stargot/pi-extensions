@@ -5,7 +5,15 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { activeBackend, createSubagentPane, listPaneIds, readScreenTail, sendText, closePane, parseSentinel } from "../mux.ts";
+import {
+	activeBackend,
+	createSubagentPane,
+	listPaneIds,
+	readScreenTail,
+	sendText,
+	closePane,
+	parseSentinel,
+} from "../mux.ts";
 
 if (process.env.HERDR_ENV !== "1") {
 	console.error("HERDR_ENV=1 required — run this from a pi/terminal session inside herdr.");

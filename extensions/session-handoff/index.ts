@@ -57,7 +57,11 @@ function contentText(content: unknown): string {
 	if (typeof content === "string") return content.trim();
 	if (!Array.isArray(content)) return "";
 	return content
-		.map((part) => (part && typeof part === "object" && (part as { type?: string }).type === "text" ? String((part as { text?: string }).text ?? "") : ""))
+		.map((part) =>
+			part && typeof part === "object" && (part as { type?: string }).type === "text"
+				? String((part as { text?: string }).text ?? "")
+				: "",
+		)
 		.filter(Boolean)
 		.join("\n")
 		.trim();
@@ -67,20 +71,34 @@ function contentText(content: unknown): string {
 function gitInfo(cwd: string): GitInfo | null {
 	const run = (args: string[]): string | null => {
 		try {
-			return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+			return execFileSync("git", ["-C", cwd, ...args], {
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "ignore"],
+				windowsHide: true,
+			});
 		} catch {
 			return null;
 		}
 	};
 	const branch = run(["rev-parse", "--abbrev-ref", "HEAD"]);
 	if (branch === null) return null;
-	const statusLines = (run(["status", "--short"]) ?? "").split("\n").map((l) => l.trimEnd()).filter(Boolean);
+	const statusLines = (run(["status", "--short"]) ?? "")
+		.split("\n")
+		.map((l) => l.trimEnd())
+		.filter(Boolean);
 	return {
 		branch: branch.trim(),
 		status: statusLines.slice(0, MAX_STATUS_LINES),
 		dirtyCount: statusLines.length,
-		diffStat: (run(["diff", "--stat", "HEAD"]) ?? "").split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(-MAX_DIFF_LINES),
-		commits: (run(["log", "--oneline", "-3"]) ?? "").split("\n").map((l) => l.trimEnd()).filter(Boolean),
+		diffStat: (run(["diff", "--stat", "HEAD"]) ?? "")
+			.split("\n")
+			.map((l) => l.trimEnd())
+			.filter(Boolean)
+			.slice(-MAX_DIFF_LINES),
+		commits: (run(["log", "--oneline", "-3"]) ?? "")
+			.split("\n")
+			.map((l) => l.trimEnd())
+			.filter(Boolean),
 	};
 }
 
@@ -176,9 +194,9 @@ export default function (pi: ExtensionAPI) {
 						theme,
 						onClose: () => done(),
 						render: (width, th) => [
-						th.fg("dim", " go — отправить модели · clear — удалить · esc — закрыть"),
-						...md.split("\n").map((l) => truncateToWidth(l, width)),
-					],
+							th.fg("dim", " go — отправить модели · clear — удалить · esc — закрыть"),
+							...md.split("\n").map((l) => truncateToWidth(l, width)),
+						],
 						helpSuffix: " · /handoff go",
 					});
 				});

@@ -63,6 +63,8 @@ if (keysArg) {
 
 const lines = view.render(110);
 console.log(lines.join("\n"));
-console.log(`\n[rendered ${lines.length} rows @110 cols from ${basename(file)}${keysArg ? ` · keys=${keysArg.slice(7)}` : ""}]`);
+console.log(
+	`\n[rendered ${lines.length} rows @110 cols from ${basename(file)}${keysArg ? ` · keys=${keysArg.slice(7)}` : ""}]`,
+);
 view.dispose();
 process.exit(0);

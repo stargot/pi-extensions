@@ -77,7 +77,10 @@ export function parseAgentMarkdown(raw: string, fallbackName: string): AgentDef 
 	const list = (key: string): string[] | undefined => {
 		const raw = attrs[key]?.trim();
 		if (!raw) return undefined;
-		const items = raw.split(",").map((s) => s.trim()).filter(Boolean);
+		const items = raw
+			.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean);
 		return items.length > 0 ? items : undefined;
 	};
 

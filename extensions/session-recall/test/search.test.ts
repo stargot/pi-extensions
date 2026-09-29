@@ -7,8 +7,19 @@ import { extractUnits, highlight, type IndexCache, makeSnippet, parseQuery, refr
 
 function sessionText(opts: { cwd?: string; name?: string } = {}): string {
 	const lines: unknown[] = [
-		{ type: "session", version: 3, id: "s1", timestamp: "2026-09-05T12:00:00.000Z", cwd: opts.cwd ?? "C:\\Proj\\alpha" },
-		{ type: "message", id: "u1", timestamp: "2026-09-05T12:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "How did we fix the WezTerm session plugin?" }] } },
+		{
+			type: "session",
+			version: 3,
+			id: "s1",
+			timestamp: "2026-09-05T12:00:00.000Z",
+			cwd: opts.cwd ?? "C:\\Proj\\alpha",
+		},
+		{
+			type: "message",
+			id: "u1",
+			timestamp: "2026-09-05T12:00:01.000Z",
+			message: { role: "user", content: [{ type: "text", text: "How did we fix the WezTerm session plugin?" }] },
+		},
 		{
 			type: "message",
 			id: "a1",
@@ -18,13 +29,41 @@ function sessionText(opts: { cwd?: string; name?: string } = {}): string {
 				content: [
 					{ type: "thinking", thinking: "secret thoughts about wezterm" },
 					{ type: "text", text: "We patched resurrect.wezterm to store sessions." },
-					{ type: "toolCall", id: "c1", name: "edit", arguments: { path: "wezterm.lua", oldText: "old", newText: "new" } },
+					{
+						type: "toolCall",
+						id: "c1",
+						name: "edit",
+						arguments: { path: "wezterm.lua", oldText: "old", newText: "new" },
+					},
 				],
 			},
 		},
-		{ type: "message", id: "t1", timestamp: "2026-09-05T12:00:03.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "edit", content: [{ type: "text", text: "oldText not found in wezterm.lua" }], isError: true } },
-		{ type: "message", id: "k1", timestamp: "2026-09-05T12:00:04.000Z", message: { role: "custom", customType: "plan", content: "Plan: migrate config" } },
-		{ type: "compaction", id: "z1", timestamp: "2026-09-05T12:00:05.000Z", summary: "Summary: wezterm work done", firstKeptEntryId: "a1", tokensBefore: 10 },
+		{
+			type: "message",
+			id: "t1",
+			timestamp: "2026-09-05T12:00:03.000Z",
+			message: {
+				role: "toolResult",
+				toolCallId: "c1",
+				toolName: "edit",
+				content: [{ type: "text", text: "oldText not found in wezterm.lua" }],
+				isError: true,
+			},
+		},
+		{
+			type: "message",
+			id: "k1",
+			timestamp: "2026-09-05T12:00:04.000Z",
+			message: { role: "custom", customType: "plan", content: "Plan: migrate config" },
+		},
+		{
+			type: "compaction",
+			id: "z1",
+			timestamp: "2026-09-05T12:00:05.000Z",
+			summary: "Summary: wezterm work done",
+			firstKeptEntryId: "a1",
+			tokensBefore: 10,
+		},
 	];
 	if (opts.name) lines.push({ type: "session_info", id: "n1", timestamp: "2026-09-05T12:00:06.000Z", name: opts.name });
 	return `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
@@ -88,11 +127,17 @@ test("search: BM25 ranks term density first, then filters and snippets apply", (
 
 test("search: recency breaks ties — fresher identical text ranks higher", () => {
 	const old = extractUnits(
-		["{\"type\":\"session\",\"version\":3,\"id\":\"old\",\"timestamp\":\"2025-01-01T00:00:00.000Z\",\"cwd\":\"/a\"}", "{\"type\":\"message\",\"id\":\"u1\",\"timestamp\":\"2025-01-01T00:00:01.000Z\",\"message\":{\"role\":\"user\",\"content\":\"needle\"}}"].join("\n"),
+		[
+			'{"type":"session","version":3,"id":"old","timestamp":"2025-01-01T00:00:00.000Z","cwd":"/a"}',
+			'{"type":"message","id":"u1","timestamp":"2025-01-01T00:00:01.000Z","message":{"role":"user","content":"needle"}}',
+		].join("\n"),
 		"/old.jsonl",
 	);
 	const fresh = extractUnits(
-		["{\"type\":\"session\",\"version\":3,\"id\":\"new\",\"timestamp\":\"2026-09-01T00:00:00.000Z\",\"cwd\":\"/a\"}", "{\"type\":\"message\",\"id\":\"u1\",\"timestamp\":\"2026-09-01T00:00:01.000Z\",\"message\":{\"role\":\"user\",\"content\":\"needle\"}}"].join("\n"),
+		[
+			'{"type":"session","version":3,"id":"new","timestamp":"2026-09-01T00:00:00.000Z","cwd":"/a"}',
+			'{"type":"message","id":"u1","timestamp":"2026-09-01T00:00:01.000Z","message":{"role":"user","content":"needle"}}',
+		].join("\n"),
 		"/new.jsonl",
 	);
 	const ranked = search([...old, ...fresh], parseQuery("needle"));
@@ -105,8 +150,14 @@ test("makeSnippet and highlight", () => {
 	const snippet = makeSnippet(text, 100, 6, 10);
 	assert.equal(snippet, `…${"a".repeat(10)}NEEDLE${"b".repeat(10)}…`);
 	assert.equal(makeSnippet("short", 0, 0, 10), "short");
-	assert.equal(highlight("Fix wezterm now", ["wezterm", "fix"], (s) => `[${s}]`), "[Fix] [wezterm] now");
-	assert.equal(highlight("a.b", ["."], (s) => `[${s}]`), "a[.]b");
+	assert.equal(
+		highlight("Fix wezterm now", ["wezterm", "fix"], (s) => `[${s}]`),
+		"[Fix] [wezterm] now",
+	);
+	assert.equal(
+		highlight("a.b", ["."], (s) => `[${s}]`),
+		"a[.]b",
+	);
 });
 
 test("refreshIndex caches by mtime and size and drops removed files", () => {
@@ -128,7 +179,10 @@ test("refreshIndex caches by mtime and size and drops removed files", () => {
 		const second = refreshIndex(dir, cache);
 		assert.equal(second.reparsed, 0);
 
-		writeFileSync(b, `${sessionText({ cwd: "/home/u/beta" })}${JSON.stringify({ type: "message", id: "u9", timestamp: "2026-09-06T00:00:00.000Z", message: { role: "user", content: "later" } })}\n`);
+		writeFileSync(
+			b,
+			`${sessionText({ cwd: "/home/u/beta" })}${JSON.stringify({ type: "message", id: "u9", timestamp: "2026-09-06T00:00:00.000Z", message: { role: "user", content: "later" } })}\n`,
+		);
 		utimesSync(b, new Date(), new Date(Date.now() + 5000));
 		const third = refreshIndex(dir, cache);
 		assert.equal(third.reparsed, 1);

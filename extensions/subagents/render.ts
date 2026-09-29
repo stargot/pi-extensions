@@ -6,9 +6,23 @@
  * and read `render(width)` output directly. index.ts wires them into
  * pi.registerTool / pi.registerMessageRenderer.
  */
-import type { AgentToolResult, MessageRenderOptions, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentToolResult,
+	MessageRenderOptions,
+	Theme,
+	ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Markdown, Text, TruncatedText, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import {
+	Box,
+	Container,
+	Markdown,
+	Text,
+	TruncatedText,
+	truncateToWidth,
+	visibleWidth,
+	type Component,
+} from "@earendil-works/pi-tui";
 import { oneline } from "./batch.ts";
 import { formatUsage, type SessionUsageTotals } from "./session-read.ts";
 import { fmtElapsed } from "./shared.ts";
@@ -80,7 +94,12 @@ export function legacyResultSummary(body: string): string {
 
 // ── Tool: subagent (spawn) ──
 
-export function renderSubagentResult(result: ToolResult, _options: ToolRenderResultOptions, theme: Theme, context: RenderContext): Component {
+export function renderSubagentResult(
+	result: ToolResult,
+	_options: ToolRenderResultOptions,
+	theme: Theme,
+	context: RenderContext,
+): Component {
 	if (context.isError) {
 		return new Text(errorLine(theme, errorTextOf(result, "spawn failed")), 0, 0);
 	}
@@ -94,7 +113,12 @@ export function renderSubagentResult(result: ToolResult, _options: ToolRenderRes
 
 // ── Tool: subagent_message ──
 
-export function renderSubagentMessageResult(result: ToolResult, _options: ToolRenderResultOptions, theme: Theme, context: RenderContext): Component {
+export function renderSubagentMessageResult(
+	result: ToolResult,
+	_options: ToolRenderResultOptions,
+	theme: Theme,
+	context: RenderContext,
+): Component {
 	if (context.isError) {
 		return new Text(errorLine(theme, errorTextOf(result, "delivery failed")), 0, 0);
 	}
@@ -127,7 +151,12 @@ export function renderSubagentMessageResult(result: ToolResult, _options: ToolRe
 
 // ── Tool: subagent_cancel ──
 
-export function renderSubagentCancelResult(result: ToolResult, _options: ToolRenderResultOptions, theme: Theme, context: RenderContext): Component {
+export function renderSubagentCancelResult(
+	result: ToolResult,
+	_options: ToolRenderResultOptions,
+	theme: Theme,
+	context: RenderContext,
+): Component {
 	if (context.isError) {
 		return new Text(errorLine(theme, errorTextOf(result, "cancel failed")), 0, 0);
 	}
@@ -149,7 +178,12 @@ export function renderSubagentCancelResult(result: ToolResult, _options: ToolRen
 
 // ── Tool: subagents_list ──
 
-export function renderSubagentsListResult(result: ToolResult, _options: ToolRenderResultOptions, theme: Theme, context: RenderContext): Component {
+export function renderSubagentsListResult(
+	result: ToolResult,
+	_options: ToolRenderResultOptions,
+	theme: Theme,
+	context: RenderContext,
+): Component {
 	if (context.isError) {
 		return new Text(errorLine(theme, errorTextOf(result, "list failed")), 0, 0);
 	}
@@ -211,7 +245,11 @@ export interface SubagentResultMessage {
 // the LLM context is the message content, untouched. The renderer also
 // runs on session restore, so every field degrades gracefully on old or
 // partial entries (optional chaining everywhere).
-export function subagentResultCard(message: SubagentResultMessage, options: MessageRenderOptions, theme: Theme): Component {
+export function subagentResultCard(
+	message: SubagentResultMessage,
+	options: MessageRenderOptions,
+	theme: Theme,
+): Component {
 	const details = (message.details ?? {}) as {
 		name?: string;
 		task?: string;

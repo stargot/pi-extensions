@@ -9,7 +9,11 @@ import { addUsage, discoverSessionFiles, emptyUsageTotals, resolveSessionsDir } 
 test("resolveSessionsDir: env override wins, default falls back to ~/.pi/agent", () => {
 	assert.equal(resolveSessionsDir({ PI_CODING_AGENT_DIR: "/custom/agent" }), join("/custom/agent", "sessions"));
 	assert.equal(resolveSessionsDir({}), join(homedir(), ".pi", "agent", "sessions"));
-	assert.equal(resolveSessionsDir({ PI_CODING_AGENT_DIR: "" }), join(homedir(), ".pi", "agent", "sessions"), "empty env value falls back");
+	assert.equal(
+		resolveSessionsDir({ PI_CODING_AGENT_DIR: "" }),
+		join(homedir(), ".pi", "agent", "sessions"),
+		"empty env value falls back",
+	);
 });
 
 test("discoverSessionFiles: recursive .jsonl discovery, sorted, others ignored", () => {

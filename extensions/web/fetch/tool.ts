@@ -51,9 +51,7 @@ export function registerWebFetch(pi: ExtensionAPI, deps: WebFetchDeps = {}) {
 				throw new Error(`${outcome.url}: ${outcome.errorMessage}`);
 			}
 
-			const header = outcome.title
-				? `# ${outcome.title}\n\nSource: ${outcome.finalUrl}\n\n---\n\n`
-				: "";
+			const header = outcome.title ? `# ${outcome.title}\n\nSource: ${outcome.finalUrl}\n\n---\n\n` : "";
 			return {
 				content: [
 					{
@@ -73,31 +71,20 @@ export function registerWebFetch(pi: ExtensionAPI, deps: WebFetchDeps = {}) {
 		},
 
 		renderCall(args, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 			// Streaming delivers partial args: url may not have arrived yet.
 			const { url } = args as { url?: string };
 			if (!url) {
-				text.setText(
-					theme.fg("toolTitle", theme.bold("fetch ")) +
-						theme.fg("error", "(no URL)"),
-				);
+				text.setText(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("error", "(no URL)"));
 				return text;
 			}
-			const display =
-				url.length > 70 ? url.slice(0, 67) + "..." : url;
-			text.setText(
-				theme.fg("toolTitle", theme.bold("fetch ")) +
-					theme.fg("accent", display),
-			);
+			const display = url.length > 70 ? url.slice(0, 67) + "..." : url;
+			text.setText(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("accent", display));
 			return text;
 		},
 
 		renderResult(result, { expanded, isPartial }, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 
 			if (isPartial) {
 				text.setText(theme.fg("warning", "Fetching…"));
@@ -105,9 +92,7 @@ export function registerWebFetch(pi: ExtensionAPI, deps: WebFetchDeps = {}) {
 			}
 
 			if (context.isError) {
-				const msg =
-					result.content.find((c) => c.type === "text")?.text ||
-					"Error";
+				const msg = result.content.find((c) => c.type === "text")?.text || "Error";
 				text.setText(theme.fg("error", msg));
 				return text;
 			}
@@ -123,21 +108,15 @@ export function registerWebFetch(pi: ExtensionAPI, deps: WebFetchDeps = {}) {
 			const status =
 				theme.fg("success", title) +
 				theme.fg("muted", ` (${chars} chars)`) +
-				(details?.warning
-					? " " + theme.fg("warning", `⚠ ${details.warning}`)
-					: "");
+				(details?.warning ? " " + theme.fg("warning", `⚠ ${details.warning}`) : "");
 
 			if (!expanded) {
 				text.setText(status);
 				return text;
 			}
 
-			const content =
-				result.content.find((c) => c.type === "text")?.text || "";
-			const preview =
-				content.length > 500
-					? content.slice(0, 500) + "..."
-					: content;
+			const content = result.content.find((c) => c.type === "text")?.text || "";
+			const preview = content.length > 500 ? content.slice(0, 500) + "..." : content;
 			text.setText(status + "\n" + theme.fg("dim", preview));
 			return text;
 		},

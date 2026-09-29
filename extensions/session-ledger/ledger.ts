@@ -134,15 +134,28 @@ export function inPeriod(session: SessionSummary, period: Period, now = Date.now
 	return session.endedAt >= since;
 }
 
-export function buildLedger(all: SessionSummary[], period: Period, options: { scanned?: number; skipped?: number; now?: number; project?: string } = {}): Ledger {
+export function buildLedger(
+	all: SessionSummary[],
+	period: Period,
+	options: { scanned?: number; skipped?: number; now?: number; project?: string } = {},
+): Ledger {
 	const now = options.now ?? Date.now();
 	const needle = options.project?.toLowerCase();
 	const sessions = all.filter(
-		(s) => inPeriod(s, period, now) && (!needle || s.project.toLowerCase().includes(needle) || s.cwd.toLowerCase().includes(needle)),
+		(s) =>
+			inPeriod(s, period, now) &&
+			(!needle || s.project.toLowerCase().includes(needle) || s.cwd.toLowerCase().includes(needle)),
 	);
 	const total = emptyStats();
 	for (const s of sessions) addStats(total, s.stats);
-	return { period, since: periodStart(period, now), sessions, scanned: options.scanned ?? all.length, skipped: options.skipped ?? 0, total };
+	return {
+		period,
+		since: periodStart(period, now),
+		sessions,
+		scanned: options.scanned ?? all.length,
+		skipped: options.skipped ?? 0,
+		total,
+	};
 }
 
 export function groupRows(ledger: Ledger, by: GroupKey): Row[] {
@@ -190,5 +203,7 @@ export function groupRows(ledger: Ledger, by: GroupKey): Row[] {
 }
 
 export function topSessions(ledger: Ledger, limit = 5): SessionSummary[] {
-	return [...ledger.sessions].sort((a, b) => b.stats.cost - a.stats.cost || b.stats.turns - a.stats.turns).slice(0, limit);
+	return [...ledger.sessions]
+		.sort((a, b) => b.stats.cost - a.stats.cost || b.stats.turns - a.stats.turns)
+		.slice(0, limit);
 }

@@ -13,7 +13,14 @@ const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 const MAP = 2;
 // класс строки ленты: вес для выборки и цвет на карте
 const KIND_WEIGHT: Record<string, number> = { E: 5, R: 4, U: 3, C: 2, B: 2, t: 1, ".": 0 };
-const MAP_COLOR: Record<string, string> = { E: "error", R: "accent", U: "userMessageText", C: "toolTitle", B: "muted", t: "dim" };
+const MAP_COLOR: Record<string, string> = {
+	E: "error",
+	R: "accent",
+	U: "userMessageText",
+	C: "toolTitle",
+	B: "muted",
+	t: "dim",
+};
 
 interface UiTheme {
 	fg(color: string, text: string): string;
@@ -53,7 +60,9 @@ export class TraceView {
 	private editing = false; // идёт ввод фильтра
 	private errorsOnly = false; // режим «только ошибки»
 	private summary = false; // сводка по моделям вместо ленты
-	private cache: { width: number; version: number; lines: string[]; kinds: string[]; matchStarts: number[] } | undefined;
+	private cache:
+		| { width: number; version: number; lines: string[]; kinds: string[]; matchStarts: number[] }
+		| undefined;
 
 	constructor(opts: {
 		tui: TuiLike;
@@ -336,7 +345,13 @@ export class TraceView {
 		const contentW = Math.max(20, width - MAP);
 		if (!this.cache || this.cache.width !== contentW || this.cache.version !== this.model.version) {
 			const lines = this.buildLines(contentW).map((l) => truncateToWidth(l, contentW));
-			this.cache = { width: contentW, version: this.model.version, lines, kinds: this.lineKinds, matchStarts: this.matchStarts };
+			this.cache = {
+				width: contentW,
+				version: this.model.version,
+				lines,
+				kinds: this.lineKinds,
+				matchStarts: this.matchStarts,
+			};
 		}
 		const { lines, kinds } = this.cache;
 		const maxStart = Math.max(0, lines.length - body);
@@ -358,7 +373,15 @@ export class TraceView {
 	}
 
 	/** Строка ленты, дополненная справа колонкой мини-карты. */
-	private mapRow(line: string, contentW: number, kinds: string[], start: number, body: number, r: number, total: number): string {
+	private mapRow(
+		line: string,
+		contentW: number,
+		kinds: string[],
+		start: number,
+		body: number,
+		r: number,
+		total: number,
+	): string {
 		const th = this.theme;
 		const pad = contentW - visibleWidth(line);
 		// диапазон исходных строк, который представляет эта строка карты
@@ -426,7 +449,8 @@ export class TraceView {
 		if (this.editing) {
 			hints = ` filter: ${this.filterQ}▏ enter — применить · esc — сброс `;
 		} else {
-		const nav = this.mode === "live" ? "↑↓ scroll · f follow" : "space pause · ←→ seek · +/- speed · l live · r restart";
+			const nav =
+				this.mode === "live" ? "↑↓ scroll · f follow" : "space pause · ←→ seek · +/- speed · l live · r restart";
 			hints = ` ${nav} · / filter · n/N jump · e errors · m models · esc close `;
 		}
 		const right = `${hints}${pos} `;
@@ -506,7 +530,10 @@ export class TraceView {
 						: th.fg("accent", `${this.spin()} running`);
 			const dur = c.endMs !== undefined ? fmtDur(c.endMs - c.startMs) : "";
 			const left = `${th.fg("toolTitle", c.name)} ${th.fg("dim", c.label)}`;
-			put(this.cardRow(` ⚒ ${left}`, `${th.fg("muted", dur)} ${glyph}`, inner), c.status === "error" ? "E" : c.status === "running" ? "R" : "t");
+			put(
+				this.cardRow(` ⚒ ${left}`, `${th.fg("muted", dur)} ${glyph}`, inner),
+				c.status === "error" ? "E" : c.status === "running" ? "R" : "t",
+			);
 		}
 		if (t.thinking) {
 			put(this.plainRow(` ${th.fg("muted", `⋮ ${t.thinking}`)}`, inner), "t");
@@ -552,7 +579,9 @@ export class TraceView {
 			const left = ` ${th.fg("toolTitle", oneLine(name, Math.max(12, width - 44)))}`;
 			const right = `${s.turns} turns · ↑${fmtK(s.input)} ↓${fmtK(s.output)} · ${fmtMoney(s.cost)}`;
 			const gap = width - visibleWidth(left) - visibleWidth(right) - 1;
-			out.push(gap > 0 ? `${left}${" ".repeat(gap)}${th.fg("dim", right)}` : truncateToWidth(`${left} ${right}`, width));
+			out.push(
+				gap > 0 ? `${left}${" ".repeat(gap)}${th.fg("dim", right)}` : truncateToWidth(`${left} ${right}`, width),
+			);
 			kinds.push(".");
 		}
 		if (rows.length === 0) {
@@ -598,9 +627,7 @@ export class TraceView {
 			}
 		}
 		if (out.length === 0) {
-			out.push(
-				th.fg("dim", m.items.length === 0 ? "  ждём первую запись сессии…" : "  под фильтр ничего не попало")
-			);
+			out.push(th.fg("dim", m.items.length === 0 ? "  ждём первую запись сессии…" : "  под фильтр ничего не попало"));
 			kinds.push(".");
 		}
 		this.matchStarts = matchStarts;

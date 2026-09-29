@@ -62,7 +62,10 @@ test("add/read/remove roundtrip with custom liveness", () => {
 		assert.ok(capped && capped.task.length <= 200);
 
 		removeRunningWorker(path, "w-3");
-		assert.equal(readRunningWorkers(path, () => true).workers.find((w) => w.id === "w-3"), undefined);
+		assert.equal(
+			readRunningWorkers(path, () => true).workers.find((w) => w.id === "w-3"),
+			undefined,
+		);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

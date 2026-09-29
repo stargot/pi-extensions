@@ -157,21 +157,23 @@ export default function (pi: ExtensionAPI) {
 			const buildListRows = (width: number): { text: string; itemIndex: number | null }[] => {
 				const rows: { text: string; itemIndex: number | null }[] = [];
 				rows.push({ text: theme.fg("dim", "↑ PREPEND — added before your message"), itemIndex: null });
-			prepends.forEach((s, i) => {
-				rows.push({ text: itemRow(s, i, width), itemIndex: i });
-			});
-			rows.push({ text: "", itemIndex: null });
-			rows.push({ text: theme.fg("dim", "↓ APPEND — added after your message"), itemIndex: null });
-			appends.forEach((s, i) => {
-				rows.push({ text: itemRow(s, prepends.length + i, width), itemIndex: prepends.length + i });
-			});
+				prepends.forEach((s, i) => {
+					rows.push({ text: itemRow(s, i, width), itemIndex: i });
+				});
+				rows.push({ text: "", itemIndex: null });
+				rows.push({ text: theme.fg("dim", "↓ APPEND — added after your message"), itemIndex: null });
+				appends.forEach((s, i) => {
+					rows.push({ text: itemRow(s, prepends.length + i, width), itemIndex: prepends.length + i });
+				});
 				return rows;
 			};
 
 			const buildPreviewRows = (snippet: Snippet, width: number): string[] => {
 				const rows: string[] = [];
 				rows.push(truncateToWidth(theme.bold(snippet.name), width));
-				rows.push(truncateToWidth(theme.fg("dim", `${snippet.placement} · order ${snippet.order} · ${snippet.id}`), width));
+				rows.push(
+					truncateToWidth(theme.fg("dim", `${snippet.placement} · order ${snippet.order} · ${snippet.id}`), width),
+				);
 				rows.push(theme.fg("dim", "─".repeat(Math.min(width, 40))));
 				for (const line of snippet.body.split("\n")) {
 					for (const wrapped of wrapTextWithAnsi(line, width)) {
@@ -228,7 +230,12 @@ export default function (pi: ExtensionAPI) {
 					if (mode === "list") {
 						const rows = buildListRows(width);
 						const cursorRow = rows.findIndex((r) => r.itemIndex === cursor);
-						const v = viewport(rows.map((r) => r.text), listScroll, maxView, cursorRow);
+						const v = viewport(
+							rows.map((r) => r.text),
+							listScroll,
+							maxView,
+							cursorRow,
+						);
 						content = v.out;
 						listScroll = v.scroll;
 						title = "Prompt snippets";

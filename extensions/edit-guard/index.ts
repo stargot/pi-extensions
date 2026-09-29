@@ -90,7 +90,12 @@ export function createEditGuardHandler(
 					"Прочитай файл и исправь oldText так, чтобы он совпал с реальным содержимым (учитывай точные отступы и пробелы), затем повтори правку.",
 				].join("\n");
 			}
-			pi.appendEntry("edit-guard", { path: input.path, action, edits: telemetry, ...(reason !== undefined ? { reason } : {}) });
+			pi.appendEntry("edit-guard", {
+				path: input.path,
+				action,
+				edits: telemetry,
+				...(reason !== undefined ? { reason } : {}),
+			});
 
 			if (action === "blocked") return { block: true, reason };
 			return undefined;

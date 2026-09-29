@@ -18,15 +18,18 @@ const { applySnippets, loadSnippets, parseSnippet } = await import("../index.ts"
 const dir = process.env.PI_SNIPPETS_DIR!;
 
 test("parseSnippet: full frontmatter, quotes stripped", () => {
-	const s = parseSnippet("concise.md", [
-		"---",
-		'name: "Concise mode"',
-		"description:  Be brief. ",
-		"placement: prepend",
-		"order: 10",
-		"---",
-		"Answer in one sentence.",
-	].join("\n"));
+	const s = parseSnippet(
+		"concise.md",
+		[
+			"---",
+			'name: "Concise mode"',
+			"description:  Be brief. ",
+			"placement: prepend",
+			"order: 10",
+			"---",
+			"Answer in one sentence.",
+		].join("\n"),
+	);
 	assert.ok(s);
 	assert.equal(s.id, "concise.md");
 	assert.equal(s.name, "Concise mode");
@@ -60,8 +63,14 @@ test("parseSnippet: CRLF frontmatter tolerated", () => {
 test("loadSnippets: prepend group first, each sorted by (order, name); non-md skipped", () => {
 	writeFileSync(join(dir, "b-append.md"), ["---", "name: B Append", "order: 1", "---", "b1"].join("\n"));
 	writeFileSync(join(dir, "a-append.md"), ["---", "name: A Append", "order: 2", "---", "b2"].join("\n"));
-	writeFileSync(join(dir, "z-prepend.md"), ["---", "name: Zed", "placement: prepend", "order: 5", "---", "p1"].join("\n"));
-	writeFileSync(join(dir, "a-prepend.md"), ["---", "name: Aaa", "placement: prepend", "order: 5", "---", "p2"].join("\n"));
+	writeFileSync(
+		join(dir, "z-prepend.md"),
+		["---", "name: Zed", "placement: prepend", "order: 5", "---", "p1"].join("\n"),
+	);
+	writeFileSync(
+		join(dir, "a-prepend.md"),
+		["---", "name: Aaa", "placement: prepend", "order: 5", "---", "p2"].join("\n"),
+	);
 	writeFileSync(join(dir, "notes.txt"), "not a snippet");
 	writeFileSync(join(dir, "broken.md"), "no frontmatter");
 

@@ -40,11 +40,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 // test/bridge-config.test.ts): named ESM imports bind to a module
 // snapshot and would bypass such a patch.
 import fs from "node:fs";
-import {
-	createServer,
-	type IncomingMessage,
-	type Server,
-} from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -128,9 +124,7 @@ export function parsePortRange(range: string): number[] {
 		throw new Error(`Invalid port range: ${JSON.stringify(range)}`);
 	}
 	if (from < 1024 || to > 65535 || from > to) {
-		throw new Error(
-			`Port range out of bounds (1024–65535, from ≤ to): ${JSON.stringify(range)}`,
-		);
+		throw new Error(`Port range out of bounds (1024–65535, from ≤ to): ${JSON.stringify(range)}`);
 	}
 	const ports: number[] = [];
 	for (let port = from; port <= to; port++) ports.push(port);
@@ -150,9 +144,7 @@ export function parseSinglePort(port: string): number {
 	}
 	const value = Number(trimmed);
 	if (value < 1024 || value > 65535) {
-		throw new Error(
-			`Port out of bounds (1024–65535): ${JSON.stringify(port)}`,
-		);
+		throw new Error(`Port out of bounds (1024–65535): ${JSON.stringify(port)}`);
 	}
 	return value;
 }
@@ -176,9 +168,7 @@ export function resolveTokenFilePath(): string {
  * - PI_WEB_BRIDGE_TOKEN (inline) wins over PI_WEB_BRIDGE_TOKEN_FILE
  *   (path); the default is resolveTokenFilePath().
  */
-export function readBridgeConfig(
-	env: NodeJS.ProcessEnv = process.env,
-): BridgeConfig {
+export function readBridgeConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
 	let ports: number[];
 	try {
 		ports = env.PI_WEB_BRIDGE_PORT
@@ -280,10 +270,7 @@ export function loadOrCreateToken(file: string): string {
  */
 export function originAllowed(origin: string | undefined): boolean {
 	if (!origin) return true;
-	return (
-		origin.startsWith("chrome-extension://") ||
-		origin.startsWith("moz-extension://")
-	);
+	return origin.startsWith("chrome-extension://") || origin.startsWith("moz-extension://");
 }
 
 /** Reject an upgrade with a plain HTTP 403 before any WS framing. */
@@ -305,18 +292,14 @@ interface ClientEntry {
 	terminateTimer?: NodeJS.Timeout;
 }
 
-export async function startBridge(
-	config: BridgeConfig,
-): Promise<BridgeHandle> {
+export async function startBridge(config: BridgeConfig): Promise<BridgeHandle> {
 	// Token resolution is lazy, at server start (plan §2 pairing): the
 	// file is only touched when a bridge will actually listen.
 	let token: string;
 	try {
 		token = config.token ?? loadOrCreateToken(config.tokenFile);
 	} catch (error) {
-		return disabledHandle(
-			`token file unavailable: ${errorMessage(error)}`,
-		);
+		return disabledHandle(`token file unavailable: ${errorMessage(error)}`);
 	}
 
 	/** Tickets for jobs awaiting a client result (for gates + aborts). */
@@ -389,57 +372,52 @@ export async function startBridge(
 		}
 	}
 	if (!bound) {
-		return disabledHandle(
-			`no free port in ${config.ports.join(", ")}`,
-		);
+		return disabledHandle(`no free port in ${config.ports.join(", ")}`);
 	}
 	// Post-listen server errors (never expected) must not crash the host
 	// session — the bridge degrades, it never throws.
 	server.on("error", () => {});
 	port = (server.address() as { port: number }).port;
 
-	wss.on(
-		"connection",
-		(ws: WebSocket, request: IncomingMessage) => {
-			if (closed) {
-				ws.terminate();
+	wss.on("connection", (ws: WebSocket, request: IncomingMessage) => {
+		if (closed) {
+			ws.terminate();
+			return;
+		}
+		const entry: ClientEntry = {
+			id: randomUUID(),
+			ws,
+			authenticated: false,
+			ip: request.socket.remoteAddress ?? "unknown",
+			missedPings: 0,
+		};
+		clients.set(entry.id, entry);
+
+		// Hello must arrive within HELLO_TIMEOUT_MS; the timer is
+		// cleared on successful auth or socket close.
+		entry.helloTimer = setTimeout(() => {
+			if (!entry.authenticated) ws.terminate();
+		}, HELLO_TIMEOUT_MS);
+		entry.helloTimer.unref();
+
+		ws.on("pong", () => {
+			entry.missedPings = 0;
+		});
+		ws.on("message", (data, isBinary) => {
+			if (closed) return;
+			if (isBinary) {
+				ws.terminate(); // binary frames are not part of protocol v1
 				return;
 			}
-			const entry: ClientEntry = {
-				id: randomUUID(),
-				ws,
-				authenticated: false,
-				ip: request.socket.remoteAddress ?? "unknown",
-				missedPings: 0,
-			};
-			clients.set(entry.id, entry);
-
-			// Hello must arrive within HELLO_TIMEOUT_MS; the timer is
-			// cleared on successful auth or socket close.
-			entry.helloTimer = setTimeout(() => {
-				if (!entry.authenticated) ws.terminate();
-			}, HELLO_TIMEOUT_MS);
-			entry.helloTimer.unref();
-
-			ws.on("pong", () => {
-				entry.missedPings = 0;
-			});
-			ws.on("message", (data, isBinary) => {
-				if (closed) return;
-				if (isBinary) {
-					ws.terminate(); // binary frames are not part of protocol v1
-					return;
-				}
-				handleMessage(entry, (data as Buffer).toString("utf8"));
-			});
-			ws.on("close", () => {
-				cleanupClient(entry);
-			});
-			ws.on("error", () => {
-				ws.terminate();
-			});
-		},
-	);
+			handleMessage(entry, (data as Buffer).toString("utf8"));
+		});
+		ws.on("close", () => {
+			cleanupClient(entry);
+		});
+		ws.on("error", () => {
+			ws.terminate();
+		});
+	});
 
 	// Heartbeat (plan §3): ws-level ping every SERVER_PING_INTERVAL_MS; a
 	// socket missing MAX_MISSED_PINGS is terminated (browsers and the ws
@@ -518,9 +496,7 @@ export async function startBridge(
 				send(entry, {
 					v: 1,
 					type: "pong",
-					ts: typeof message.ts === "number"
-						? message.ts
-						: Date.now(),
+					ts: typeof message.ts === "number" ? message.ts : Date.now(),
 				});
 				break;
 			case "pong":
@@ -566,8 +542,7 @@ export async function startBridge(
 		authFailures.delete(entry.ip);
 		core.addClient(entry.id, {
 			client: typeof client === "string" ? client : undefined,
-			clientVersion:
-				typeof clientVersion === "string" ? clientVersion : undefined,
+			clientVersion: typeof clientVersion === "string" ? clientVersion : undefined,
 		});
 		const reply: HelloReplyMsg = {
 			v: 1,
@@ -607,30 +582,21 @@ export async function startBridge(
 			core.fail(message.id, reason);
 			return;
 		}
-		const markdown =
-			typeof message.markdown === "string" ? message.markdown : "";
+		const markdown = typeof message.markdown === "string" ? message.markdown : "";
 		if (markdown.trim().length < MIN_MARKDOWN_LENGTH) {
 			core.fail(message.id, "unreadable");
 			return;
 		}
-		const capped =
-			markdown.length > ticket.maxChars
-				? markdown.slice(0, ticket.maxChars)
-				: markdown;
+		const capped = markdown.length > ticket.maxChars ? markdown.slice(0, ticket.maxChars) : markdown;
 		core.resolve(message.id, {
 			markdown: capped,
 			title: typeof message.title === "string" ? message.title : null,
-			finalUrl:
-				typeof message.finalUrl === "string" ? message.finalUrl : "",
+			finalUrl: typeof message.finalUrl === "string" ? message.finalUrl : "",
 		});
 	}
 
 	/** Close with a verdict: flush pending frames, then reap the socket. */
-	function closeAfterVerdict(
-		entry: ClientEntry,
-		code: number,
-		reason: string,
-	): void {
+	function closeAfterVerdict(entry: ClientEntry, code: number, reason: string): void {
 		entry.ws.close(code, reason);
 		entry.terminateTimer = setTimeout(() => entry.ws.terminate(), 5_000);
 		entry.terminateTimer.unref();
@@ -702,11 +668,7 @@ export async function startBridge(
 						// (its eventual result lands on error/unknown-id).
 						core.fail(ticket.id, "timeout");
 					} else {
-						signal.addEventListener(
-							"abort",
-							() => core.fail(ticket.id, "timeout"),
-							{ once: true },
-						);
+						signal.addEventListener("abort", () => core.fail(ticket.id, "timeout"), { once: true });
 					}
 				}
 				return ticket.promise;
@@ -752,20 +714,14 @@ function disabledHandle(reason: string): BridgeHandle {
  * "bad-json", "bad-v" (wrong protocol version — worth a hello_err before
  * the close), or "unknown-type" (right version, nonsense discriminator).
  */
-function frameProblem(
-	raw: string,
-): "bad-json" | "bad-v" | "unknown-type" {
+function frameProblem(raw: string): "bad-json" | "bad-v" | "unknown-type" {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
 	} catch {
 		return "bad-json";
 	}
-	if (
-		typeof parsed !== "object" ||
-		parsed === null ||
-		Array.isArray(parsed)
-	) {
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		return "bad-json";
 	}
 	const { v, type } = parsed as { v?: unknown; type?: unknown };

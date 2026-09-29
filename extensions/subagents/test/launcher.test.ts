@@ -18,9 +18,7 @@ function baseSpec(overrides: Partial<Parameters<typeof renderLauncherPs1>[0]> = 
 }
 
 test("renderLauncherPs1: env, cd, pi invocation, sentinel, done sidecar", () => {
-	const ps1 = renderLauncherPs1(
-		baseSpec({ cwd: "D:\\Projects\\demo", model: "zai/glm-5.3-flash" }),
-	);
+	const ps1 = renderLauncherPs1(baseSpec({ cwd: "D:\\Projects\\demo", model: "zai/glm-5.3-flash" }));
 	assert.match(ps1, /\$env:PI_SUBAGENT_NAME = 'scout'/);
 	assert.match(ps1, /\$env:PI_SUBAGENT_ID = 'scout-abc123'/);
 	assert.match(ps1, /Set-Location -LiteralPath 'D:\\Projects\\demo'/);
@@ -45,9 +43,7 @@ test("renderLauncherPs1: no allowlist → no -ne", () => {
 });
 
 test("renderLauncherPs1: quotes are escaped for PowerShell", () => {
-	const ps1 = renderLauncherPs1(
-		baseSpec({ appendSystemPromptFile: "C:\\artifacts\\context\\scout.identity.md" }),
-	);
+	const ps1 = renderLauncherPs1(baseSpec({ appendSystemPromptFile: "C:\\artifacts\\context\\scout.identity.md" }));
 	assert.match(ps1, /--append-system-prompt 'C:\\artifacts\\context\\scout\.identity\.md'/);
 });
 

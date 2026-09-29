@@ -56,21 +56,13 @@ test("assertPublicHttpUrl: blocked literals, schemes and hosts", () => {
 		["file:///etc/passwd", /only http\/https/],
 	];
 	for (const [url, reason] of blocked) {
-		assert.throws(
-			() => assertPublicHttpUrl(url),
-			reason,
-			`expected ${url} to be blocked`,
-		);
+		assert.throws(() => assertPublicHttpUrl(url), reason, `expected ${url} to be blocked`);
 	}
 });
 
 test("assertPublicHttpUrl: invalid URLs throw Invalid URL", () => {
 	for (const url of ["not a url", "http://"]) {
-		assert.throws(
-			() => assertPublicHttpUrl(url),
-			/Invalid URL/,
-			`expected ${url} to be rejected as invalid`,
-		);
+		assert.throws(() => assertPublicHttpUrl(url), /Invalid URL/, `expected ${url} to be rejected as invalid`);
 	}
 });
 

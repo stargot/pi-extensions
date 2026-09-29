@@ -296,10 +296,7 @@ export function batchWallTime(results: BatchResult[], now: number = Date.now()):
 	return Math.max(0, end - Math.min(...starts));
 }
 
-export function formatUsageStats(
-	usage: BatchUsage,
-	model?: string,
-): string {
+export function formatUsageStats(usage: BatchUsage, model?: string): string {
 	const parts: string[] = [];
 	if (usage.turns) parts.push(`${usage.turns} turn${usage.turns > 1 ? "s" : ""}`);
 	if (usage.input) parts.push(`↑${formatTokens(usage.input)}`);
@@ -392,11 +389,7 @@ export function elapsedOf(r: BatchResult, now: number = Date.now()): number | un
 
 type ThemeFg = (color: ThemeColor, text: string) => string;
 
-export function formatToolCall(
-	toolName: string,
-	args: Record<string, unknown>,
-	themeFg: ThemeFg,
-): string {
+export function formatToolCall(toolName: string, args: Record<string, unknown>, themeFg: ThemeFg): string {
 	const shortenPath = (p: string) => {
 		const home = (typeof process !== "undefined" ? process.env.USERPROFILE || process.env.HOME : "") ?? "";
 		return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
@@ -438,9 +431,7 @@ export function formatToolCall(
 			const pattern = (args.pattern || "") as string;
 			const rawPath = (args.path || ".") as string;
 			return (
-				themeFg("muted", "grep ") +
-				themeFg("accent", `/${pattern}/`) +
-				themeFg("dim", ` in ${shortenPath(rawPath)}`)
+				themeFg("muted", "grep ") + themeFg("accent", `/${pattern}/`) + themeFg("dim", ` in ${shortenPath(rawPath)}`)
 			);
 		}
 		default: {
@@ -482,7 +473,12 @@ export function displayItems(messages: BatchMessage[]): DisplayItem[] {
 export function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
 	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && existsSync(currentScript) && currentScript.toLowerCase().endsWith(".js")) {
+	if (
+		currentScript &&
+		!isBunVirtualScript &&
+		existsSync(currentScript) &&
+		currentScript.toLowerCase().endsWith(".js")
+	) {
 		return { command: process.execPath, args: [currentScript, ...args] };
 	}
 	return { command: "pi", args };
@@ -650,112 +646,112 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 				return;
 			}
 
-				let buffer = "";
-				const processLine = (line: string) => {
-					if (!line.trim()) return;
-					try {
-						const event = JSON.parse(line);
-						if (ingestBatchEvent(result, event)) opts.onEvent?.(result);
-					} catch {
-						// Non-JSON line — ignore.
-					}
-				};
-
-				proc.stdout!.on("data", (data: Buffer) => {
-					buffer += data.toString();
-					const lines = buffer.split("\n");
-					buffer = lines.pop() || "";
-					for (const line of lines) processLine(line);
-				});
-				// Keep the tail only: crash diagnostics live at the end of the
-				// stream, and a chatty child must not grow the buffer unbounded.
-				let stderrTrimmed = false;
-				proc.stderr!.on("data", (data: Buffer) => {
-					result.stderr += data.toString();
-					if (result.stderr.length > STDERR_CAP * 2) {
-						result.stderr = result.stderr.slice(-STDERR_CAP);
-						stderrTrimmed = true;
-					}
-				});
-
-				// Kill bookkeeping. `killed` separates our own kills (abort,
-				// timeout) from external ones; both must yield a FAILED result —
-				// close fires with code=null for signal deaths, which a naive
-				// `code ?? 0` reports as success.
-				let settled = false;
-				let killed = false;
-				let killReason: "aborted" | "timeout" | null = null;
-				let escalation: NodeJS.Timeout | null = null;
-
-				const killChild = (reason: "aborted" | "timeout") => {
-					if (settled || killed) return;
-					killed = true;
-					killReason = reason;
-					const pid = proc.pid;
-					// Tree kill on Windows, direct signal on POSIX — proc.kill
-					// leaves grandchildren (bash etc.) alive on win32.
-					killProcessTree(pid ?? -1, "SIGTERM");
-					// A child ignoring SIGTERM (or an unreapable POSIX subtree) is
-					// force-killed after the grace period. Note: proc.killed is
-					// already true after the first kill — it must not gate this.
-					escalation = setTimeout(() => {
-						if (settled) return;
-						killProcessTree(pid ?? -1, "SIGKILL");
-					}, opts.killEscalationMs ?? 5000);
-				};
-
-				// Per-child timeout: a hung child would otherwise wedge the tool
-				// call — and the parent's whole turn — forever.
-				const timeoutSetting = opts.timeoutMs ?? DEFAULT_CHILD_TIMEOUT_MS;
-				const timeout = timeoutSetting > 0 ? setTimeout(() => killChild("timeout"), timeoutSetting) : null;
-				timeout?.unref();
-
-				const clearTimers = () => {
-					if (escalation) clearTimeout(escalation);
-					if (timeout) clearTimeout(timeout);
-				};
-
-				proc.on("close", (code, signalCode) => {
-					settled = true;
-					clearTimers();
-					if (buffer.trim()) processLine(buffer);
-					if (killed) {
-						result.exitCode = code ?? 1;
-						result.stopReason = killReason ?? undefined;
-						if (!result.errorMessage) {
-							result.errorMessage =
-								killReason === "timeout"
-									? `timed out after ${timeoutSetting}ms and was killed`
-									: "killed: batch cancelled";
-						}
-					} else {
-						// Signal death we did not initiate (e.g. /workers kill):
-						// close fires with code=null — that must not read as success.
-						result.exitCode = code ?? (signalCode ? 1 : 0);
-						if (code === null && signalCode) {
-							result.stopReason = "aborted";
-							if (!result.errorMessage) result.errorMessage = `killed by signal ${signalCode}`;
-						}
-					}
-					if (stderrTrimmed) {
-						result.stderr = `[...stderr truncated, keeping last ${STDERR_CAP} bytes...]\n${result.stderr}`;
-					}
-					markElapsed();
-					resolve();
-				});
-				proc.on("error", (err) => {
-					settled = true;
-					clearTimers();
-					result.exitCode = 1;
-					result.errorMessage = `failed to spawn ${command}: ${err.message}`;
-					markElapsed();
-					resolve();
-				});
-
-				if (opts.signal) {
-					if (opts.signal.aborted) killChild("aborted");
-					else opts.signal.addEventListener("abort", () => killChild("aborted"), { once: true });
+			let buffer = "";
+			const processLine = (line: string) => {
+				if (!line.trim()) return;
+				try {
+					const event = JSON.parse(line);
+					if (ingestBatchEvent(result, event)) opts.onEvent?.(result);
+				} catch {
+					// Non-JSON line — ignore.
 				}
+			};
+
+			proc.stdout!.on("data", (data: Buffer) => {
+				buffer += data.toString();
+				const lines = buffer.split("\n");
+				buffer = lines.pop() || "";
+				for (const line of lines) processLine(line);
+			});
+			// Keep the tail only: crash diagnostics live at the end of the
+			// stream, and a chatty child must not grow the buffer unbounded.
+			let stderrTrimmed = false;
+			proc.stderr!.on("data", (data: Buffer) => {
+				result.stderr += data.toString();
+				if (result.stderr.length > STDERR_CAP * 2) {
+					result.stderr = result.stderr.slice(-STDERR_CAP);
+					stderrTrimmed = true;
+				}
+			});
+
+			// Kill bookkeeping. `killed` separates our own kills (abort,
+			// timeout) from external ones; both must yield a FAILED result —
+			// close fires with code=null for signal deaths, which a naive
+			// `code ?? 0` reports as success.
+			let settled = false;
+			let killed = false;
+			let killReason: "aborted" | "timeout" | null = null;
+			let escalation: NodeJS.Timeout | null = null;
+
+			const killChild = (reason: "aborted" | "timeout") => {
+				if (settled || killed) return;
+				killed = true;
+				killReason = reason;
+				const pid = proc.pid;
+				// Tree kill on Windows, direct signal on POSIX — proc.kill
+				// leaves grandchildren (bash etc.) alive on win32.
+				killProcessTree(pid ?? -1, "SIGTERM");
+				// A child ignoring SIGTERM (or an unreapable POSIX subtree) is
+				// force-killed after the grace period. Note: proc.killed is
+				// already true after the first kill — it must not gate this.
+				escalation = setTimeout(() => {
+					if (settled) return;
+					killProcessTree(pid ?? -1, "SIGKILL");
+				}, opts.killEscalationMs ?? 5000);
+			};
+
+			// Per-child timeout: a hung child would otherwise wedge the tool
+			// call — and the parent's whole turn — forever.
+			const timeoutSetting = opts.timeoutMs ?? DEFAULT_CHILD_TIMEOUT_MS;
+			const timeout = timeoutSetting > 0 ? setTimeout(() => killChild("timeout"), timeoutSetting) : null;
+			timeout?.unref();
+
+			const clearTimers = () => {
+				if (escalation) clearTimeout(escalation);
+				if (timeout) clearTimeout(timeout);
+			};
+
+			proc.on("close", (code, signalCode) => {
+				settled = true;
+				clearTimers();
+				if (buffer.trim()) processLine(buffer);
+				if (killed) {
+					result.exitCode = code ?? 1;
+					result.stopReason = killReason ?? undefined;
+					if (!result.errorMessage) {
+						result.errorMessage =
+							killReason === "timeout"
+								? `timed out after ${timeoutSetting}ms and was killed`
+								: "killed: batch cancelled";
+					}
+				} else {
+					// Signal death we did not initiate (e.g. /workers kill):
+					// close fires with code=null — that must not read as success.
+					result.exitCode = code ?? (signalCode ? 1 : 0);
+					if (code === null && signalCode) {
+						result.stopReason = "aborted";
+						if (!result.errorMessage) result.errorMessage = `killed by signal ${signalCode}`;
+					}
+				}
+				if (stderrTrimmed) {
+					result.stderr = `[...stderr truncated, keeping last ${STDERR_CAP} bytes...]\n${result.stderr}`;
+				}
+				markElapsed();
+				resolve();
+			});
+			proc.on("error", (err) => {
+				settled = true;
+				clearTimers();
+				result.exitCode = 1;
+				result.errorMessage = `failed to spawn ${command}: ${err.message}`;
+				markElapsed();
+				resolve();
+			});
+
+			if (opts.signal) {
+				if (opts.signal.aborted) killChild("aborted");
+				else opts.signal.addEventListener("abort", () => killChild("aborted"), { once: true });
+			}
 		});
 	} finally {
 		unregister();

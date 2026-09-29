@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-	extractArticle,
-	extractHeadingTitle,
-	isLikelyJSRendered,
-} from "../fetch/markdown.ts";
+import { extractArticle, extractHeadingTitle, isLikelyJSRendered } from "../fetch/markdown.ts";
 
 // ~210 chars of visible text per paragraph; three of them clear
 // Readability's charThreshold (500) so the fixture parses as an article.
@@ -31,10 +27,7 @@ function articleHtml(extra = ""): string {
 }
 
 test("extractArticle: simple article → title + markdown with atx headings", async () => {
-	const result = await extractArticle(
-		articleHtml(),
-		"https://docs.example.com/post/1",
-	);
+	const result = await extractArticle(articleHtml(), "https://docs.example.com/post/1");
 	assert.ok(result);
 	assert.equal(result.title, "My Article");
 	assert.match(result.markdown, /^## Overview$/m);
@@ -47,10 +40,7 @@ test("extractArticle: relative <a href> resolves against baseUrl", async () => {
 		"https://a.com/b/c",
 	);
 	assert.ok(result);
-	assert.ok(
-		result.markdown.includes("[this link](https://a.com/x)"),
-		`got: ${result.markdown}`,
-	);
+	assert.ok(result.markdown.includes("[this link](https://a.com/x)"), `got: ${result.markdown}`);
 });
 
 test("extractArticle: relative <img src> resolves (../ against base dir), title kept", async () => {
@@ -59,10 +49,7 @@ test("extractArticle: relative <img src> resolves (../ against base dir), title 
 		"https://a.com/b/c",
 	);
 	assert.ok(result);
-	assert.ok(
-		result.markdown.includes('![a pic](https://a.com/i.png "A Pic")'),
-		`got: ${result.markdown}`,
-	);
+	assert.ok(result.markdown.includes('![a pic](https://a.com/i.png "A Pic")'), `got: ${result.markdown}`);
 });
 
 test("extractArticle: unresolvable href passes through unchanged", async () => {
@@ -71,10 +58,7 @@ test("extractArticle: unresolvable href passes through unchanged", async () => {
 		"https://a.com/b/c",
 	);
 	assert.ok(result);
-	assert.ok(
-		result.markdown.includes("](http://)"),
-		`got: ${result.markdown}`,
-	);
+	assert.ok(result.markdown.includes("](http://)"), `got: ${result.markdown}`);
 });
 
 test("extractArticle: consecutive calls with different baseUrls each resolve against their own base (shared rule, no stale base)", async () => {
@@ -83,14 +67,8 @@ test("extractArticle: consecutive calls with different baseUrls each resolve aga
 	const second = await extractArticle(html, "https://second.org/c/d");
 	assert.ok(first);
 	assert.ok(second);
-	assert.ok(
-		first.markdown.includes("[this link](https://first.com/x)"),
-		`first call got: ${first.markdown}`,
-	);
-	assert.ok(
-		second.markdown.includes("[this link](https://second.org/x)"),
-		`second call got: ${second.markdown}`,
-	);
+	assert.ok(first.markdown.includes("[this link](https://first.com/x)"), `first call got: ${first.markdown}`);
+	assert.ok(second.markdown.includes("[this link](https://second.org/x)"), `second call got: ${second.markdown}`);
 });
 
 test("extractArticle: no extractable article → null", async () => {
@@ -121,17 +99,11 @@ test("isLikelyJSRendered: no <body> → false", () => {
 });
 
 test("extractHeadingTitle: tool header (# + Source: + ---)", () => {
-	assert.equal(
-		extractHeadingTitle("# My Page\n\nSource: https://a.com/x\n\n---\n\nBody"),
-		"My Page",
-	);
+	assert.equal(extractHeadingTitle("# My Page\n\nSource: https://a.com/x\n\n---\n\nBody"), "My Page");
 });
 
 test("extractHeadingTitle: first h2 heading wins", () => {
-	assert.equal(
-		extractHeadingTitle("intro text\n\n## Second Level\n\nmore"),
-		"Second Level",
-	);
+	assert.equal(extractHeadingTitle("intro text\n\n## Second Level\n\nmore"), "Second Level");
 });
 
 test("extractHeadingTitle: h3-only markdown → null", () => {

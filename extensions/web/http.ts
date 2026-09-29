@@ -22,10 +22,7 @@ export function isAbort(error: unknown): boolean {
  * The returned signal aborts when either the caller signal aborts or
  * timeoutMs elapses, whichever comes first.
  */
-export function combineSignals(
-	signal: AbortSignal | undefined,
-	timeoutMs: number,
-): AbortSignal {
+export function combineSignals(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
 	const timeout = AbortSignal.timeout(timeoutMs);
 	return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
@@ -74,11 +71,7 @@ export async function withRetry<T>(
 		try {
 			return await fn();
 		} catch (error) {
-			if (
-				isAbort(error) ||
-				!options.isTransient(error) ||
-				attempt >= options.retries
-			) {
+			if (isAbort(error) || !options.isTransient(error) || attempt >= options.retries) {
 				throw error;
 			}
 			await sleep(options.backoffMs, options.signal);
@@ -94,9 +87,7 @@ export async function withRetry<T>(
  * discriminant forces callers to handle it explicitly at the call site
  * (keeping the "don't trust content-length" contract visible).
  */
-export type BodyResult =
-	| { ok: true; buffer: Uint8Array }
-	| { ok: false; kind: "too-large"; received: number };
+export type BodyResult = { ok: true; buffer: Uint8Array } | { ok: false; kind: "too-large"; received: number };
 
 /**
  * Read a response body as a byte stream, enforcing maxBytes by the bytes
@@ -107,10 +98,7 @@ export type BodyResult =
  * so far. A body at exactly maxBytes is allowed; only exceeding it fails.
  * A null body (e.g. 204 responses) yields an empty buffer.
  */
-export async function readBodyCapped(
-	response: Response,
-	maxBytes: number,
-): Promise<BodyResult> {
+export async function readBodyCapped(response: Response, maxBytes: number): Promise<BodyResult> {
 	const body = response.body;
 	if (!body) {
 		return { ok: true, buffer: new Uint8Array(0) };

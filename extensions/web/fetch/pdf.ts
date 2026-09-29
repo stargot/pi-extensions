@@ -48,24 +48,15 @@ export async function extractPdf(
 
 	const metadata = await pdf.getMetadata();
 	const metadataInfo =
-		metadata.info && typeof metadata.info === "object"
-			? (metadata.info as Record<string, unknown>)
-			: null;
+		metadata.info && typeof metadata.info === "object" ? (metadata.info as Record<string, unknown>) : null;
 
-	const metaTitle =
-		typeof metadataInfo?.Title === "string" ? metadataInfo.Title.trim() : "";
-	const metaAuthor =
-		typeof metadataInfo?.Author === "string"
-			? metadataInfo.Author.trim()
-			: "";
+	const metaTitle = typeof metadataInfo?.Title === "string" ? metadataInfo.Title.trim() : "";
+	const metaAuthor = typeof metadataInfo?.Author === "string" ? metadataInfo.Author.trim() : "";
 
 	let urlTitle = "document";
 	try {
 		const { basename } = await import("node:path");
-		urlTitle =
-			basename(new URL(url).pathname, ".pdf")
-				.replace(/[_-]+/g, " ")
-				.trim() || "document";
+		urlTitle = basename(new URL(url).pathname, ".pdf").replace(/[_-]+/g, " ").trim() || "document";
 	} catch {
 		/* unparseable URL — keep "document" */
 	}
@@ -95,12 +86,7 @@ export async function extractPdf(
 	lines.push(pages.join("\n\n"));
 
 	if (pdf.numPages > maxPages) {
-		lines.push(
-			"",
-			"---",
-			"",
-			`*[Truncated: Only first ${maxPages} of ${pdf.numPages} pages extracted]*`,
-		);
+		lines.push("", "---", "", `*[Truncated: Only first ${maxPages} of ${pdf.numPages} pages extracted]*`);
 	}
 
 	return { title, markdown: lines.join("\n") };

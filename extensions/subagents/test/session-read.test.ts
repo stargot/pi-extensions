@@ -37,7 +37,10 @@ test("summarizeSessionFile: last assistant text, usage totals, model", () => {
 			message: {
 				role: "assistant",
 				model: "glm-5.3-flash",
-				content: [{ type: "thinking", thinking: "..." }, { type: "text", text: "## Done\nAll set." }],
+				content: [
+					{ type: "thinking", thinking: "..." },
+					{ type: "text", text: "## Done\nAll set." },
+				],
 				usage: { input: 2000, output: 50, cost: { total: 0.002 } },
 			},
 		},

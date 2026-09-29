@@ -90,10 +90,7 @@ export function summarizeSessionFile(jsonlPath: string, fallback: string): Sessi
 		}
 	}
 
-	const summary =
-		lastText ||
-		(lastError ? `Subagent error: ${lastError}` : "") ||
-		fallback;
+	const summary = lastText || (lastError ? `Subagent error: ${lastError}` : "") || fallback;
 
 	return {
 		summary,
@@ -104,8 +101,7 @@ export function summarizeSessionFile(jsonlPath: string, fallback: string): Sessi
 
 /** Compact "12.3k in / 4.5k out / $0.0123" formatting for steer messages. */
 export function formatUsage(usage: SessionUsageTotals): string {
-	const k = (n: number): string =>
-		n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(Math.round(n));
+	const k = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(Math.round(n)));
 	const parts = [`${k(usage.input)} in`, `${k(usage.output)} out`];
 	if (usage.cost > 0) parts.push(`$${usage.cost.toFixed(4)}`);
 	return parts.join(" / ");

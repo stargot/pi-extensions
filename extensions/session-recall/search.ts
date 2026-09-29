@@ -54,7 +54,8 @@ export function parseQuery(input: string): Query {
 		const filter = /^(role|project|tool):(.+)$/.exec(token);
 		if (filter && !match[1]) {
 			const [, key, value] = filter;
-			if (key === "role" && (ROLES as string[]).includes(value.toLowerCase())) query.role = value.toLowerCase() as UnitRole;
+			if (key === "role" && (ROLES as string[]).includes(value.toLowerCase()))
+				query.role = value.toLowerCase() as UnitRole;
 			else if (key === "project") query.project = value;
 			else if (key === "tool") query.tool = value.toLowerCase();
 			continue;
@@ -70,7 +71,11 @@ export function extractUnits(text: string, file: string): Unit[] {
 	return parseSessionCombined(text, file)?.units ?? [];
 }
 
-export function refreshIndex(root: string, cache: IndexCache, options: { exclude?: string } = {}): { units: Unit[]; files: number; reparsed: number } {
+export function refreshIndex(
+	root: string,
+	cache: IndexCache,
+	options: { exclude?: string } = {},
+): { units: Unit[]; files: number; reparsed: number } {
 	const files = discoverSessionFiles(root).filter((f) => !options.exclude || f !== options.exclude);
 	const seen = new Set(files);
 	for (const key of [...cache.keys()]) if (!seen.has(key)) cache.delete(key);
@@ -103,7 +108,11 @@ export function refreshIndex(root: string, cache: IndexCache, options: { exclude
 	return { units, files: files.length, reparsed };
 }
 
-export function search(units: Unit[], query: Query, options: { limit?: number; snippetRadius?: number } = {}): { hits: Hit[]; total: number } {
+export function search(
+	units: Unit[],
+	query: Query,
+	options: { limit?: number; snippetRadius?: number } = {},
+): { hits: Hit[]; total: number } {
 	const limit = options.limit ?? 50;
 	const radius = options.snippetRadius ?? 60;
 	const terms = query.terms.map((t) => t.toLowerCase()).filter(Boolean);
@@ -160,7 +169,12 @@ export function search(units: Unit[], query: Query, options: { limit?: number; s
 			bm += tf * idf * (phrases.includes(term) ? 2 : 1);
 		}
 		if (!ok) continue;
-		hits.push({ unit, score: bm * recency(unit.timestamp), snippet: makeSnippet(unit.text, first, firstLen, radius), position: first });
+		hits.push({
+			unit,
+			score: bm * recency(unit.timestamp),
+			snippet: makeSnippet(unit.text, first, firstLen, radius),
+			position: first,
+		});
 	}
 
 	// Скор решает, при равенстве — свежее выше.

@@ -18,12 +18,7 @@ import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { combineSignals, isAbort, sleep } from "./http.ts";
 import { looksLikeBotChallenge, parseDdgResults } from "./parse.ts";
-import {
-	buildSearchQuery,
-	clampCount,
-	formatResults,
-	type StructuredSearchArgs,
-} from "./query.ts";
+import { buildSearchQuery, clampCount, formatResults, type StructuredSearchArgs } from "./query.ts";
 
 const USER_AGENT =
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
@@ -36,11 +31,10 @@ function searchHeaders(): Record<string, string> {
 	return {
 		"Content-Type": "application/x-www-form-urlencoded",
 		"User-Agent": USER_AGENT,
-		"Accept":
-			"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+		Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
 		"Accept-Language": "en-US,en;q=0.9",
-		"Origin": "https://html.duckduckgo.com",
-		"Referer": "https://html.duckduckgo.com/",
+		Origin: "https://html.duckduckgo.com",
+		Referer: "https://html.duckduckgo.com/",
 		"Sec-Fetch-Dest": "document",
 		"Sec-Fetch-Mode": "navigate",
 		"Sec-Fetch-Site": "same-origin",
@@ -48,10 +42,7 @@ function searchHeaders(): Record<string, string> {
 	};
 }
 
-async function fetchResultsPage(
-	query: string,
-	signal: AbortSignal | undefined,
-): Promise<string> {
+async function fetchResultsPage(query: string, signal: AbortSignal | undefined): Promise<string> {
 	const resp = await fetch("https://html.duckduckgo.com/html/", {
 		method: "POST",
 		headers: searchHeaders(),
@@ -68,10 +59,7 @@ async function fetchResultsPage(
 
 	const html = await resp.text();
 	if (looksLikeBotChallenge(html)) {
-		throw Object.assign(
-			new Error("DuckDuckGo returned a bot-challenge page instead of results."),
-			{ transient: true },
-		);
+		throw Object.assign(new Error("DuckDuckGo returned a bot-challenge page instead of results."), { transient: true });
 	}
 	return html;
 }
@@ -92,26 +80,22 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			query: Type.Optional(
 				Type.String({
-					description:
-						"Base search query as a normal string. Prefer this for the main search wording.",
+					description: "Base search query as a normal string. Prefer this for the main search wording.",
 				}),
 			),
 			exactPhrases: Type.Optional(
 				Type.Array(Type.String(), {
-					description:
-						"Exact phrases to match. Each item becomes a quoted phrase in the final query.",
+					description: "Exact phrases to match. Each item becomes a quoted phrase in the final query.",
 				}),
 			),
 			excludeTerms: Type.Optional(
 				Type.Array(Type.String(), {
-					description:
-						"Terms or phrases to exclude. Multi-word items are excluded as exact phrases.",
+					description: "Terms or phrases to exclude. Multi-word items are excluded as exact phrases.",
 				}),
 			),
 			site: Type.Optional(
 				Type.String({
-					description:
-						"Optional site/domain restriction, such as example.com or a full URL.",
+					description: "Optional site/domain restriction, such as example.com or a full URL.",
 				}),
 			),
 			count: Type.Optional(
@@ -164,39 +148,26 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 			const { count, ...searchArgs } = args as StructuredSearchArgs;
 
 			try {
 				const built = buildSearchQuery(searchArgs);
-				const display =
-					built.query.length > 70
-						? built.query.slice(0, 67) + "..."
-						: built.query;
-				const lines = [
-					theme.fg("toolTitle", theme.bold("search ")) +
-						theme.fg("accent", `"${display}"`),
-				];
+				const display = built.query.length > 70 ? built.query.slice(0, 67) + "..." : built.query;
+				const lines = [theme.fg("toolTitle", theme.bold("search ")) + theme.fg("accent", `"${display}"`)];
 				if (count && count !== 5) {
 					lines.push(theme.fg("dim", `  count: ${count}`));
 				}
 				text.setText(lines.join("\n"));
 				return text;
 			} catch {
-				text.setText(
-					theme.fg("toolTitle", theme.bold("search ")) +
-						theme.fg("error", "(invalid query)"),
-				);
+				text.setText(theme.fg("toolTitle", theme.bold("search ")) + theme.fg("error", "(invalid query)"));
 				return text;
 			}
 		},
 
 		renderResult(result, { expanded, isPartial }, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ??
-				new Text("", 0, 0);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 
 			if (isPartial) {
 				text.setText(theme.fg("warning", "Searching…"));
@@ -204,9 +175,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (context.isError) {
-				const msg =
-					result.content.find((c) => c.type === "text")?.text ||
-					"Error";
+				const msg = result.content.find((c) => c.type === "text")?.text || "Error";
 				text.setText(theme.fg("error", msg));
 				return text;
 			}
@@ -216,29 +185,17 @@ export default function (pi: ExtensionAPI) {
 				resultCount?: number;
 				durationMs?: number;
 			};
-			const elapsed =
-				details?.durationMs != null ? ` in ${(details.durationMs / 1000).toFixed(1)}s` : "";
-			const status = theme.fg(
-				"success",
-				`${details?.resultCount ?? 0} results${elapsed}`,
-			);
+			const elapsed = details?.durationMs != null ? ` in ${(details.durationMs / 1000).toFixed(1)}s` : "";
+			const status = theme.fg("success", `${details?.resultCount ?? 0} results${elapsed}`);
 			if (!expanded) {
 				text.setText(status);
 				return text;
 			}
 
-			const content =
-				result.content.find((c) => c.type === "text")?.text || "";
-			const preview =
-				content.length > 500 ? content.slice(0, 500) + "..." : content;
-			const queryLine = details?.composedQuery
-				? theme.fg("dim", `query: ${details.composedQuery}`)
-				: "";
-			text.setText(
-				[status, queryLine, theme.fg("dim", preview)]
-					.filter(Boolean)
-					.join("\n"),
-			);
+			const content = result.content.find((c) => c.type === "text")?.text || "";
+			const preview = content.length > 500 ? content.slice(0, 500) + "..." : content;
+			const queryLine = details?.composedQuery ? theme.fg("dim", `query: ${details.composedQuery}`) : "";
+			text.setText([status, queryLine, theme.fg("dim", preview)].filter(Boolean).join("\n"));
 			return text;
 		},
 	});

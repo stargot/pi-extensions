@@ -23,12 +23,7 @@
  */
 
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import {
-	BRIDGE_GRACE_MS,
-	JOB_TIMEOUT_MS,
-	MAX_CHARS,
-	type ResultMsg,
-} from "./bridge-protocol.ts";
+import { BRIDGE_GRACE_MS, JOB_TIMEOUT_MS, MAX_CHARS, type ResultMsg } from "./bridge-protocol.ts";
 
 /** Failure reasons a job can settle with; mirrors result/ok:false on the wire. */
 export type BridgeFailReason = Extract<ResultMsg, { ok: false }>["reason"];
@@ -160,9 +155,7 @@ export interface BridgeCore {
 	failAll(reason: BridgeFailReason): number;
 }
 
-type SettleOutcome =
-	| { ok: true; result: BridgeRenderResult }
-	| { ok: false; reason: BridgeFailReason };
+type SettleOutcome = { ok: true; result: BridgeRenderResult } | { ok: false; reason: BridgeFailReason };
 
 /**
  * Constant-time shared-token check (hello auth). Both strings are hashed
@@ -181,15 +174,12 @@ export function checkToken(presented: string, expected: string): boolean {
 	}
 }
 
-export function createBridgeCore(
-	config?: Partial<BridgeCoreConfig>,
-): BridgeCore {
+export function createBridgeCore(config?: Partial<BridgeCoreConfig>): BridgeCore {
 	const cfg = {
 		graceMs: config?.graceMs ?? BRIDGE_GRACE_MS,
 		jobTimeoutMs: config?.jobTimeoutMs ?? JOB_TIMEOUT_MS,
 		maxChars: config?.maxChars ?? MAX_CHARS,
-		maxInFlightPerClient:
-			config?.maxInFlightPerClient ?? MAX_IN_FLIGHT_PER_CLIENT,
+		maxInFlightPerClient: config?.maxInFlightPerClient ?? MAX_IN_FLIGHT_PER_CLIENT,
 		maxQueue: config?.maxQueue ?? MAX_QUEUE,
 		timers: config?.timers ?? defaultTimers,
 	};
@@ -294,10 +284,7 @@ export function createBridgeCore(
 		if (settleJob(job, { ok: false, reason: "timeout" })) pump();
 	}
 
-	function failedTicket(
-		url: string,
-		maxChars: number,
-	): DispatchedJob {
+	function failedTicket(url: string, maxChars: number): DispatchedJob {
 		let resolveFn!: (value: BridgeRenderResult | null) => void;
 		const promise = new Promise<BridgeRenderResult | null>((res) => {
 			resolveFn = res;

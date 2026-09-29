@@ -13,7 +13,9 @@
 		]
 	},
 	"formatter": {
-		"enabled": false
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 120
 	},
 	"assist": {
 		"enabled": false

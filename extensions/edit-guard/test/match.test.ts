@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FUZZY_THRESHOLD, MAX_FUZZY_FILE_LINES, normalize, resolveEdit, similarity, stripIndent, trimTrailing } from "../match.ts";
+import {
+	FUZZY_THRESHOLD,
+	MAX_FUZZY_FILE_LINES,
+	normalize,
+	resolveEdit,
+	similarity,
+	stripIndent,
+	trimTrailing,
+} from "../match.ts";
 
 test("normalize снимает BOM и унифицирует EOL", () => {
 	assert.equal(normalize("﻿abc"), "abc");
@@ -10,7 +18,7 @@ test("normalize снимает BOM и унифицирует EOL", () => {
 
 test("normalize прощает типографику так же, как встроенный edit (без NFKC)", () => {
 	// Умные кавычки, тире и юникод-пробелы → ASCII; обычные символы не трогаем.
-	assert.equal(normalize("“a” ‘b’ —c–d\u00A0e\u3000f"), '"a" \'b\' -c-d e f');
+	assert.equal(normalize("“a” ‘b’ —c–d\u00A0e\u3000f"), "\"a\" 'b' -c-d e f");
 	// NFKC-преобразования (меняют длину) сознательно не применяются.
 	assert.equal(normalize("ﬁ"), "ﬁ");
 });
@@ -135,7 +143,8 @@ test("resolveEdit: многострочное окно с середины фа�
 
 test("resolveEdit: fuzzy выше порога восстанавливает", () => {
 	const file = "export function calculateTotal(lst: Item[]): number {\n  return lst.reduce((s, i) => s + i.p, 0);\n}\n";
-	const needle = "export function calculateTotal(items: Item[]): number {\n  return items.reduce((s, i) => s + i.p, 0);\n}";
+	const needle =
+		"export function calculateTotal(items: Item[]): number {\n  return items.reduce((s, i) => s + i.p, 0);\n}";
 	const r = resolveEdit(file, needle);
 	assert.equal(r.status, "recovered");
 	assert.ok(r.status === "recovered");

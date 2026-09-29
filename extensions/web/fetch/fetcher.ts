@@ -29,18 +29,8 @@
  * repo rule. Both network touchpoints (fetchImpl, renderFn) are injectable
  * for tests that run without network.
  */
-import {
-	combineSignals,
-	isAbort,
-	readBodyCapped,
-	withRetry,
-	type BodyResult,
-} from "../http.ts";
-import {
-	extractArticle,
-	extractHeadingTitle,
-	isLikelyJSRendered,
-} from "./markdown.ts";
+import { combineSignals, isAbort, readBodyCapped, withRetry, type BodyResult } from "../http.ts";
+import { extractArticle, extractHeadingTitle, isLikelyJSRendered } from "./markdown.ts";
 import { extractPdf, isPdfUrl } from "./pdf.ts";
 import { assertPublicHttpUrl } from "./ssrf.ts";
 
@@ -62,8 +52,7 @@ const MIN_USEFUL_CONTENT = 500;
 
 const FETCH_HEADERS: Record<string, string> = {
 	"User-Agent": USER_AGENT,
-	"Accept":
-		"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+	Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 	"Accept-Language": "en-US,en;q=0.9",
 	"Cache-Control": "no-cache",
 	"Sec-Fetch-Dest": "document",
@@ -85,13 +74,7 @@ const FALLBACK_HINT =
  * unparseable Location, or the hop budget exhausted (see
  * fetchFollowRedirects).
  */
-export type FetchErrorKind =
-	| "ssrf"
-	| "http"
-	| "redirect"
-	| "too-large"
-	| "unsupported"
-	| "empty";
+export type FetchErrorKind = "ssrf" | "http" | "redirect" | "too-large" | "unsupported" | "empty";
 
 /**
  * Result of fetchAndExtract. Errors are values, not exceptions: `status`
@@ -146,10 +129,7 @@ export interface FetcherDeps {
 	 * honest "empty" outcome. Never throws — every failure mode (no client,
 	 * timeout, unreadable page) resolves to null.
 	 */
-	renderFn?: (
-		url: string,
-		signal: AbortSignal | undefined,
-	) => Promise<RenderResult | null>;
+	renderFn?: (url: string, signal: AbortSignal | undefined) => Promise<RenderResult | null>;
 	/** Backoff between retry attempts; default 1.5 s (short in tests). */
 	retryBackoffMs?: number;
 }
@@ -178,25 +158,18 @@ export async function fetchAndExtract(
 	let response: Response;
 	let finalUrl: string;
 	try {
-		({ response, finalUrl } = await withRetry(
-			() => fetchFollowRedirects(guarded.href, signal, fetchImpl),
-			{
-				retries: 1,
-				backoffMs,
-				isTransient: isTransientError,
-				signal,
-			},
-		));
+		({ response, finalUrl } = await withRetry(() => fetchFollowRedirects(guarded.href, signal, fetchImpl), {
+			retries: 1,
+			backoffMs,
+			isTransient: isTransientError,
+			signal,
+		}));
 	} catch (error) {
 		// Exhausted retries (429/5xx/network), a non-transient 4xx, an
 		// abort, or a redirect-phase failure (blocked/unparseable hop,
 		// hop budget exhausted). Transport-level failures never reach
 		// the render fallback (decision 5).
-		return errorOutcome(
-			url,
-			isRedirectError(error) ? "redirect" : "http",
-			errorMessage(error),
-		);
+		return errorOutcome(url, isRedirectError(error) ? "redirect" : "http", errorMessage(error));
 	}
 
 	const contentType = response.headers.get("content-type") ?? "";
@@ -211,29 +184,19 @@ export async function fetchAndExtract(
 	if (unsupported) {
 		// The body is deliberately ignored — release the socket now.
 		void response.body?.cancel().catch(() => {});
-		return errorOutcome(
-			url,
-			"unsupported",
-			`Unsupported content type: ${unsupported}`,
-			finalUrl,
-		);
+		return errorOutcome(url, "unsupported", `Unsupported content type: ${unsupported}`, finalUrl);
 	}
 
 	let body: BodyResult;
 	try {
 		// Cap chosen before a single byte is read (P0b): the stream is cut
 		// on the bytes actually seen, content-length is never consulted.
-		body = await readBodyCapped(
-			response,
-			pdf ? MAX_PDF_SIZE : MAX_RESPONSE_SIZE,
-		);
+		body = await readBodyCapped(response, pdf ? MAX_PDF_SIZE : MAX_RESPONSE_SIZE);
 	} catch (error) {
 		return errorOutcome(url, "http", errorMessage(error), finalUrl);
 	}
 	if (!body.ok) {
-		const capMb = Math.round(
-			(pdf ? MAX_PDF_SIZE : MAX_RESPONSE_SIZE) / 1024 / 1024,
-		);
+		const capMb = Math.round((pdf ? MAX_PDF_SIZE : MAX_RESPONSE_SIZE) / 1024 / 1024);
 		return errorOutcome(
 			url,
 			"too-large",
@@ -267,10 +230,7 @@ async function routeAndExtract(input: {
 	pdf: boolean;
 	buffer: Uint8Array;
 	signal: AbortSignal | undefined;
-	renderFn?: (
-		url: string,
-		signal: AbortSignal | undefined,
-	) => Promise<RenderResult | null>;
+	renderFn?: (url: string, signal: AbortSignal | undefined) => Promise<RenderResult | null>;
 }): Promise<FetchOutcome> {
 	const { url, finalUrl, contentType, pdf, buffer, signal, renderFn } = input;
 
@@ -280,9 +240,7 @@ async function routeAndExtract(input: {
 	}
 
 	const text = new TextDecoder().decode(buffer);
-	const isHtml =
-		contentType.includes("text/html") ||
-		contentType.includes("application/xhtml+xml");
+	const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
 	if (!isHtml) {
 		// Plain text (or anything textual): pass through as-is, title from
 		// the first markdown-style heading if there is one, else the URL
@@ -298,10 +256,7 @@ async function routeAndExtract(input: {
 
 	const article = await extractArticle(text, finalUrl);
 	const jsRendered = isLikelyJSRendered(text);
-	if (
-		!article ||
-		(article.markdown.length < MIN_USEFUL_CONTENT && jsRendered)
-	) {
+	if (!article || (article.markdown.length < MIN_USEFUL_CONTENT && jsRendered)) {
 		// Empty extraction or a JS-rendered shell — the only paths that
 		// consult the browser-bridge renderer (decision 5).
 		const render = (await renderFn?.(finalUrl, signal)) ?? null;
@@ -320,12 +275,7 @@ async function routeAndExtract(input: {
 				via: "browser-bridge",
 			};
 		}
-		return errorOutcome(
-			url,
-			"empty",
-			emptyExtractionMessage(jsRendered),
-			finalUrl,
-		);
+		return errorOutcome(url, "empty", emptyExtractionMessage(jsRendered), finalUrl);
 	}
 	if (article.markdown.length < MIN_USEFUL_CONTENT) {
 		// A real but thin article: succeed with a warning instead of
@@ -381,35 +331,24 @@ async function fetchFollowRedirects(
 			});
 		} catch (error) {
 			if (isAbort(error)) throw error;
-			throw Object.assign(
-				new Error(`${errorMessage(error)} (network error)`),
-				{ transient: true },
-			);
+			throw Object.assign(new Error(`${errorMessage(error)} (network error)`), { transient: true });
 		}
 
-		const location = isRedirectStatus(response.status)
-			? response.headers.get("location")
-			: null;
+		const location = isRedirectStatus(response.status) ? response.headers.get("location") : null;
 		if (location) {
 			if (hop >= MAX_REDIRECT_HOPS - 1) {
-				throw redirectError(
-					`Too many redirects (hop budget ${MAX_REDIRECT_HOPS} exhausted)`,
-				);
+				throw redirectError(`Too many redirects (hop budget ${MAX_REDIRECT_HOPS} exhausted)`);
 			}
 			let nextUrl: URL;
 			try {
 				nextUrl = new URL(location, currentUrl);
 			} catch {
-				throw redirectError(
-					`Redirect to an invalid URL: ${location}`,
-				);
+				throw redirectError(`Redirect to an invalid URL: ${location}`);
 			}
 			try {
 				nextUrl = assertPublicHttpUrl(nextUrl.href);
 			} catch (error) {
-				throw redirectError(
-					`Redirect blocked by the SSRF guard: ${errorMessage(error)}`,
-				);
+				throw redirectError(`Redirect blocked by the SSRF guard: ${errorMessage(error)}`);
 			}
 			// The 3xx body is never read — release the socket now.
 			void response.body?.cancel().catch(() => {});
@@ -421,10 +360,9 @@ async function fetchFollowRedirects(
 			// Release the socket instead of holding it until GC (withRetry
 			// may or may not come back to this response).
 			void response.body?.cancel().catch(() => {});
-			throw Object.assign(
-				new Error(`HTTP ${response.status}: ${response.statusText}`),
-				{ transient: response.status === 429 || response.status >= 500 },
-			);
+			throw Object.assign(new Error(`HTTP ${response.status}: ${response.statusText}`), {
+				transient: response.status === 429 || response.status >= 500,
+			});
 		}
 		return { response, finalUrl: currentUrl };
 	}
@@ -494,12 +432,7 @@ function titleFromUrl(url: string): string | null {
 	}
 }
 
-function errorOutcome(
-	url: string,
-	errorKind: FetchErrorKind,
-	message: string,
-	finalUrl = url,
-): FetchOutcome {
+function errorOutcome(url: string, errorKind: FetchErrorKind, message: string, finalUrl = url): FetchOutcome {
 	return {
 		status: "error",
 		url,

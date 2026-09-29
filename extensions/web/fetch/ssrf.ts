@@ -37,9 +37,7 @@ export function assertPublicHttpUrl(url: string): URL {
 	}
 
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-		throw new Error(
-			`Blocked ${url}: protocol "${parsed.protocol}" — only http/https URLs are allowed`,
-		);
+		throw new Error(`Blocked ${url}: protocol "${parsed.protocol}" — only http/https URLs are allowed`);
 	}
 
 	// WHATWG tolerates an empty host for special schemes ("http:///path"
@@ -87,9 +85,7 @@ function blockedHostReason(hostname: string): string | null {
  * shorthand ("127.1") and hex/octal forms to dotted-quad by the time we
  * get here, so strict parsing is enough — this is just defense in depth.
  */
-function parseDottedQuad(
-	hostname: string,
-): readonly [number, number, number, number] | null {
+function parseDottedQuad(hostname: string): readonly [number, number, number, number] | null {
 	const parts = hostname.split(".");
 	if (parts.length !== 4) {
 		return null;
@@ -109,9 +105,7 @@ function parseDottedQuad(
 }
 
 /** Block reason for an IPv4 literal, null when allowed. */
-function ipv4BlockedReason(
-	[a, b]: readonly [number, number, number, number],
-): string | null {
+function ipv4BlockedReason([a, b]: readonly [number, number, number, number]): string | null {
 	if (a === 127) return "a loopback address (127.0.0.0/8)";
 	// 172.16.0.0/12 is NOT the whole 172.x — strictly 172.16 through 172.31.
 	if (a === 172 && b >= 16 && b <= 31) return "a private address (172.16.0.0/12)";
@@ -137,16 +131,8 @@ function ipv6BlockedReason(literal: string): string | null {
 	}
 
 	// IPv4-mapped (::ffff:a.b.c.d): the embedded IPv4 gets the same rules.
-	if (
-		pieces.slice(0, 5).every((piece) => piece === 0) &&
-		pieces[5] === 0xffff
-	) {
-		const v4: [number, number, number, number] = [
-			pieces[6] >> 8,
-			pieces[6] & 0xff,
-			pieces[7] >> 8,
-			pieces[7] & 0xff,
-		];
+	if (pieces.slice(0, 5).every((piece) => piece === 0) && pieces[5] === 0xffff) {
+		const v4: [number, number, number, number] = [pieces[6] >> 8, pieces[6] & 0xff, pieces[7] >> 8, pieces[7] & 0xff];
 		const reason = ipv4BlockedReason(v4);
 		return reason ? `an IPv4-mapped address (${literal} → ${reason})` : null;
 	}

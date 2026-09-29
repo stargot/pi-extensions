@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildLedger, cachePercent, dayOf, groupRows, inPeriod, parseArgs, parseSessionText, periodStart, projectName, topSessions } from "../ledger.ts";
+import {
+	buildLedger,
+	cachePercent,
+	dayOf,
+	groupRows,
+	inPeriod,
+	parseArgs,
+	parseSessionText,
+	periodStart,
+	projectName,
+	topSessions,
+} from "../ledger.ts";
 import { fmtCost, fmtTokens, renderLedger, renderTable, summaryLine } from "../report.ts";
 
 const usage = (input: number, output: number, cacheRead = 0, cost = 0.01) => ({
@@ -18,7 +29,13 @@ function sessionText(opts: { cwd?: string; start?: string; model?: string } = {}
 	const lines = [
 		{ type: "session", version: 3, id: "s1", timestamp: start, cwd: opts.cwd ?? "C:\\Proj\\alpha" },
 		{ type: "model_change", id: "a", parentId: null, timestamp: start, provider: "zai", modelId: model },
-		{ type: "message", id: "u1", parentId: "a", timestamp: start, message: { role: "user", content: [{ type: "text", text: "  fix   the bug in auth  " }] } },
+		{
+			type: "message",
+			id: "u1",
+			parentId: "a",
+			timestamp: start,
+			message: { role: "user", content: [{ type: "text", text: "  fix   the bug in auth  " }] },
+		},
 		{
 			type: "message",
 			id: "m1",
@@ -33,7 +50,19 @@ function sessionText(opts: { cwd?: string; start?: string; model?: string } = {}
 				stopReason: "toolUse",
 			},
 		},
-		{ type: "message", id: "t1", parentId: "m1", timestamp: "2026-09-05T12:00:06.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "x" }], isError: false } },
+		{
+			type: "message",
+			id: "t1",
+			parentId: "m1",
+			timestamp: "2026-09-05T12:00:06.000Z",
+			message: {
+				role: "toolResult",
+				toolCallId: "c1",
+				toolName: "read",
+				content: [{ type: "text", text: "x" }],
+				isError: false,
+			},
+		},
 		{
 			type: "message",
 			id: "m2",
@@ -48,15 +77,52 @@ function sessionText(opts: { cwd?: string; start?: string; model?: string } = {}
 				stopReason: "toolUse",
 			},
 		},
-		{ type: "message", id: "t2", parentId: "m2", timestamp: "2026-09-05T12:00:11.000Z", message: { role: "toolResult", toolCallId: "c2", toolName: "edit", content: [{ type: "text", text: "oldText not found" }], isError: true } },
-		{ type: "compaction", id: "k1", parentId: "t2", timestamp: "2026-09-05T12:00:12.000Z", summary: "s", firstKeptEntryId: "m2", tokensBefore: 3000, usage: usage(500, 100, 0, 0.005) },
-		{ type: "branch_summary", id: "b1", parentId: "k1", timestamp: "2026-09-05T12:00:13.000Z", fromId: "u1", summary: "branch", usage: usage(300, 20, 0, 0.002) },
+		{
+			type: "message",
+			id: "t2",
+			parentId: "m2",
+			timestamp: "2026-09-05T12:00:11.000Z",
+			message: {
+				role: "toolResult",
+				toolCallId: "c2",
+				toolName: "edit",
+				content: [{ type: "text", text: "oldText not found" }],
+				isError: true,
+			},
+		},
+		{
+			type: "compaction",
+			id: "k1",
+			parentId: "t2",
+			timestamp: "2026-09-05T12:00:12.000Z",
+			summary: "s",
+			firstKeptEntryId: "m2",
+			tokensBefore: 3000,
+			usage: usage(500, 100, 0, 0.005),
+		},
+		{
+			type: "branch_summary",
+			id: "b1",
+			parentId: "k1",
+			timestamp: "2026-09-05T12:00:13.000Z",
+			fromId: "u1",
+			summary: "branch",
+			usage: usage(300, 20, 0, 0.002),
+		},
 		{
 			type: "message",
 			id: "m3",
 			parentId: "k1",
 			timestamp: "2026-09-06T01:00:00.000Z",
-			message: { role: "assistant", content: [{ type: "text", text: "done" }], provider: "zai", model, usage: usage(100, 10, 0, 0.001), stopReason: "error", errorMessage: "boom" },
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "done" }],
+				provider: "zai",
+				model,
+				usage: usage(100, 10, 0, 0.001),
+				stopReason: "error",
+				errorMessage: "boom",
+			},
 		},
 		{ type: "session_info", id: "n1", parentId: "m3", timestamp: "2026-09-06T01:00:01.000Z", name: "Auth fix" },
 	];
@@ -120,7 +186,10 @@ test("cachePercent, projectName, dayOf, periods", () => {
 test("buildLedger filters by period and project, groupRows groups correctly", () => {
 	const now = Date.parse("2026-09-06T10:00:00.000Z");
 	const a = parseSessionText(sessionText(), "/a")!;
-	const b = parseSessionText(sessionText({ cwd: "/home/u/beta", start: "2026-07-01T00:00:00.000Z", model: "glm-5.2" }), "/b")!;
+	const b = parseSessionText(
+		sessionText({ cwd: "/home/u/beta", start: "2026-07-01T00:00:00.000Z", model: "glm-5.2" }),
+		"/b",
+	)!;
 	// b заканчивается 2026-09-06 (последняя запись), поэтому попадает в 7d несмотря на старый старт
 	const ledger = buildLedger([a, b], "7d", { now });
 	assert.equal(ledger.sessions.length, 2);
@@ -166,7 +235,10 @@ test("report renders tables and summary without throwing", () => {
 	}
 	const empty = renderLedger(buildLedger([], "today", { now }), "project", 80);
 	assert.ok(empty.some((l) => l.includes("No sessions")));
-	const table = renderTable(groupRows(ledger, "project"), "project", ledger.total, 100, { fg: (_c, t) => t, bold: (t) => `*${t}*` });
+	const table = renderTable(groupRows(ledger, "project"), "project", ledger.total, 100, {
+		fg: (_c, t) => t,
+		bold: (t) => `*${t}*`,
+	});
 	assert.ok(table.at(-1)?.startsWith("*total"));
 	assert.equal(fmtTokens(1500), "1.50K");
 	assert.equal(fmtCost(0), "$0");

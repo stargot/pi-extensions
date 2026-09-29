@@ -66,17 +66,14 @@ let resolveRelativeUrlsRule: TurndownRule | null = null;
 function buildResolveRelativeUrlsRule(): TurndownRule {
 	return {
 		filter: (node) =>
-			(node.nodeName === "A" && !!node.getAttribute("href")) ||
-			(node.nodeName === "IMG" && !!node.getAttribute("src")),
+			(node.nodeName === "A" && !!node.getAttribute("href")) || (node.nodeName === "IMG" && !!node.getAttribute("src")),
 		replacement: (content, node) => {
 			const baseUrl = ruleContext.baseUrl;
 			if (node.nodeName === "A") {
 				const href = resolveAttr(node.getAttribute("href"), baseUrl);
 				if (!href) return content;
 				const title = cleanAttribute(node.getAttribute("title"));
-				return title
-					? `[${content}](${href} "${title}")`
-					: `[${content}](${href})`;
+				return title ? `[${content}](${href} "${title}")` : `[${content}](${href})`;
 			}
 			const src = resolveAttr(node.getAttribute("src"), baseUrl);
 			if (!src) return "";
@@ -105,10 +102,7 @@ async function getTurndown(): Promise<TurndownConverter> {
  * fallbacks). Relative link and image URLs in the article are resolved
  * against baseUrl — the response's final URL after redirects.
  */
-export async function extractArticle(
-	html: string,
-	baseUrl: string,
-): Promise<ExtractedArticle | null> {
+export async function extractArticle(html: string, baseUrl: string): Promise<ExtractedArticle | null> {
 	const { parseHTML } = await import("linkedom");
 	const { Readability } = await import("@mozilla/readability");
 

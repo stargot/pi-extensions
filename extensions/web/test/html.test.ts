@@ -74,9 +74,7 @@ test("attributes: names are case-insensitive, tag names lowercase", () => {
 });
 
 test("selector tags are case-insensitive, class matching is case-sensitive (DOM parity)", () => {
-	const doc = parseHtml(
-		`<DIV CLASS="Result  DEEP"></DIV><div class="result deep"></div>`,
-	);
+	const doc = parseHtml(`<DIV CLASS="Result  DEEP"></DIV><div class="result deep"></div>`);
 	assert.equal(doc.querySelectorAll("div").length, 2); // tag case-insensitive
 	assert.equal(doc.querySelectorAll("DIV.Result").length, 1); // class: exact match
 	assert.equal(doc.querySelectorAll("div.result").length, 1);
@@ -84,7 +82,9 @@ test("selector tags are case-insensitive, class matching is case-sensitive (DOM 
 });
 
 test("comments, doctype and processing instructions are skipped", () => {
-	const doc = parseHtml(`<!DOCTYPE html><!-- a > "quoted" comment --><?xml version="1.0"?><div class="result"><a class="result__a" href="https://c.test">ok</a></div>`);
+	const doc = parseHtml(
+		`<!DOCTYPE html><!-- a > "quoted" comment --><?xml version="1.0"?><div class="result"><a class="result__a" href="https://c.test">ok</a></div>`,
+	);
 	assert.equal(doc.querySelectorAll("div.result").length, 1);
 	assert.equal(doc.querySelector("a")?.textContent, "ok");
 });
@@ -120,7 +120,18 @@ test("entities: decode in text but not in script/style raw content", () => {
 });
 
 test("truncated input never throws", () => {
-	for (const chunk of ["<div class='a", "<div class='a'", "<!-- unterminated", "<script>var x", "<a href=\"x", "</div", "<!DOCTY", "<", "</", "<!-->x"]) {
+	for (const chunk of [
+		"<div class='a",
+		"<div class='a'",
+		"<!-- unterminated",
+		"<script>var x",
+		'<a href="x',
+		"</div",
+		"<!DOCTY",
+		"<",
+		"</",
+		"<!-->x",
+	]) {
 		assert.doesNotThrow(() => parseHtml(chunk));
 	}
 });
