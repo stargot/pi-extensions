@@ -113,4 +113,4 @@ pi пишет JSONL-транскрипт каждой сессии в `~/.pi/age
 
 ## Лицензия
 
-[MIT](LICENSE) © Ivan Sinyavskiy
+[MIT](../../LICENSE) © Ivan Sinyavskiy

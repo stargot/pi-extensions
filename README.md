@@ -44,3 +44,7 @@ npm run trace:web    # session-trace, веб-вьюер
 ```
 
 Подробнее — README внутри каждой папки в `extensions/`.
+
+## Лицензия
+
+[MIT](LICENSE) © Ivan Sinyavskiy. Атрибуция заимствованного кода — в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

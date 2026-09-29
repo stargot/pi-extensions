@@ -2,6 +2,7 @@
 	"name": "pi-extensions",
 	"version": "0.3.0",
 	"private": true,
+	"license": "MIT",
 	"description": "Personal pi package: extensions for the pi coding agent",
 	"type": "module",
 	"keywords": [
