@@ -7,7 +7,8 @@
  * Без --file берётся самая свежая сессия из ~/.pi/agent/sessions (или $PI_CODING_AGENT_DIR).
  * POST /load {"file": "..."} переключает файл без перезапуска; запросы с заголовком Origin
  * отвергаются — чужая страница в браузере не может дёргать этот эндпоинт.
- * Слушает только 127.0.0.1. Ctrl+C — остановка.
+ * Слушает только 127.0.0.1 и отвечает 403 на любой Host кроме loopback (DNS rebinding).
+ * Ctrl+C — остановка.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -74,7 +75,30 @@ function send(res: ServerResponse, code: number, body: string, type = "text/plai
 	res.end(body);
 }
 
+/** Предел тела POST /load: там только путь к файлу. */
+const MAX_LOAD_BODY = 64 * 1024;
+
+/**
+ * Host указывает на loopback. Защита от DNS rebinding: чужой домен,
+ * перерезолвленный в 127.0.0.1, приходит со своим Host — и тогда сверка
+ * Origin с Host ничего не ловит, а /session.jsonl читается кросс-доменно.
+ */
+export function isLoopbackHost(host: string | undefined): boolean {
+	if (!host) return false;
+	let hostname: string;
+	try {
+		hostname = new URL(`http://${host}`).hostname;
+	} catch {
+		return false;
+	}
+	return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
+}
+
 function handle(req: IncomingMessage, res: ServerResponse, state: { file?: string }): void {
+	if (!isLoopbackHost(req.headers.host)) {
+		send(res, 403, "forbidden");
+		return;
+	}
 	const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
 	if (req.method === "POST" && url.pathname === "/load") {
@@ -86,10 +110,17 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 			return;
 		}
 		let body = "";
+		let tooLarge = false;
 		req.on("data", (chunk) => {
+			if (tooLarge) return;
 			body += chunk;
+			if (body.length > MAX_LOAD_BODY) tooLarge = true;
 		});
 		req.on("end", () => {
+			if (tooLarge) {
+				send(res, 413, "payload too large");
+				return;
+			}
 			try {
 				const file = (JSON.parse(body) as { file?: string }).file;
 				if (typeof file !== "string" || !file.endsWith(".jsonl") || !existsSync(file)) throw new Error("bad file");

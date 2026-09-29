@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { request } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { newestSession, startServer } from "../web/serve.ts";
+import { isLoopbackHost, newestSession, startServer } from "../web/serve.ts";
 
 test("serve.ts serves static files and the session file, /load switches it", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "trace-web-"));
@@ -40,6 +41,57 @@ test("serve.ts serves static files and the session file, /load switches it", asy
 		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+/** GET с произвольным Host: fetch не даёт его переопределить. */
+function getWithHost(port: number, path: string, host: string): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const req = request({ host: "127.0.0.1", port, path, headers: { host } }, (res) => {
+			res.resume();
+			resolve(res.statusCode ?? 0);
+		});
+		req.on("error", reject);
+		req.end();
+	});
+}
+
+test("serve.ts rejects a non-loopback Host (DNS rebinding) and an oversized /load body", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-host-"));
+	try {
+		const a = join(dir, "a.jsonl");
+		writeFileSync(a, '{"type":"session","version":3,"id":"a","timestamp":"2026-09-05T12:00:00.000Z","cwd":"/x"}\n');
+		const handle = await startServer({ file: a, port: 0 });
+		try {
+			assert.equal(await getWithHost(handle.port, "/session.jsonl", `evil.example:${handle.port}`), 403);
+			assert.equal(await getWithHost(handle.port, "/session.jsonl", `localhost:${handle.port}`), 200);
+
+			const big = await fetch(`${handle.url}load`, {
+				method: "POST",
+				body: JSON.stringify({ file: "x".repeat(70 * 1024) }),
+			});
+			assert.equal(big.status, 413);
+		} finally {
+			await handle.close();
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("isLoopbackHost accepts only loopback names, with or without a port", () => {
+	for (const host of ["127.0.0.1:8787", "localhost:8787", "LOCALHOST", "[::1]:8787", "127.0.0.1"]) {
+		assert.equal(isLoopbackHost(host), true, host);
+	}
+	for (const host of [
+		undefined,
+		"",
+		"evil.example:8787",
+		"127.0.0.1.evil.example",
+		"localhost.evil.example",
+		"10.0.0.1",
+	]) {
+		assert.equal(isLoopbackHost(host), false, String(host));
 	}
 });
 
