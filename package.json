@@ -34,7 +34,7 @@
 	},
 	"pi": {
 		"extensions": [
-			"./extensions/ask-user-question.ts",
+			"./extensions/ask-user-question/index.ts",
 			"./extensions/context-inspector/index.ts",
 			"./extensions/edit-guard/index.ts",
 			"./extensions/prompt-snippets/index.ts",

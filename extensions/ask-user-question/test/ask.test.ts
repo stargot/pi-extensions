@@ -14,7 +14,7 @@ import {
 	sortAnswers,
 	unavailableResult,
 	type AskAnswer,
-} from "../../ask-user-question.ts";
+} from "../index.ts";
 
 const option = (index: number, label: string): AskAnswer => ({ type: "option", label, value: label, index });
 
