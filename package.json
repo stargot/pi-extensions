@@ -43,6 +43,7 @@
 			"./extensions/session-ledger/index.ts",
 			"./extensions/session-recall/index.ts",
 			"./extensions/session-trace/index.ts",
+			"./extensions/skill-auditor/index.ts",
 			"./extensions/subagents/index.ts",
 			"./extensions/web/index.ts"
 		]
