@@ -37,6 +37,7 @@
 			"./extensions/ask-user-question/index.ts",
 			"./extensions/context-inspector/index.ts",
 			"./extensions/edit-guard/index.ts",
+			"./extensions/payload-capture/index.ts",
 			"./extensions/prompt-snippets/index.ts",
 			"./extensions/quiz/index.ts",
 			"./extensions/session-handoff/index.ts",
