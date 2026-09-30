@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<!--
+	quiz web page (step 4 of the web-quiz plan). Static shell only: app.js does
+	all rendering and polls api/v1/state (RELATIVE path — the document URL ends
+	in ?t=<token>, and every fetch re-appends it explicitly). CDN libraries are
+	loaded dynamically from app.js with pinned versions + SRI so their failure
+	is detectable and degrades to plain text instead of a broken page.
+
+	CSP (served by server.ts): no inline scripts, inline <style> allowed.
+-->
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>quiz</title>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--ok: #1a7f37;
+				--bad: #cf222e;
+				--warn: #9a6700;
+				--dim: #6e7781;
+				--accent: #0969da;
+				--border: #d0d7de;
+				--soft: #f6f8fa;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--ok: #3fb950;
+					--bad: #f85149;
+					--warn: #d29922;
+					--dim: #8b949e;
+					--accent: #58a6ff;
+					--border: #30363d;
+					--soft: #161b22;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 24px 12px 48px;
+				display: flex;
+				justify-content: center;
+				font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+				line-height: 1.55;
+				background: Canvas;
+				color: CanvasText;
+			}
+			main {
+				width: 100%;
+				max-width: 720px;
+			}
+			#banner {
+				border: 1px solid var(--warn);
+				border-radius: 6px;
+				background: color-mix(in srgb, var(--warn) 10%, transparent);
+				color: var(--warn);
+				padding: 8px 12px;
+				margin: 0 0 16px;
+				font-size: 0.9em;
+			}
+			#notice {
+				color: var(--bad);
+				margin: 12px 0 0;
+				font-size: 0.9em;
+			}
+			h1 {
+				font-size: 1.35em;
+				margin: 8px 0;
+				border-bottom: 1px solid var(--border);
+				padding-bottom: 10px;
+			}
+			#status {
+				color: var(--dim);
+				font-style: italic;
+			}
+			#context {
+				color: var(--dim);
+				margin-bottom: 8px;
+			}
+			#options {
+				border: 0;
+				padding: 0;
+				margin: 16px 0 4px;
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+			.option,
+			.dont-know {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 8px 12px;
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			.option:hover,
+			.dont-know:hover {
+				background: var(--soft);
+			}
+			.opt-num {
+				color: var(--dim);
+				font-variant-numeric: tabular-nums;
+				flex: none;
+			}
+			.opt-body {
+				flex: 1;
+				min-width: 0;
+			}
+			.opt-body > p {
+				margin: 0 0 6px;
+			}
+			.opt-body > p:last-child {
+				margin-bottom: 0;
+			}
+			.dont-know {
+				margin-top: 12px;
+				color: var(--warn);
+				background: none;
+			}
+			.note-label {
+				display: block;
+				margin: 18px 0 6px;
+				color: var(--dim);
+				font-size: 0.9em;
+			}
+			textarea {
+				width: 100%;
+				resize: vertical;
+				min-height: 60px;
+				font: inherit;
+				color: inherit;
+				background: Canvas;
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				padding: 8px 10px;
+			}
+			button {
+				margin-top: 14px;
+				font: inherit;
+				padding: 8px 22px;
+				border-radius: 6px;
+				border: 1px solid var(--accent);
+				background: var(--accent);
+				color: white;
+				cursor: pointer;
+			}
+			button:disabled {
+				opacity: 0.45;
+				cursor: not-allowed;
+			}
+			#feedback {
+				margin-top: 8px;
+			}
+			.verdict {
+				font-weight: 600;
+				font-size: 1.1em;
+				margin: 14px 0 6px;
+			}
+			.verdict.ok {
+				color: var(--ok);
+			}
+			.verdict.bad {
+				color: var(--bad);
+			}
+			.verdict.dontknow {
+				color: var(--warn);
+			}
+			.fb-option {
+				display: flex;
+				gap: 10px;
+				align-items: baseline;
+				padding: 6px 12px;
+				border-left: 3px solid var(--border);
+				margin: 4px 0;
+			}
+			.fb-option .mark {
+				flex: none;
+				width: 1.2em;
+				font-weight: 700;
+			}
+			.fb-option.hit {
+				border-left-color: var(--ok);
+			}
+			.fb-option.hit .mark {
+				color: var(--ok);
+			}
+			.fb-option.miss {
+				border-left-color: var(--bad);
+			}
+			.fb-option.miss .mark {
+				color: var(--bad);
+			}
+			.fb-option.dim-opt {
+				color: var(--dim);
+			}
+			.correct-line {
+				color: var(--dim);
+				margin: 10px 0 0;
+			}
+			.note-line {
+				color: var(--dim);
+				margin: 10px 0 0;
+			}
+			.explanation {
+				margin: 14px 0 0;
+				padding: 10px 14px;
+				border-left: 3px solid var(--accent);
+				background: var(--soft);
+				border-radius: 0 6px 6px 0;
+			}
+			.explanation > p {
+				margin: 0 0 6px;
+			}
+			.explanation > p:last-child {
+				margin-bottom: 0;
+			}
+			#footer {
+				color: var(--dim);
+				font-size: 0.85em;
+				margin-top: 28px;
+			}
+			.mermaid {
+				margin: 10px 0;
+				display: flex;
+				justify-content: center;
+			}
+			.mermaid svg {
+				max-width: 100%;
+				height: auto;
+			}
+			code:not(.language-mermaid) {
+				background: var(--soft);
+				border-radius: 4px;
+				padding: 1px 5px;
+			}
+			pre code {
+				display: block;
+				padding: 10px 12px;
+				overflow-x: auto;
+			}
+			blockquote {
+				border-left: 3px solid var(--border);
+				margin: 8px 0;
+				padding: 2px 14px;
+				color: var(--dim);
+			}
+			table {
+				border-collapse: collapse;
+				margin: 8px 0;
+			}
+			th,
+			td {
+				border: 1px solid var(--border);
+				padding: 4px 10px;
+			}
+			.katex-display {
+				overflow-x: auto;
+				overflow-y: hidden;
+			}
+			.dim {
+				color: var(--dim);
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<div id="banner" hidden></div>
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled dynamically by app.js -->
+		<h1 id="question" hidden></h1>
+			<div id="context" class="rich" hidden></div>
+			<p id="status">Connecting…</p>
+			<p id="notice" hidden></p>
+			<form id="form" hidden>
+				<fieldset id="options"></fieldset>
+				<label class="dont-know">
+					<input type="checkbox" id="dont-know" />
+					<span id="dont-know-label">I don't know</span>
+				</label>
+				<label class="note-label" for="note">Note (optional — reaches the agent only when non-empty)</label>
+				<textarea id="note" rows="3"></textarea>
+				<button type="submit" id="submit" disabled>Submit</button>
+			</form>
+			<section id="feedback" hidden></section>
+			<p id="footer" hidden>This tab is reused: the next question appears here automatically.</p>
+		</main>
+		<script src="app.js"></script>
+	</body>
+</html>

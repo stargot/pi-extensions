@@ -1,4 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { spawn } from "node:child_process";
+import type { AgentToolUpdateCallback, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	Editor,
 	type EditorTheme,
@@ -9,6 +10,8 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { buildPendingState } from "./web/payload.ts";
+import { DEFAULT_TIMEOUT_MS, startQuizServer, type QuizServerHandle } from "./web/server.ts";
 
 // ────────────────────────────────────────────────────────────────────────────
 // quiz — a GRADED sibling of ask_user_question.
@@ -118,6 +121,12 @@ const QuizParams = Type.Object({
 		Type.Boolean({
 			description:
 				"Defaults to true: options are randomly reordered before display so the correct answer isn't always in the same position. Set to false only when option order is meaningful (e.g. ordered numeric values, or an 'All/None of the above' option that must stay last).",
+		}),
+	),
+	web: Type.Optional(
+		Type.Boolean({
+			description:
+				"Set to true to pose this question on a local browser page that renders Markdown, LaTeX math, and mermaid diagrams (which the TUI popup cannot show) instead of the TUI popup. Honored when the web surface is enabled (/quiz-web on, or auto + web: true); falls back to the TUI if the local server cannot start. Same answer contract either way.",
 		}),
 	),
 });
@@ -282,6 +291,56 @@ export function cancelledResult(question: string, mode: QuizMode, correctIndices
 			message,
 		),
 	};
+}
+
+// Web question that expired (server timer fired) — reported like a cancellation
+// (status "cancelled", warning render) but with a message that names the knob.
+export function webTimeoutResult(question: string, mode: QuizMode, correctIndices: number[], context?: string) {
+	const message = "quiz: timed out waiting for the web answer (see PI_QUIZ_WEB_TIMEOUT_MS)";
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: buildStructuredResult(
+			"cancelled",
+			question,
+			mode,
+			[],
+			correctIndices,
+			undefined,
+			undefined,
+			context,
+			message,
+		),
+	};
+}
+
+// Web-question timeout window: PI_QUIZ_WEB_TIMEOUT_MS in milliseconds, 0 = no
+// timeout; invalid values fall back to the 10-minute default. Read ONCE, when
+// the session's quiz server starts (it arms the server-internal per-question
+// timer) — changing the env var mid-session requires a new session to apply.
+export function webTimeoutMs(): number {
+	const raw = process.env.PI_QUIZ_WEB_TIMEOUT_MS;
+	if (raw === undefined || raw.trim() === "") return DEFAULT_TIMEOUT_MS;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_TIMEOUT_MS;
+	return Math.floor(parsed);
+}
+
+// Best-effort browser autostart (Windows). Failure is silent by design: the
+// URL is always duplicated into onUpdate/transcript, so the user can open it
+// manually.
+export function openBrowser(url: string): void {
+	try {
+		const child = spawn("cmd", ["/c", "start", "", url], {
+			detached: true,
+			stdio: "ignore",
+			windowsHide: true,
+		});
+		// Without an 'error' listener a spawn failure would crash the process.
+		child.on("error", () => {});
+		child.unref();
+	} catch {
+		// best-effort: no browser, no problem — URL is in the transcript
+	}
 }
 
 export function unavailableResult(
@@ -937,6 +996,163 @@ function withUILock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export default function quiz(pi: ExtensionAPI) {
+	// ── web surface state (steps 5–6 of the web-quiz plan) ────────────────
+	// One server per session, one active web question at a time.
+	let webSurface: "auto" | "on" | "off" = "auto";
+	let quizServer: QuizServerHandle | undefined;
+	let quizServerStarting: Promise<QuizServerHandle> | undefined;
+	// FIFO for web questions: the server holds ONE active question, so parallel
+	// web quiz calls queue here — deliberately NOT the shared TUI ui-lock, the
+	// web path must stay usable in headless mode and alongside TUI popups.
+	let webTrack: Promise<unknown> = Promise.resolve();
+
+	// Mode resolution: the /quiz-web switch wins ("on"/"off" force the surface),
+	// "auto" (the default) uses the web only when the tool call passes web: true.
+	function resolveWebSurface(explicit: boolean | undefined): boolean {
+		if (webSurface === "on") return true;
+		if (webSurface === "off") return false;
+		return explicit === true;
+	}
+
+	function withWebTrack<T>(fn: () => Promise<T>): Promise<T> {
+		const run = webTrack.then(fn, fn);
+		webTrack = run.catch(() => {});
+		return run;
+	}
+
+	/** Start the quiz web server once per session; reuse it afterwards. */
+	async function ensureQuizServer(): Promise<{ handle: QuizServerHandle; started: boolean }> {
+		if (quizServer) return { handle: quizServer, started: false };
+		if (!quizServerStarting) {
+			quizServerStarting = startQuizServer({ timeoutMs: webTimeoutMs() }).then((handle) => {
+				quizServer = handle;
+				return handle;
+			});
+			// Startup can fail (e.g. a port policy): reset the memo so a later
+			// quiz call retries instead of caching the rejection forever. The
+			// rejection itself is consumed by the caller (TUI fallback).
+			quizServerStarting.catch(() => {
+				quizServerStarting = undefined;
+			});
+		}
+		const handle = await quizServerStarting;
+		return { handle, started: true };
+	}
+
+	/**
+	 * The web branch of execute(): arms the shared server with the question,
+	 * waits for the page's answer, grades via the same buildResult as the TUI.
+	 * Returns null when the web surface is unavailable (server start failed or
+	 * armed-conflict) — the caller falls back to the TUI path.
+	 */
+	function runWebQuestion(args: {
+		question: string;
+		context: string | undefined;
+		mode: QuizMode;
+		options: QuizOption[];
+		correctIndices: number[];
+		explanation: string | undefined;
+		signal: AbortSignal | undefined;
+		onUpdate: AgentToolUpdateCallback | undefined;
+	}) {
+		return withWebTrack(async () => {
+			const { question, context, mode, options, correctIndices, explanation, signal, onUpdate } = args;
+			let handle: QuizServerHandle;
+			let started: boolean;
+			try {
+				({ handle, started } = await ensureQuizServer());
+			} catch {
+				return null;
+			}
+			// Re-check AFTER the FIFO wait and server start: a call aborted while
+			// queued must not arm its question — waitForAnswer would resolve null
+			// instantly (aborted short-circuit) WITHOUT disarming, leaving the
+			// question pending with no waiter ("zombie": blocks the server until
+			// the timeout — or forever at 0 — and every later web question falls
+			// back to the TUI on the armed-conflict path). After this point an
+			// abort is safe: waitForAnswer's abort listener disarms properly.
+			if (signal?.aborted) {
+				return cancelledResult(question, mode, correctIndices, context);
+			}
+
+			const armed = handle.setQuestion(buildPendingState(question, context, mode, options), {
+				correctIndices,
+				explanation,
+			});
+			if (!armed.ok) {
+				// Unreachable under the FIFO (one question at a time); degrade to
+				// the TUI instead of hanging if it ever happens anyway.
+				return null;
+			}
+
+			// Browser autostart is best-effort and once per SERVER, not per
+			// question: the page polls and picks up every following question by
+			// itself (the plan explicitly forbids a tab per question).
+			if (started) openBrowser(handle.url);
+
+			// The URL MUST reach the transcript: autostart can silently fail in
+			// nonstandard environments, this line is the guaranteed channel (the
+			// token in the URL is acceptable on loopback; renderCall never prints it).
+			onUpdate?.({
+				content: [{ type: "text", text: `quiz web: answer at ${handle.url}` }],
+				details: { web: true, url: handle.url, options: options.map((o, i) => ({ index: i + 1, label: o.label })) },
+			});
+
+			// pi delivers interrupt (Esc) as a live AbortSignal (verified against
+			// the built-in tools' usage) — the server listens for abort, disarms
+			// the question and resolves null. Timeout: the server's internal
+			// per-question timer (webTimeoutMs) resolves null the same way.
+			const response = await handle.waitForAnswer(signal);
+			if (!response) {
+				return signal?.aborted
+					? cancelledResult(question, mode, correctIndices, context)
+					: webTimeoutResult(question, mode, correctIndices, context);
+			}
+
+			// The page only knows {index,label} (option values never cross the
+			// wire before the answer); restore the real values by display index
+			// so the result contract is identical to the TUI path.
+			const answers = response.answers.map((answer) => {
+				const option = options[answer.index - 1];
+				return option ? { ...answer, label: option.label, value: option.value } : answer;
+			});
+			return buildResult(question, context, mode, options, { ...response, answers }, correctIndices, explanation);
+		});
+	}
+
+	// The web server lives for the whole session; shut it down with the session.
+	pi.on("session_shutdown", () => {
+		const server = quizServer;
+		quizServer = undefined;
+		quizServerStarting = undefined;
+		if (server) void server.close();
+	});
+
+	// /quiz-web [on|off|auto] — per-session web-surface switch (step 6).
+	pi.registerCommand("quiz-web", {
+		description:
+			"quiz web surface: on forces the browser page for every quiz, off forces the TUI popup, auto (default) uses the web only when the tool call passes web: true. Without an argument, shows the current mode.",
+		handler: async (args, ctx) => {
+			const arg = (args ?? "").trim().toLowerCase();
+			if (arg === "on" || arg === "off" || arg === "auto") {
+				webSurface = arg;
+			}
+			const detail =
+				webSurface === "auto"
+					? "web only when the tool call sets web: true"
+					: webSurface === "on"
+						? "every quiz opens the web page"
+						: "every quiz uses the TUI popup";
+			const valid = arg === "" || arg === "on" || arg === "off" || arg === "auto";
+			const message = valid
+				? `quiz-web: ${webSurface} (${detail})`
+				: `quiz-web: unknown argument "${args}" — usage: /quiz-web [on|off|auto]`;
+			// Same notify-or-stdout pattern as session-trace's /trace-web.
+			if (ctx.hasUI) ctx.ui.notify(message, valid ? "info" : "error");
+			else process.stdout.write(`${message}\n`);
+		},
+	});
+
 	pi.registerTool({
 		name: "quiz",
 		label: "quiz",
@@ -957,6 +1173,7 @@ export default function quiz(pi: ExtensionAPI) {
 			"Guardrail: every distractor must be unambiguously wrong on the intended reading — tempting, but a real error, not a defensible alternative. Don't drift into trick questions.",
 			"Anti-guessing hygiene: don't let the correct answer stand out by form (longest, most precise, most hedged, or the only one in the right format). Keep options similar in length, specificity, and phrasing so it can't be picked from shape alone.",
 			"Set multiSelect: true only when more than one option is correct.",
+			"Set web: true when the question, context, options, or explanation use LaTeX math ($...$ or $$...$$), mermaid diagrams, or rich Markdown — those render on a local browser page the TUI popup cannot show. Otherwise omit web: plain questions are faster in the TUI. The user can force either surface with /quiz-web on|off|auto (auto, the default, honors your web: true).",
 			"Options are shuffled before display by default, so don't worry about which position you list the correct answer in. Set shuffle: false only when option order is meaningful (ordered values, or an 'All/None of the above' option that must stay last).",
 			"To probe nuance, ask several quick quiz questions and adapt each one based on the previous answers, rather than writing one giant question.",
 			"Don't leak the answer through formatting: keep option phrasing/length even and don't hint which is correct.",
@@ -1009,6 +1226,25 @@ export default function quiz(pi: ExtensionAPI) {
 				return unavailableResult(params.question, mode, `quiz ${correctError}`, correctIndices, context);
 			}
 
+			// Web surface (steps 5–6): no shared-ui lock and no ctx.hasUI guard —
+			// the browser page replaces the TUI popup, which also makes quiz work
+			// headless (URL reaches the transcript via onUpdate). If the server
+			// cannot start, fall through to the TUI path (headless → the
+			// unavailable result below, as before).
+			if (resolveWebSurface(params.web)) {
+				const webResult = await runWebQuestion({
+					question: params.question,
+					context,
+					mode,
+					options,
+					correctIndices,
+					explanation,
+					signal,
+					onUpdate,
+				});
+				if (webResult) return webResult;
+			}
+
 			if (!ctx.hasUI) {
 				return unavailableResult(params.question, mode, "quiz requires interactive mode UI", correctIndices, context);
 			}
@@ -1038,6 +1274,11 @@ export default function quiz(pi: ExtensionAPI) {
 			let text = theme.fg("toolTitle", theme.bold("quiz ")) + theme.fg("muted", args.question);
 			if (args.multiSelect) {
 				text += theme.fg("dim", " [multi-select]");
+			}
+			// Surface badge only — never the URL (it carries the token) or any
+			// answer material.
+			if (args.web) {
+				text += theme.fg("dim", " [web]");
 			}
 			if (options.length > 0) {
 				const noun = options.length === 1 ? "option" : "options";

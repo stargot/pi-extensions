@@ -14,6 +14,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolveSessionsDir } from "../../shared/sessions.ts";
+import { isLoopbackHost } from "../../shared/loopback.ts";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
@@ -78,21 +79,9 @@ function send(res: ServerResponse, code: number, body: string, type = "text/plai
 /** Предел тела POST /load: там только путь к файлу. */
 const MAX_LOAD_BODY = 64 * 1024;
 
-/**
- * Host указывает на loopback. Защита от DNS rebinding: чужой домен,
- * перерезолвленный в 127.0.0.1, приходит со своим Host — и тогда сверка
- * Origin с Host ничего не ловит, а /session.jsonl читается кросс-доменно.
- */
-export function isLoopbackHost(host: string | undefined): boolean {
-	if (!host) return false;
-	let hostname: string;
-	try {
-		hostname = new URL(`http://${host}`).hostname;
-	} catch {
-		return false;
-	}
-	return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
-}
+// Ре-экспорт: реализация живёт в shared/loopback.ts (переиспользуется quiz-web),
+// но существующий тест session-trace импортирует символ отсюда.
+export { isLoopbackHost };
 
 function handle(req: IncomingMessage, res: ServerResponse, state: { file?: string }): void {
 	if (!isLoopbackHost(req.headers.host)) {

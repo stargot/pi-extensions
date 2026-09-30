@@ -221,7 +221,11 @@ test("cancelled and unavailable results carry status + message", () => {
 
 test("renderCall: preview never leaks correctAnswer or explanation", () => {
 	const registered: Array<{ renderCall: (args: any, theme: any) => { render: (width: number) => string[] } }> = [];
-	quiz({ registerTool: (tool: never) => registered.push(tool) } as never);
+	quiz({
+		registerTool: (tool: never) => registered.push(tool),
+		on: () => {},
+		registerCommand: () => {},
+	} as never);
 	const tool = registered[0];
 	const theme = {
 		fg: (_color: string, text: string) => text,
@@ -246,6 +250,36 @@ test("renderCall: preview never leaks correctAnswer or explanation", () => {
 	// anti-leak: neither the correct answer value nor the explanation appears
 	assert.equal(rendered.includes("SECRET-correct-value"), false);
 	assert.equal(rendered.includes("SECRET-explanation-text"), false);
+});
+
+test("renderCall: web:true adds a [web] badge without leaking the URL/token", () => {
+	const registered: Array<{ renderCall: (args: any, theme: any) => { render: (width: number) => string[] } }> = [];
+	quiz({
+		registerTool: (tool: never) => registered.push(tool),
+		on: () => {},
+		registerCommand: () => {},
+	} as never);
+	const tool = registered[0];
+	const theme = {
+		fg: (_color: string, text: string) => text,
+		bold: (text: string) => text,
+	};
+	const args = {
+		question: "Q?",
+		options: [
+			{ label: "A", value: "a" },
+			{ label: "B", value: "b" },
+		],
+		correctAnswer: "a",
+		explanation: "E",
+		web: true,
+		// simulates any token-ish material that must never reach the preview
+		token: "SECRET-token",
+	};
+	const rendered = tool.renderCall(args, theme).render(200).join("\n");
+	assert.match(rendered, /\[web\]/);
+	assert.equal(rendered.includes("SECRET-token"), false);
+	assert.equal(rendered.includes("http://127.0.0.1"), false);
 });
 
 test("isNoteToggleKey: plain 'n' toggles the note field; Tab and modified keys do not", () => {
