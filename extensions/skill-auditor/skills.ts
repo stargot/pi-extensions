@@ -214,8 +214,10 @@ export function validateSkillName(name: string): string | null {
  *   4. `~/.agents/skills`.
  *
  * pi shows the project locations (1–2) only when the project is trusted; the
- * auditor reports them unconditionally. Missing directories are silently
- * omitted — never an error.
+ * auditor reports them unconditionally. Like pi (addAutoDiscoveredResources),
+ * the project walk skips the dir that resolves to `~/.agents/skills` — outside
+ * a repo it would otherwise be counted twice (project and user). Missing
+ * directories are silently omitted — never an error.
  */
 export function discoverSkillLocations(cwd: string, env: NodeJS.ProcessEnv = process.env): SkillLocation[] {
 	const locations: SkillLocation[] = [];
@@ -223,10 +225,15 @@ export function discoverSkillLocations(cwd: string, env: NodeJS.ProcessEnv = pro
 		locations.push({ scope: "project", path: join(cwd, ".pi", "skills") });
 	}
 
+	// Пи-фильтр: вне репо walk может дойти до домашнего каталога — ~/.agents/skills
+	// уже учтена ниже как user-локация, дважды учитывать нельзя (addAutoDiscoveredResources).
+	const homeAgentsSkills = join(homedir(), ".agents", "skills");
 	let current = resolve(cwd);
 	for (;;) {
 		const projectSkills = join(current, ".agents", "skills");
-		if (isDirectory(projectSkills)) locations.push({ scope: "project", path: projectSkills });
+		if (isDirectory(projectSkills) && resolve(projectSkills) !== resolve(homeAgentsSkills)) {
+			locations.push({ scope: "project", path: projectSkills });
+		}
 		if (existsSync(join(current, ".git"))) break; // корень репо включён, выше не идём
 		const parent = dirname(current);
 		if (parent === current) break; // корень файловой системы
@@ -237,7 +244,6 @@ export function discoverSkillLocations(cwd: string, env: NodeJS.ProcessEnv = pro
 	const userSkills = join(env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "skills");
 	if (isDirectory(userSkills)) locations.push({ scope: "user", path: userSkills });
 
-	const homeAgentsSkills = join(homedir(), ".agents", "skills");
 	if (isDirectory(homeAgentsSkills)) locations.push({ scope: "user", path: homeAgentsSkills });
 
 	return locations;
