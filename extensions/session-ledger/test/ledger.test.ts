@@ -4,15 +4,18 @@ import {
 	buildLedger,
 	cachePercent,
 	dayOf,
+	emptyStats,
 	groupRows,
 	inPeriod,
 	parseArgs,
 	parseSessionText,
 	periodStart,
+	promptTokens,
 	projectName,
+	subtractStats,
 	topSessions,
 } from "../ledger.ts";
-import { fmtCost, fmtTokens, renderLedger, renderTable, summaryLine } from "../report.ts";
+import { bar, fmtCost, fmtPercent, fmtTokens, renderLedger, renderTable, summaryLine } from "../report.ts";
 
 const usage = (input: number, output: number, cacheRead = 0, cost = 0.01) => ({
 	input,
@@ -255,4 +258,139 @@ test("parseArgs accepts period, group and project in any order", () => {
 	assert.deepEqual(parseArgs("model all"), { period: "all", by: "model" });
 	assert.deepEqual(parseArgs("today tool"), { period: "today", by: "tool" });
 	assert.deepEqual(parseArgs("mediahub 30d"), { period: "30d", by: "project", project: "mediahub" });
+});
+
+test("nested-сплит: total = main + nested, строки атрибутируют nested точно", () => {
+	const now = Date.parse("2026-09-06T10:00:00.000Z");
+	const main = parseSessionText(sessionText(), "/x/main.jsonl")!;
+	// Файл субагента: тот же проект, вложенный путь sessions/subagents/**
+	const child = parseSessionText(sessionText(), "/x/subagents/2026-09-05_worker.jsonl")!;
+	assert.equal(child.isNested, true);
+	assert.equal(main.isNested, false);
+
+	const ledger = buildLedger([main, child], "7d", { now, skipped: 2, scanned: 5 });
+	assert.equal(ledger.invalidFiles, 2);
+	assert.equal(ledger.nested.sessions, 1);
+	// Инвариант total = main + nested по каждому числовому ключу Stats
+	for (const key of Object.keys(ledger.total) as Array<keyof typeof ledger.total>) {
+		assert.equal(ledger.main[key] + ledger.nested[key], ledger.total[key], key);
+	}
+	assert.ok(ledger.nested.input > 0);
+	assert.ok(ledger.main.input > 0);
+	assert.deepEqual(subtractStats(ledger.total, ledger.nested), ledger.main);
+
+	const byProject = groupRows(ledger, "project");
+	const row = byProject.find((r) => r.key === "alpha");
+	assert.ok(row);
+	assert.equal(row.nested.input, ledger.nested.input);
+	assert.equal(promptTokens(row.stats) - promptTokens(row.nested), promptTokens(ledger.main));
+
+	// Разрез по моделям/дням: у nested-файла все его byModel/byDay записи — nested
+	const byModel = groupRows(ledger, "model");
+	assert.deepEqual(
+		byModel.map((r) => r.key),
+		["zai/glm-5.3-flash"],
+	);
+	assert.equal(byModel[0].nested.turns, child.byModel["zai/glm-5.3-flash"].turns);
+	const byDay = groupRows(ledger, "day");
+	assert.ok(byDay.every((r) => r.nested.turns > 0));
+
+	// Сессии: ключ — день+проект, поэтому два файла сливаются в одну строку; её nested — ровно вложенная часть
+	const bySession = groupRows(ledger, "session");
+	assert.equal(bySession.length, 1);
+	assert.equal(bySession[0].nested.turns, child.stats.turns);
+	assert.equal(bySession[0].stats.turns, main.stats.turns + child.stats.turns);
+	assert.ok(bySession[0].nested.turns > 0);
+});
+
+test("hit-rate: нулевой знаменатель → null, fmtPercent → em-dash; формула — из сумм токенов", () => {
+	assert.equal(cachePercent(emptyStats()), null);
+	assert.equal(fmtPercent(null), "—");
+	assert.equal(fmtPercent(cachePercent(emptyStats())), "—");
+	const s = { ...emptyStats(), input: 100, cacheRead: 300, cacheWrite: 100 };
+	assert.equal(cachePercent(s), 60);
+	// Отличимо от en-dash (регрессия: раньше рендерился «–»)
+	assert.notEqual(fmtPercent(null), "–");
+});
+
+test("bar: ширины, глифы ▁▂▃▄▅▆▇█, зажим и деградации", () => {
+	assert.equal(bar(100, 100, 4), "████");
+	assert.equal(bar(0, 100, 4), "    ");
+	assert.equal(bar(45, 100, 8), "███▅    ");
+	assert.equal(bar(10, 100, 8), "▆       ");
+	assert.equal(bar(50, 100, 8), "████    ");
+	assert.equal(bar(150, 100, 4), "████");
+	assert.equal(bar(5, 0, 3), "   ");
+	assert.equal(bar(5, -1, 3), "   ");
+	assert.equal(bar(50, 100, 0), "");
+	assert.equal(bar(Number.NaN, 100, 4), "    ");
+	for (const w of [1, 5, 12]) assert.equal(bar(7, 100, w).length, w);
+});
+
+test("колонки main/nested/share: сумма строк сходится с total, guard на отсутствие токена темы", () => {
+	const now = Date.parse("2026-09-06T10:00:00.000Z");
+	const main = parseSessionText(sessionText(), "/x/main.jsonl")!;
+	const child = parseSessionText(sessionText(), "/x/subagents/child.jsonl")!;
+	const ledger = buildLedger([main, child], "7d", { now });
+	const rows = groupRows(ledger, "project");
+
+	// Тема без токена accent (Theme.fg бросает): бар и cache% рендерятся некрашеными, без исключения
+	const throwingStyler = {
+		fg: (c: string, t: string) => {
+			if (c === "accent") throw new Error("Unknown theme color: accent");
+			return t;
+		},
+		bold: (t: string) => t,
+	};
+	const totalRow = { key: "total", stats: ledger.total, nested: ledger.nested };
+	const table = renderTable(rows, "project", totalRow, 140, throwingStyler);
+	assert.ok(
+		table.some((l) => /[▁-█]/.test(l)),
+		"bar column rendered",
+	);
+
+	// plain-стилер: total-строка содержит main/nested и сходится с суммой строк
+	const plain = renderTable(rows, "project", totalRow, 140, { fg: (_c, t) => t, bold: (t) => t });
+	const totalLine = plain.at(-1)!;
+	assert.ok(totalLine.startsWith("total"));
+	// nested в total = сумма nested по строкам
+	const nestedCol = plain[0].split(/\s{2,}/).indexOf("nested");
+	assert.ok(nestedCol > 0, "nested column present");
+	const rowNestedSum = rows.reduce((acc, r) => acc + promptTokens(r.nested), 0);
+	assert.ok(totalLine.includes(fmtTokens(promptTokens(ledger.nested))));
+	assert.equal(promptTokens(ledger.nested), rowNestedSum);
+});
+
+test("renderLedger/summaryLine: nested-брейкдаун и счётчики unknownUsage/invalidFiles", () => {
+	const now = Date.parse("2026-09-06T10:00:00.000Z");
+	const lines2 = [
+		{ type: "session", version: 3, id: "su", timestamp: "2026-09-05T12:00:00.000Z", cwd: "C:\\Proj\\alpha" },
+		{
+			type: "message",
+			id: "u1",
+			timestamp: "2026-09-05T12:00:01.000Z",
+			message: { role: "user", content: [{ type: "text", text: "go" }] },
+		},
+		{
+			type: "message",
+			id: "a1",
+			timestamp: "2026-09-05T12:00:02.000Z",
+			message: { role: "assistant", provider: "zai", model: "glm-5.3-flash", stopReason: "error", content: [] },
+		},
+	];
+	const withUnknown = parseSessionText(`${lines2.map((l) => JSON.stringify(l)).join("\n")}\n`, "/x/u.jsonl")!;
+	const ledger = buildLedger([withUnknown], "30d", { now, skipped: 3, scanned: 9 });
+	assert.equal(ledger.total.unknownUsage, 1);
+	assert.equal(ledger.invalidFiles, 3);
+
+	const lines = renderLedger(ledger, "project", 140);
+	assert.ok(lines.some((l) => l.includes("without usage")));
+	assert.ok(lines.some((l) => l.includes("invalid/skipped")));
+	assert.ok(lines.some((l) => l.includes("sessions/subagents")));
+	assert.ok(lines.some((l) => l.includes("main") && l.includes("nested")));
+
+	const line = summaryLine(ledger);
+	assert.ok(line.includes("1 unknown usage"));
+	assert.ok(line.includes("3 invalid files"));
+	assert.ok(line.includes("cache — ·"));
 });

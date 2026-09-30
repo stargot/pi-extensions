@@ -7,21 +7,24 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { discoverSessionFiles } from "../shared/sessions.ts";
-import { dayOf, parseSessionCombined, type SessionSummary, type Stats } from "../shared/session-index.ts";
+import { dayOf, emptyStats, parseSessionCombined, type SessionSummary, type Stats } from "../shared/session-index.ts";
 
 // Ре-экспорт: /stats-расширение и CLI импортируют discovery отсюда (исторически).
 export { discoverSessionFiles };
 
 // Канонические типы живут в shared/session-index.ts — ре-экспорт для совместимости.
 export type { Stats, ToolStats, SessionSummary } from "../shared/session-index.ts";
-export { dayOf, projectName } from "../shared/session-index.ts";
+export { dayOf, emptyStats, projectName } from "../shared/session-index.ts";
 
 export type GroupKey = "project" | "model" | "day" | "tool" | "session";
 export type Period = "today" | "yesterday" | "7d" | "30d" | "all";
 
 export interface Row {
 	key: string;
+	/** Комбинированный расход строки: main + nested (как раньше — существующие колонки не меняют смысл). */
 	stats: Stats;
+	/** Nested-часть (субагентские сессии sessions/subagents/**); main = stats − nested. */
+	nested: Stats;
 	detail?: string;
 }
 
@@ -31,7 +34,14 @@ export interface Ledger {
 	sessions: SessionSummary[];
 	scanned: number;
 	skipped: number;
+	/** Невалидные/непарсящиеся файлы (= skipped): файлы без заголовка сессии или с ошибкой чтения. */
+	invalidFiles: number;
+	/** main + nested — комбинированный итог (обратная совместимость: совпадает со старым total). */
 	total: Stats;
+	/** main-часть: total − nested (вычитание точное, nested ⊆ total). */
+	main: Stats;
+	/** Nested-часть: сумма summary.nested по сессиям периода (usage сессий subagents/**). */
+	nested: Stats;
 }
 
 export const PERIODS: Period[] = ["today", "yesterday", "7d", "30d", "all"];
@@ -55,24 +65,6 @@ export function parseArgs(args: string): StatsArgs {
 	return result;
 }
 
-export function emptyStats(): Stats {
-	return {
-		sessions: 0,
-		turns: 0,
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		cost: 0,
-		toolCalls: 0,
-		toolErrors: 0,
-		compactions: 0,
-		branchSummaries: 0,
-		errors: 0,
-		aborted: 0,
-	};
-}
-
 export function addStats(target: Stats, source: Stats): Stats {
 	for (const key of Object.keys(target) as Array<keyof Stats>) target[key] += source[key];
 	return target;
@@ -82,9 +74,24 @@ export function promptTokens(s: Stats): number {
 	return s.input + s.cacheRead + s.cacheWrite;
 }
 
+/**
+ * Hit-rate кэша в процентах: cacheRead / (input + cacheRead + cacheWrite), null при нулевом
+ * знаменателе (fmtPercent рендерит его как «—»).
+ *
+ * pi-forge-совместимая формула (MacroSony/pi-forge `src/session-usage.ts`, MIT: `cacheHitRate`):
+ * считается из СУММ токенов (агрегация суммированием, не средним процентов), поэтому hit-rate
+ * любой группы всегда согласован с её же токенами.
+ */
 export function cachePercent(s: Stats): number | null {
 	const prompt = promptTokens(s);
 	return prompt > 0 ? Math.round((s.cacheRead / prompt) * 1000) / 10 : null;
+}
+
+/** main-часть: total − nested по всем числовым ключам Stats (nested ⊆ total, вычитание точное). */
+export function subtractStats(total: Stats, nested: Stats): Stats {
+	const result = emptyStats();
+	for (const key of Object.keys(result) as Array<keyof Stats>) result[key] = total[key] - nested[key];
+	return result;
 }
 
 export function parseSessionText(text: string, file: string): SessionSummary | undefined {
@@ -147,14 +154,22 @@ export function buildLedger(
 			(!needle || s.project.toLowerCase().includes(needle) || s.cwd.toLowerCase().includes(needle)),
 	);
 	const total = emptyStats();
-	for (const s of sessions) addStats(total, s.stats);
+	const nested = emptyStats();
+	for (const s of sessions) {
+		addStats(total, s.stats);
+		addStats(nested, s.nested);
+	}
+	const skipped = options.skipped ?? 0;
 	return {
 		period,
 		since: periodStart(period, now),
 		sessions,
 		scanned: options.scanned ?? all.length,
-		skipped: options.skipped ?? 0,
+		skipped,
+		invalidFiles: skipped,
 		total,
+		main: subtractStats(total, nested),
+		nested,
 	};
 }
 
@@ -163,7 +178,7 @@ export function groupRows(ledger: Ledger, by: GroupKey): Row[] {
 	const rowFor = (key: string, detail?: string) => {
 		let row = rows.get(key);
 		if (!row) {
-			row = { key, stats: emptyStats(), detail };
+			row = { key, stats: emptyStats(), nested: emptyStats(), detail };
 			rows.set(key, row);
 		}
 		return row;
@@ -172,13 +187,23 @@ export function groupRows(ledger: Ledger, by: GroupKey): Row[] {
 	for (const s of ledger.sessions) {
 		switch (by) {
 			case "project":
+				// Атрибуция nested точная: у nested-файла (субагента) весь расход — nested.
 				addStats(rowFor(s.project, s.cwd).stats, s.stats);
+				addStats(rowFor(s.project, s.cwd).nested, s.nested);
 				break;
 			case "model":
-				for (const [model, stats] of Object.entries(s.byModel)) addStats(rowFor(model).stats, stats);
+				for (const [model, stats] of Object.entries(s.byModel)) {
+					const row = rowFor(model);
+					addStats(row.stats, stats);
+					if (s.isNested) addStats(row.nested, stats);
+				}
 				break;
 			case "day":
-				for (const [day, stats] of Object.entries(s.byDay)) addStats(rowFor(day).stats, stats);
+				for (const [day, stats] of Object.entries(s.byDay)) {
+					const row = rowFor(day);
+					addStats(row.stats, stats);
+					if (s.isNested) addStats(row.nested, stats);
+				}
 				break;
 			case "tool":
 				for (const [tool, t] of Object.entries(s.byTool)) {
@@ -186,11 +211,18 @@ export function groupRows(ledger: Ledger, by: GroupKey): Row[] {
 					row.stats.toolCalls += t.calls;
 					row.stats.toolErrors += t.errors;
 					row.stats.sessions += 1;
+					if (s.isNested) {
+						row.nested.toolCalls += t.calls;
+						row.nested.toolErrors += t.errors;
+						row.nested.sessions += 1;
+					}
 				}
 				break;
 			case "session": {
 				const label = s.name ?? s.firstPrompt ?? basename(s.file);
-				addStats(rowFor(`${dayOf(s.startedAt)} ${s.project}`, label).stats, s.stats);
+				const row = rowFor(`${dayOf(s.startedAt)} ${s.project}`, label);
+				addStats(row.stats, s.stats);
+				addStats(row.nested, s.nested);
 				break;
 			}
 		}
