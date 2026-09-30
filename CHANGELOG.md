@@ -17,10 +17,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 - **quiz**: градируемый сиблинг ask_user_question — вопрос с заведомо правильным
   ответом: 2+ варианта, `correctAnswer` по `value` опции (не по позиции),
   обязательный `explanation`, шаффл по умолчанию, авто-вариант «I don't know»
-  (отдельный сигнал вместо угадывания) и поле note (tab). Оценка ✓/✗ мгновенно —
+  (отдельный сигнал вместо угадывания) и поле note. Оценка ✓/✗ мгновенно —
   и пользователю, и агенту. Порт из
   [learn](https://github.com/amosblomqvist/learn/tree/main/extensions/quiz)
   Eero Alvar (amosblomqvist), импорты перебиты с @mariozechner на @earendil-works.
+- **quiz**: резервный переключатель фокуса поля note — клавиша `n` из списка
+  вариантов (`tab` сохранён). Отклонение от апстрима (там только `tab`): в живой
+  цепочке Windows (WezTerm → herdr/ConPTY) `tab` не доходил до попапа в форме,
+  которую распознаёт `matchesKey("tab")` pi-tui (headless на 0.85.1 и 0.99.1 все
+  стандартные кодировки tab распознаются — `\t`, CSI-u, Kitty press), из-за чего
+  note не работала вовсе. Печатаемые символы в той же среде до компонента
+  доходят (свободный текст в ask_user_question работает), поэтому `n` надёжен.
 
 ### Security
 

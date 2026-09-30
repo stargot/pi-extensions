@@ -216,6 +216,19 @@ function addWrapped(lines: string[], text: string, width: number, indent = ""): 
 	}
 }
 
+// Focus toggle for the note field, checked in the options focus only.
+// Upstream uses Tab alone, but in the user's live chain (WezTerm → herdr/
+// ConPTY → pi on Windows) Tab was observed never to reach the popup in a form
+// pi-tui's matchesKey("tab") accepts (verified: TAB byte, CSI-u and Kitty press
+// encodings all match on pi-tui 0.85.1/0.99.1 headless; the win32-input-mode
+// and alternate-keys CSI forms do not). Printable characters demonstrably DO
+// arrive in the same live environment (ask-user-question free-text typing
+// works), so 'n' is the reliable fallback. Tab keeps working wherever it
+// arrives unmangled. Deliberate deviation from upstream amosblomqvist/learn.
+export function isNoteToggleKey(data: string): boolean {
+	return matchesKey(data, "n");
+}
+
 export function isCorrect(selectedIndices: number[], correctIndices: number[]): boolean {
 	if (selectedIndices.length !== correctIndices.length) return false;
 	const a = [...selectedIndices].sort((x, y) => x - y);
@@ -515,7 +528,8 @@ async function askSingleChoice(
 				return;
 			}
 
-			// Tab toggles focus between the options list and the note field.
+			// Tab toggles focus between the options list and the note field ('n'
+			// does the same from the options list — see isNoteToggleKey).
 			if (matchesKey(data, Key.tab)) {
 				focus = focus === "options" ? "note" : "options";
 				editor.focused = focus === "note";
@@ -537,6 +551,12 @@ async function askSingleChoice(
 			}
 
 			// focus === "options"
+			if (isNoteToggleKey(data)) {
+				focus = "note";
+				editor.focused = true;
+				refresh();
+				return;
+			}
 			if (matchesKey(data, Key.up)) {
 				optionIndex = Math.max(0, optionIndex - 1);
 				refresh();
@@ -615,7 +635,7 @@ async function askSingleChoice(
 			if (focus === "note") {
 				add(theme.fg("dim", " Type note • Ctrl+J newline • Enter back to options • Tab options • Esc back"));
 			} else {
-				add(theme.fg("dim", " ↑↓ navigate • Enter answer • Tab note • Esc cancel"));
+				add(theme.fg("dim", " ↑↓ navigate • Enter answer • n/Tab note • Esc cancel"));
 			}
 			add(theme.fg("accent", "─".repeat(width)));
 			// Not cached when the note is focused: the editor renders a live cursor.
@@ -730,7 +750,8 @@ async function askMultiChoice(
 				return;
 			}
 
-			// Tab toggles focus between the options list and the note field.
+			// Tab toggles focus between the options list and the note field ('n'
+			// does the same from the options list — see isNoteToggleKey).
 			if (matchesKey(data, Key.tab)) {
 				focus = focus === "options" ? "note" : "options";
 				editor.focused = focus === "note";
@@ -752,6 +773,12 @@ async function askMultiChoice(
 			}
 
 			// focus === "options"
+			if (isNoteToggleKey(data)) {
+				focus = "note";
+				editor.focused = true;
+				refresh();
+				return;
+			}
 			if (matchesKey(data, Key.up)) {
 				optionIndex = Math.max(0, optionIndex - 1);
 				refresh();
@@ -854,7 +881,7 @@ async function askMultiChoice(
 			if (focus === "note") {
 				add(theme.fg("dim", " Type note • Ctrl+J newline • Enter back to options • Tab options • Esc back"));
 			} else {
-				add(theme.fg("dim", " ↑↓ navigate • Space toggle • Enter submit • Tab note • Esc cancel"));
+				add(theme.fg("dim", " ↑↓ navigate • Space toggle • Enter submit • n/Tab note • Esc cancel"));
 			}
 			add(theme.fg("accent", "─".repeat(width)));
 			// Not cached when the note is focused: the editor renders a live cursor.
@@ -914,7 +941,7 @@ export default function quiz(pi: ExtensionAPI) {
 		name: "quiz",
 		label: "quiz",
 		description:
-			"Ask the user a GRADED question with a known correct answer, then instantly grade and give feedback. Unlike ask_user_question (which collects preferences/decisions with no right answer), quiz always has a correct answer supplied by you, marks the user's selection right/wrong (✓/✗), reveals the correct answer, and can show an explanation. Use it to (1) assess what the learner already understands before teaching, and (2) run tight practice/retrieval loops after explaining, or probe understanding whenever you're unsure they've got it. Options-only: single-select or multi-select, plus an automatic 'I don't know' choice so the user can signal a genuine gap instead of guessing. An always-present optional note field (Tab to focus it) lets the user attach a free-text note to ANY answer; it reaches you only when non-empty. No free-text answers — for non-graded questions use ask_user_question instead.",
+			"Ask the user a GRADED question with a known correct answer, then instantly grade and give feedback. Unlike ask_user_question (which collects preferences/decisions with no right answer), quiz always has a correct answer supplied by you, marks the user's selection right/wrong (✓/✗), reveals the correct answer, and can show an explanation. Use it to (1) assess what the learner already understands before teaching, and (2) run tight practice/retrieval loops after explaining, or probe understanding whenever you're unsure they've got it. Options-only: single-select or multi-select, plus an automatic 'I don't know' choice so the user can signal a genuine gap instead of guessing. An always-present optional note field (Tab, or n while on the options, to focus it) lets the user attach a free-text note to ANY answer; it reaches you only when non-empty. No free-text answers — for non-graded questions use ask_user_question instead.",
 		promptSnippet:
 			"Use the quiz tool to test the user with a graded multiple-choice or multi-select question (required correct answer + required explanation). For non-graded questions, use ask_user_question.",
 		promptGuidelines: [

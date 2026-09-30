@@ -13,6 +13,7 @@ import quiz, {
 	coerceCorrectAnswer,
 	formatOptionRef,
 	isCorrect,
+	isNoteToggleKey,
 	normalizeOptions,
 	resolveCorrect,
 	shuffleOptions,
@@ -245,4 +246,21 @@ test("renderCall: preview never leaks correctAnswer or explanation", () => {
 	// anti-leak: neither the correct answer value nor the explanation appears
 	assert.equal(rendered.includes("SECRET-correct-value"), false);
 	assert.equal(rendered.includes("SECRET-explanation-text"), false);
+});
+
+test("isNoteToggleKey: plain 'n' toggles the note field; Tab and modified keys do not", () => {
+	// Regression guard for the Windows fallback: the live chain (WezTerm → herdr/
+	// ConPTY) never delivered Tab in a form matchesKey("tab") accepts, so the
+	// note field got an additional 'n' toggle (checked in the options focus
+	// only). Deliberate deviation from upstream amosblomqvist/learn, which uses
+	// Tab alone.
+	assert.equal(isNoteToggleKey("n"), true);
+	// must NOT fire on anything else — in particular not on Tab (handled
+	// separately) and not on letters the note editor must receive as text when
+	// the note field is focused ('N', ctrl+n via C0 byte, alt+n, multi-char paste)
+	assert.equal(isNoteToggleKey("\t"), false);
+	assert.equal(isNoteToggleKey("N"), false);
+	assert.equal(isNoteToggleKey("\x06"), false); // ctrl+n
+	assert.equal(isNoteToggleKey("\x1bn"), false); // alt+n
+	assert.equal(isNoteToggleKey("nX"), false); // paste chunk, not a single key
 });
