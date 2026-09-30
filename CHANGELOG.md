@@ -14,6 +14,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   переведены на общий слой; session-recall получает BM25-подобное ранжирование
   (tf·idf × свежесть, фразы ×2) вместо чистого фильтра. 12 новых тестов:
   эквивалентность парсеров, инкрементальность, инвалидация кэша, кап текста юнита.
+- **quiz**: градируемый сиблинг ask_user_question — вопрос с заведомо правильным
+  ответом: 2+ варианта, `correctAnswer` по `value` опции (не по позиции),
+  обязательный `explanation`, шаффл по умолчанию, авто-вариант «I don't know»
+  (отдельный сигнал вместо угадывания) и поле note (tab). Оценка ✓/✗ мгновенно —
+  и пользователю, и агенту. Порт из
+  [learn](https://github.com/amosblomqvist/learn/tree/main/extensions/quiz)
+  Eero Alvar (amosblomqvist), импорты перебиты с @mariozechner на @earendil-works.
 
 ### Security
 

@@ -45,3 +45,13 @@ Two extensions derive from work by Eero Alvar
 
 The upstream repository does not declare a license; attribution is kept here
 and in the READMEs of those extensions.
+
+## pi-learn
+
+`extensions/quiz` is ported from the `quiz` extension by Eero Alvar
+([amosblomqvist](https://github.com/amosblomqvist)) in
+[amosblomqvist/learn](https://github.com/amosblomqvist/learn/tree/main/extensions/quiz)
+without changes to the logic.
+
+The upstream repository does not declare a license; attribution is kept here
+and in the README of the extension.
