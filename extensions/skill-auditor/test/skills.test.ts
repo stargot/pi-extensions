@@ -76,6 +76,41 @@ test("parseSkillFrontmatter: empty frontmatter block is closed and valid", () =>
 	assert.equal(parsed.body, "Body.");
 });
 
+test("parseSkillFrontmatter: folded (>) block scalar — newlines become spaces, dedent ends the block", () => {
+	const parsed = parseSkillFrontmatter(
+		[
+			"---",
+			"name: folded",
+			"description: >",
+			"  Аудит скиллов pi-агента:",
+			"  структура SKILL.md, ссылки и файлы.",
+			"",
+			"  Используй когда пользователь просит проверить скиллы.",
+			"license: MIT",
+			"---",
+			"",
+			"Body.",
+		].join("\n"),
+	);
+	assert.equal(parsed.malformed, false);
+	assert.equal(
+		parsed.attrs["description"],
+		"Аудит скиллов pi-агента: структура SKILL.md, ссылки и файлы. Используй когда пользователь просит проверить скиллы.",
+	);
+	assert.equal(parsed.attrs["license"], "MIT", "ключ после dedent парсится как top-level");
+	assert.equal(parsed.body, "Body.");
+});
+
+test("parseSkillFrontmatter: literal (|) block scalar keeps newlines; chomping and edge quotes are stripped", () => {
+	const literal = parseSkillFrontmatter(
+		"---\nname: lit\ndescription: |\n  Первая строка.\n  Вторая строка.\n---\nBody.",
+	);
+	assert.equal(literal.attrs["description"], "Первая строка.\nВторая строка.");
+
+	const chomped = parseSkillFrontmatter('---\nname: ch\ndescription: >-\n  "Use when auditing skills"\n---\nBody.');
+	assert.equal(chomped.attrs["description"], "Use when auditing skills");
+});
+
 // ── validateSkillName ────────────────────────────────────────────────────────
 
 test("validateSkillName: accepts valid names incl. 64 chars", () => {

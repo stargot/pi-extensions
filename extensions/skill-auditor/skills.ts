@@ -94,6 +94,12 @@ export interface SkillDiscoveryResult {
  * single/double-quoted or bare; `\r\n` is normalized first. Indented lines
  * (nested blocks like `metadata:`) are not top-level keys and are ignored —
  * the bare key still records presence. Keys keep their original case.
+ *
+ * Block scalars are supported for single-line use in descriptions: `key: >`
+ * (folded — newlines become spaces) and `key: |` (literal — newlines kept),
+ * with optional chomping indicator (`>-`, `|+`, …). The block spans the
+ * indented lines that follow (indentation of the first content line is
+ * stripped) until a dedent or the closing fence; edge quotes are trimmed.
  */
 export function parseSkillFrontmatter(raw: string): ParsedSkillFile {
 	const normalized = raw.replace(/\r\n/g, "\n");
@@ -110,15 +116,22 @@ export function parseSkillFrontmatter(raw: string): ParsedSkillFile {
 	if (close === -1) return empty;
 
 	const attrs: Record<string, string> = {};
-	for (const line of lines.slice(1, close)) {
+	let index = 1;
+	while (index < close) {
+		const line = lines[index] ?? "";
+		index++;
 		const match = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line);
 		if (!match) continue;
 		const key = match[1] ?? "";
-		let value = (match[2] ?? "").trim();
-		if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
-			value = value.slice(1, -1);
+		const value = (match[2] ?? "").trim();
+		// Блочный скаляр: потребляем следующие строки целиком (индекс двигаем сами).
+		if (/^[|>][+-]?$/.test(value)) {
+			const block = readBlockScalar(lines, index, close, value.startsWith("|"));
+			attrs[key] = unquote(block.text);
+			index = block.next;
+		} else {
+			attrs[key] = unquote(value);
 		}
-		attrs[key] = value;
 	}
 	return {
 		attrs,
@@ -128,6 +141,45 @@ export function parseSkillFrontmatter(raw: string): ParsedSkillFile {
 			.trim(),
 		malformed: false,
 	};
+}
+
+const unquote = (value: string): string =>
+	(value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))
+		? value.slice(1, -1)
+		: value;
+
+/**
+ * Consume a YAML block scalar body between `start` (first line after
+ * `key: >`/`key: |`) and `close` (closing fence). The block indent is the
+ * indentation of the first non-empty line; a dedent ends the block. Folded
+ * (`>`) joins lines with spaces (blank paragraph separators are dropped);
+ * literal (`|`) keeps newlines.
+ */
+function readBlockScalar(
+	lines: string[],
+	start: number,
+	close: number,
+	literal: boolean,
+): { text: string; next: number } {
+	const collected: string[] = [];
+	let blockIndent = -1;
+	let index = start;
+	while (index < close) {
+		const line = lines[index] ?? "";
+		if (line.trim() === "") {
+			collected.push("");
+			index++;
+			continue;
+		}
+		const indent = line.length - line.trimStart().length;
+		if (blockIndent === -1) blockIndent = indent;
+		if (indent < blockIndent) break; // dedent — блок закончился
+		collected.push(line.slice(blockIndent).trimEnd());
+		index++;
+	}
+	while (collected.length > 0 && collected[collected.length - 1] === "") collected.pop();
+	const text = (literal ? collected.join("\n") : collected.filter((line) => line !== "").join(" ")).trim();
+	return { text, next: index };
 }
 
 /**
