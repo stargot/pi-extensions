@@ -3,7 +3,19 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { extractUnits, highlight, type IndexCache, makeSnippet, parseQuery, refreshIndex, search } from "../search.ts";
+import {
+	extractUnits,
+	highlight,
+	type Hit,
+	type IndexCache,
+	makeSnippet,
+	parseQuery,
+	refreshIndex,
+	search,
+} from "../search.ts";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { TUI } from "@earendil-works/pi-tui";
+import { ResultsView } from "../view.ts";
 
 function sessionText(opts: { cwd?: string; name?: string } = {}): string {
 	const lines: unknown[] = [
@@ -199,4 +211,137 @@ test("refreshIndex caches by mtime and size and drops removed files", () => {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+// --- ResultsView (SelectList): маппинг выбора, пейджинг, закрытие ---
+
+function mockTui(rows: number): TUI {
+	const tui = { requestRender: () => {}, terminal: { rows, columns: 100 } };
+	return tui as unknown as TUI;
+}
+
+function mockTheme(): Theme {
+	return { fg: (_color: string, text: string) => text, bold: (text: string) => text } as unknown as Theme;
+}
+
+/** raw-последовательности навигационных клавиш (как их отдаёт терминал). */
+const KEYS = {
+	up: "\x1b[A",
+	down: "\x1b[B",
+	pageUp: "\x1b[5~",
+	pageDown: "\x1b[6~",
+	home: "\x1b[H",
+	end: "\x1b[F",
+	enter: "\r",
+};
+
+function makeHits(units: ReturnType<typeof extractUnits>, n: number): Hit[] {
+	return Array.from({ length: n }, (_, i) => ({
+		unit: units[i % units.length],
+		score: n - i,
+		snippet: `snippet ${i} wezterm`,
+		position: 0,
+	}));
+}
+
+function makeView(hits: Hit[], handlers: { onSelect: (hit: Hit) => void; onClose: () => void }): ResultsView {
+	return new ResultsView({
+		tui: mockTui(12), // pageSize = max(3, 12-6) = 6 строк на страницу
+		theme: mockTheme(),
+		hits,
+		total: hits.length,
+		terms: ["wezterm"],
+		queryText: "wezterm",
+		onSelect: handlers.onSelect,
+		onClose: handlers.onClose,
+	});
+}
+
+test("ResultsView: Enter вызывает onSelect(hits[i]) для выделенного хита", () => {
+	const units = extractUnits(sessionText(), "/x/s1.jsonl");
+	const hits = makeHits(units, units.length);
+	const picked: Hit[] = [];
+	const view = makeView(hits, { onSelect: (h) => picked.push(h), onClose: () => {} });
+
+	view.handleInput(KEYS.enter);
+	assert.equal(picked.length, 1);
+	assert.equal(picked[0], hits[0]);
+
+	view.handleInput(KEYS.down);
+	view.handleInput(KEYS.down);
+	view.handleInput(KEYS.enter);
+	assert.equal(picked[1], hits[2]);
+});
+
+test("ResultsView: пейджинг не ломает индексацию хитов", () => {
+	const units = extractUnits(sessionText(), "/x/s1.jsonl");
+	const hits = makeHits(units, 30);
+	const picked: Hit[] = [];
+	const view = makeView(hits, { onSelect: (h) => picked.push(h), onClose: () => {} });
+
+	// Две страницы вниз: выделение 0 → 6 → 12, Enter открывает ровно hits[12].
+	view.handleInput(KEYS.pageDown);
+	view.handleInput(KEYS.pageDown);
+	view.handleInput(KEYS.enter);
+	assert.equal(picked[0], hits[12]);
+
+	// Внутри страницы j сдвигает на один: 12 → 13.
+	view.handleInput("j");
+	view.handleInput(KEYS.enter);
+	assert.equal(picked[1], hits[13]);
+
+	// end → последний, home → первый: value-индексы глобальные, не страничные.
+	view.handleInput(KEYS.end);
+	view.handleInput(KEYS.enter);
+	assert.equal(picked[2], hits[29]);
+	view.handleInput(KEYS.home);
+	view.handleInput(KEYS.enter);
+	assert.equal(picked[3], hits[0]);
+
+	// SelectList рисует своё окно: после первой страницы видна позиция 7/30 и «→» на snippet 6.
+	view.handleInput(KEYS.pageDown);
+	const out = view.render(100);
+	assert.ok(
+		out.some((line) => line.includes("(7/30)")),
+		`позиция SelectList: ${out.join("\n")}`,
+	);
+	const marked = out.find((line) => line.includes("→"));
+	assert.ok(marked?.includes("snippet 6"), `выделенная строка: ${marked}`);
+});
+
+test("ResultsView: рендер — заголовок, подсветка, подсказка; q/Esc закрывают", () => {
+	const units = extractUnits(sessionText(), "/x/s1.jsonl");
+	const hits = makeHits(units, units.length);
+	let closed = 0;
+	const view = makeView(hits, { onSelect: () => {}, onClose: () => closed++ });
+
+	const out = view.render(100);
+	assert.ok(out[0].includes("Recall") && out[0].includes("wezterm"), `заголовок: ${out[0]}`);
+	assert.ok(out[1].includes("─"), "разделитель");
+	assert.ok(out[2].includes("→") && out[2].includes("snippet 0 wezterm"), `первая строка: ${out[2]}`);
+	assert.ok(out.at(-1)?.startsWith("↑↓ PgUp PgDn"), `подсказка: ${out.at(-1)}`);
+	assert.ok(
+		out.some((line) => line.includes("snippet 0 wezterm")),
+		"фрагмент с подсветкой на месте",
+	);
+
+	view.handleInput("q");
+	view.handleInput("\x1b");
+	view.handleInput("\x03");
+	assert.equal(closed, 3);
+});
+
+test("ResultsView: пустой результат — Nothing found, Enter и q безопасны", () => {
+	let selected = 0;
+	let closed = 0;
+	const view = makeView([], { onSelect: () => selected++, onClose: () => closed++ });
+	const out = view.render(80);
+	assert.ok(
+		out.some((line) => line.includes("Nothing found.")),
+		`пустой список: ${out.join("\n")}`,
+	);
+	view.handleInput(KEYS.enter);
+	view.handleInput("q");
+	assert.equal(selected, 0);
+	assert.equal(closed, 1);
 });
