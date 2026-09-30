@@ -15,9 +15,9 @@
 import { userInfo } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ScrollReport } from "../shared/scroll-report.ts";
-import { type Finding, auditSkills } from "./lint.ts";
+import { auditSkills } from "./lint.ts";
 import { buildSemanticPrompt } from "./prompt.ts";
-import { buildReport } from "./report.ts";
+import { buildReport, countBySeverity, summaryLine } from "./report.ts";
 import { discoverSkillLocations, discoverSkills } from "./skills.ts";
 
 /** OS username for the personal-content check; undefined when unavailable. */
@@ -27,21 +27,6 @@ function currentUsername(): string | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-/** "2 errors, 1 warning, 0 info — 3 skills audited" for the brief notify. */
-function countersLine(findings: Finding[], skills: number): string {
-	let errors = 0;
-	let warnings = 0;
-	let info = 0;
-	for (const finding of findings) {
-		if (finding.severity === "error") errors += 1;
-		else if (finding.severity === "warning") warnings += 1;
-		else info += 1;
-	}
-	const unit = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
-	const skillsPart = skills === 1 ? "1 skill audited" : `${skills} skills audited`;
-	return `${unit(errors, "error", "errors")}, ${unit(warnings, "warning", "warnings")}, ${info} info — ${skillsPart}`;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -81,8 +66,9 @@ export default function (pi: ExtensionAPI) {
 					});
 					return;
 				}
+				// Та же формулировка, что и в секции Summary отчёта (report.ts) — единый источник.
 				ctx.ui.notify(
-					`${countersLine(audit.findings, audit.scopeMap.length)} · /audit go — семантический разбор`,
+					`${summaryLine(countBySeverity(audit.findings), audit.scopeMap.length)} · /audit go — семантический разбор`,
 					"info",
 				);
 			} catch (error) {

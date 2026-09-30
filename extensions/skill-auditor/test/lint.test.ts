@@ -90,7 +90,7 @@ test("auditSkills: name-dir-mismatch — frontmatter name differs from directory
 
 // ── description-too-long ─────────────────────────────────────────────────────
 
-test("auditSkills: description-too-long — over 1024 chars is an error", () => {
+test("auditSkills: description-too-long — over 1024 chars is a warning (pi still loads the skill)", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-skill-auditor-"));
 	try {
 		const loc = join(root, "skills");
@@ -99,8 +99,11 @@ test("auditSkills: description-too-long — over 1024 chars is an error", () => 
 		const result = auditLocation(loc);
 		assert.deepEqual(codesOf(result, "long"), ["description-too-long"]);
 		const finding = result.findings.find((f) => f.code === "description-too-long");
-		assert.equal(finding?.severity, "error");
-		assert.equal(finding?.message, "description is 1029 characters (max 1024)");
+		assert.equal(finding?.severity, "warning", "pi грузит скилл с длинным description — это не отказ загрузки");
+		assert.equal(
+			finding?.message,
+			"description is 1029 characters (max 1024) — pi still loads the skill (warning diagnostic); spec violation, not a load failure",
+		);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -435,7 +438,7 @@ test("auditSkills: findings are deterministic and sorted by skill → severity �
 
 // ── карта скоупов ────────────────────────────────────────────────────────────
 
-test("auditSkills: scopeMap separates user vs project and marks shadowed copies", () => {
+test("auditSkills: scopeMap separates user vs project and marks shadowed copies (project-first, как в pi)", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-skill-auditor-"));
 	try {
 		const userLoc = join(root, "user-skills");
@@ -444,15 +447,17 @@ test("auditSkills: scopeMap separates user vs project and marks shadowed copies"
 		writeSkill(join(projectLoc, "tool"), "name: tool\ndescription: Use when fixing tools locally.");
 		writeSkill(join(projectLoc, "app"), "name: app\ndescription: Use when running the app.");
 
+		// Локации в порядке pi: проектные раньше пользовательских → проект побеждает коллизию.
 		const discovery = discoverSkills([
-			{ scope: "user", path: userLoc },
 			{ scope: "project", path: projectLoc },
+			{ scope: "user", path: userLoc },
 		]);
 		const result = auditSkills(discovery);
 		assert.deepEqual(result.scopeMap, [
 			{ name: "app", scope: "project", location: projectLoc, dir: join(projectLoc, "app"), shadowed: false },
-			{ name: "tool", scope: "user", location: userLoc, dir: join(userLoc, "tool"), shadowed: false },
-			{ name: "tool", scope: "project", location: projectLoc, dir: join(projectLoc, "tool"), shadowed: true },
+			// отображение сортируется name → user перед project; перевернулись только флаги shadowed
+			{ name: "tool", scope: "user", location: userLoc, dir: join(userLoc, "tool"), shadowed: true },
+			{ name: "tool", scope: "project", location: projectLoc, dir: join(projectLoc, "tool"), shadowed: false },
 		]);
 		assert.equal(result.findings.filter((f) => f.code === "name-collision").length, 1);
 	} finally {

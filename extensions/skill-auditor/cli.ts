@@ -6,7 +6,7 @@
  * Находки advisory: exit code 0 при любых находках; 1 — только ошибка окружения,
  * 2 — ошибка аргументов.
  */
-import { homedir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { auditSkills } from "./lint.ts";
 import { buildReport, reportToJson } from "./report.ts";
 import { discoverSkillLocations, discoverSkills } from "./skills.ts";
@@ -21,9 +21,16 @@ function main(argv: string[]): number {
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--json") json = true;
-		else if (arg === "--dir") cwd = argv[++i] ?? cwd;
-		else if (arg === "--agent-dir") agentDir = argv[++i] ?? agentDir;
-		else if (arg === "-h" || arg === "--help") {
+		else if (arg === "--dir" || arg === "--agent-dir") {
+			const value = argv[i + 1];
+			if (value === undefined) {
+				process.stderr.write(`skill-audit: ${arg} requires a value\n${usage}`);
+				return 2;
+			}
+			if (arg === "--dir") cwd = value;
+			else agentDir = value;
+			i++;
+		} else if (arg === "-h" || arg === "--help") {
 			process.stdout.write(usage);
 			return 0;
 		} else {

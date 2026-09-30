@@ -8,7 +8,9 @@
  *     pi silently does NOT load such a skill (the headline audit finding);
  *   - name-invalid (warning): validateSkillName rejected the name;
  *   - name-dir-mismatch (warning): frontmatter name ≠ directory name (pi does not warn);
- *   - description-too-long (error): description over 1024 chars (pi silently does not load);
+ *   - description-too-long (warning): description over 1024 chars — pi still
+ *     loads the skill (its own diagnostic is a warning); spec violation, not
+ *     a load failure;
  *   - unknown-frontmatter-key (info): keys outside the 7 spec fields;
  *   - name-collision (warning): from the discovery collision list (first-wins);
  *   - broken-reference (warning): relative paths mentioned in the SKILL.md body
@@ -255,9 +257,9 @@ function auditSkill(skill: SkillRecord, username: string | undefined): Finding[]
 	if (skill.description.length > DESCRIPTION_MAX_LENGTH) {
 		findings.push({
 			skill: skill.name,
-			severity: "error",
+			severity: "warning",
 			code: "description-too-long",
-			message: `description is ${skill.description.length} characters (max ${DESCRIPTION_MAX_LENGTH})`,
+			message: `description is ${skill.description.length} characters (max ${DESCRIPTION_MAX_LENGTH}) — pi still loads the skill (warning diagnostic); spec violation, not a load failure`,
 		});
 	}
 	const unknownKeys = Object.keys(skill.attrs).filter((key) => !SPEC_FRONTMATTER_KEYS.has(key));

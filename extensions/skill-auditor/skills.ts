@@ -1,12 +1,16 @@
 /**
  * Skill discovery for the skill-auditor extension: frontmatter parsing, name
  * validation and location/record discovery, mirroring how pi itself loads
- * skills (docs/skills.md, dist/core/skills.js):
+ * skills (docs/skills.md; pi 0.85.1 dist: package-manager.js
+ * addAutoDiscoveredResources → resource-loader → loadSkills first-wins):
  *
- *   - user skills live in `<agentDir>/skills`;
- *   - project skills live in `.agents/skills`, discovered from cwd through its
- *     ancestors, stopping at the repository root (dir with `.git`), which is
- *     itself included;
+ *   - project skills live in `<cwd>/.pi/skills` and in `.agents/skills`,
+ *     discovered from cwd through its ancestors, stopping at the repository
+ *     root (dir with `.git`), which is itself included; project locations come
+ *     first, so a project skill shadows a same-name user skill (pi gates the
+ *     project locations behind the trusted-project flag — the auditor reports
+ *     them unconditionally);
+ *   - user skills live in `<agentDir>/skills` and then `~/.agents/skills`;
  *   - a directory containing SKILL.md is a skill root — recursion does not
  *     descend into it;
  *   - name collisions keep the first discovered skill (earlier locations and,
@@ -198,17 +202,26 @@ export function validateSkillName(name: string): string | null {
 }
 
 /**
- * Skill locations for cwd: the user skills dir
- * (`$PI_CODING_AGENT_DIR || ~/.pi/agent` + `/skills`) first, then project
- * `.agents/skills` dirs from cwd upward, nearest first; the repo root (dir
- * containing `.git`) is included and ends the walk. Missing directories are
- * silently omitted — never an error.
+ * Skill locations for cwd, in pi's insertion order (0.85.1:
+ * addAutoDiscoveredResources; resource-loader passes them to loadSkills in
+ * this order and addSkills keeps the first copy of a name — project beats
+ * user on collision):
+ *
+ *   1. `<cwd>/.pi/skills` — project skills;
+ *   2. `.agents/skills` dirs from cwd upward, nearest first; the repo root
+ *      (dir containing `.git`) is included and ends the walk;
+ *   3. user skills dir `$PI_CODING_AGENT_DIR || ~/.pi/agent` + `/skills`;
+ *   4. `~/.agents/skills`.
+ *
+ * pi shows the project locations (1–2) only when the project is trusted; the
+ * auditor reports them unconditionally. Missing directories are silently
+ * omitted — never an error.
  */
 export function discoverSkillLocations(cwd: string, env: NodeJS.ProcessEnv = process.env): SkillLocation[] {
 	const locations: SkillLocation[] = [];
-	// || вместо ??: пустой PI_CODING_AGENT_DIR дал бы join('', 'skills') (прецедент shared/sessions.ts).
-	const userSkills = join(env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "skills");
-	if (isDirectory(userSkills)) locations.push({ scope: "user", path: userSkills });
+	if (isDirectory(join(cwd, ".pi", "skills"))) {
+		locations.push({ scope: "project", path: join(cwd, ".pi", "skills") });
+	}
 
 	let current = resolve(cwd);
 	for (;;) {
@@ -219,6 +232,14 @@ export function discoverSkillLocations(cwd: string, env: NodeJS.ProcessEnv = pro
 		if (parent === current) break; // корень файловой системы
 		current = parent;
 	}
+
+	// || вместо ??: пустой PI_CODING_AGENT_DIR дал бы join('', 'skills') (прецедент shared/sessions.ts).
+	const userSkills = join(env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "skills");
+	if (isDirectory(userSkills)) locations.push({ scope: "user", path: userSkills });
+
+	const homeAgentsSkills = join(homedir(), ".agents", "skills");
+	if (isDirectory(homeAgentsSkills)) locations.push({ scope: "user", path: homeAgentsSkills });
+
 	return locations;
 }
 

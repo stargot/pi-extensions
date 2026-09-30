@@ -70,14 +70,16 @@ function formatTimestamp(date: Date): string {
 	return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}`;
 }
 
-function countBySeverity(findings: Finding[]): Record<FindingSeverity, number> {
+/** Severity counters — exported so the /audit brief line shares the report's source. */
+export function countBySeverity(findings: Finding[]): Record<FindingSeverity, number> {
 	const counts: Record<FindingSeverity, number> = { error: 0, warning: 0, info: 0 };
 	for (const finding of findings) counts[finding.severity] += 1;
 	return counts;
 }
 
-/** "2 errors, 1 warning, 0 info — 3 skills audited." — English plural, no locale. */
-function summaryLine(counts: Record<FindingSeverity, number>, skills: number): string {
+/** "2 errors, 1 warning, 0 info — 3 skills audited." — English plural, no locale. Exported so
+ * the /audit brief notify (index.ts) reuses the exact report wording. */
+export function summaryLine(counts: Record<FindingSeverity, number>, skills: number): string {
 	const unit = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
 	const skillsPart = skills === 1 ? "1 skill audited" : `${skills} skills audited`;
 	return `${unit(counts.error, "error", "errors")}, ${unit(counts.warning, "warning", "warnings")}, ${counts.info} info — ${skillsPart}.`;

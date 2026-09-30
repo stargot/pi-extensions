@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { discoverSkillLocations, discoverSkills, parseSkillFrontmatter, validateSkillName } from "../skills.ts";
 
@@ -137,15 +137,46 @@ test("discoverSkillLocations: user location from PI_CODING_AGENT_DIR", () => {
 		const agentDir = join(root, "agent");
 		mkdirSync(join(agentDir, "skills"), { recursive: true });
 		const locations = discoverSkillLocations(join(root, "cwd"), { PI_CODING_AGENT_DIR: agentDir });
-		// project-находки вне фикстуры (например, реальные ~/.agents/skills машины) не учитываем
+		// находки вне фикстуры (реальные каталоги машины, включая возможный ~/.agents/skills) не учитываем
 		assert.deepEqual(
-			locations.filter((l) => l.scope === "user"),
+			locations.filter((l) => l.path.startsWith(root + sep)),
 			[{ scope: "user", path: join(agentDir, "skills") }],
 		);
 		assert.equal(
 			locations.some((l) => l.scope === "project" && l.path.startsWith(root + sep)),
 			false,
 		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("discoverSkillLocations: pi 0.85.1 order — cwd/.pi/skills, .agents ancestors, <agentDir>/skills, ~/.agents/skills", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-skill-auditor-"));
+	try {
+		mkdirSync(join(root, "proj", ".pi", "skills"), { recursive: true });
+		mkdirSync(join(root, "proj", ".agents", "skills"), { recursive: true });
+		mkdirSync(join(root, "agent", "skills"), { recursive: true });
+		const locations = discoverSkillLocations(join(root, "proj"), { PI_CODING_AGENT_DIR: join(root, "agent") });
+		// находки внутри фикстуры — ровно первые три локации pi, в его порядке (project-first)
+		assert.deepEqual(
+			locations.filter((l) => l.path.startsWith(root + sep)),
+			[
+				{ scope: "project", path: join(root, "proj", ".pi", "skills") },
+				{ scope: "project", path: join(root, "proj", ".agents", "skills") },
+				{ scope: "user", path: join(root, "agent", "skills") },
+			],
+		);
+		// локация 4 берётся из homedir() (не инжектится): если она есть на машине — строго после локации 3.
+		// Сравниваем только user-локации: walk предков от tmp-каталога (без .git-стопа) может
+		// найти реальный ~/.agents/skills и как проектную локацию — это верное зеркало pi.
+		const agentIndex = locations.findIndex((l) => l.scope === "user" && l.path === join(root, "agent", "skills"));
+		const homeIndex = locations.findIndex((l) => l.scope === "user" && l.path === join(homedir(), ".agents", "skills"));
+		if (homeIndex !== -1) {
+			assert.ok(agentIndex < homeIndex, "<agentDir>/skills (3) раньше ~/.agents/skills (4)");
+		} else {
+			assert.equal(agentIndex, locations.length - 1, "~/.agents/skills нет — agentDir/skills последняя");
+		}
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -185,7 +216,8 @@ test("discoverSkillLocations: repo root (.git) is included and stops the walk", 
 			PI_CODING_AGENT_DIR: join(root, "absent-agent"),
 		});
 		assert.deepEqual(
-			locations.map((l) => l.path),
+			// находки вне фикстуры (реальный ~/.agents/skills машины) не учитываем
+			locations.filter((l) => l.path.startsWith(root + sep)).map((l) => l.path),
 			[
 				join(root, "a", "b", ".agents", "skills"),
 				join(root, "a", ".agents", "skills"),
@@ -200,15 +232,11 @@ test("discoverSkillLocations: repo root (.git) is included and stops the walk", 
 test("discoverSkillLocations: missing directories are not an error", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-skill-auditor-"));
 	try {
-		// ни <agentDir>/skills, ни .agents/skills внутри фикстуры не существует;
-		// находки выше фикстуры (реальные каталоги машины) не учитываем
+		// ни <agentDir>/skills, ни .agents/skills, ни .pi/skills внутри фикстуры не существует;
+		// находки вне фикстуры (реальные каталоги машины) не учитываем
 		const locations = discoverSkillLocations(root, { PI_CODING_AGENT_DIR: join(root, "absent-agent") });
-		assert.equal(
-			locations.some((l) => l.scope === "user"),
-			false,
-		);
 		assert.deepEqual(
-			locations.filter((l) => l.scope === "project" && l.path.startsWith(root + sep)),
+			locations.filter((l) => l.path.startsWith(root + sep)),
 			[],
 		);
 	} finally {
@@ -317,6 +345,26 @@ test("discoverSkills: earlier location wins cross-location collisions", () => {
 		assert.equal(skills.length, 2);
 		assert.deepEqual(collisions, [
 			{ name: "same", winnerDir: join(userLoc, "same"), loserDir: join(projectLoc, "same") },
+		]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("discoverSkills: <agentDir>/skills (локация 3) бьёт ~/.agents/skills (локация 4) — first-wins по порядку pi", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-skill-auditor-"));
+	try {
+		const agentDirLoc = join(root, "agent", "skills"); // скоуп user, локация 3 в порядке pi
+		const homeAgentsLoc = join(root, "home", ".agents", "skills"); // скоуп user, локация 4
+		writeSkill(join(agentDirLoc, "dup"), "name: dup\ndescription: Agent-dir copy.");
+		writeSkill(join(homeAgentsLoc, "dup"), "name: dup\ndescription: Home .agents copy.");
+		const { skills, collisions } = discoverSkills([
+			{ scope: "user", path: agentDirLoc },
+			{ scope: "user", path: homeAgentsLoc },
+		]);
+		assert.equal(skills.length, 2, "обе записи сохраняются — проигравший остаётся для отчёта");
+		assert.deepEqual(collisions, [
+			{ name: "dup", winnerDir: join(agentDirLoc, "dup"), loserDir: join(homeAgentsLoc, "dup") },
 		]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
