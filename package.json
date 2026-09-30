@@ -15,6 +15,7 @@
 		"test": "node --test extensions/**/test/*.test.ts",
 		"coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"extensions/**/test/**\" --test-coverage-exclude=\"node_modules/**\" extensions/**/test/*.test.ts",
 		"smoke": "node scripts/smoke.mjs",
+		"audit": "node extensions/skill-auditor/cli.ts",
 		"stats": "node extensions/session-ledger/cli.ts",
 		"recall": "node extensions/session-recall/cli.ts",
 		"trace": "node extensions/session-trace/cli.ts",
