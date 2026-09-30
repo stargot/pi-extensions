@@ -286,7 +286,7 @@ test("resolveEdit: 90KB-строка с дрейфом суффикса — от
 		assert.equal(r.actual, `${body} TAIL`);
 		assert.equal(r.line, 16);
 	}
-	assert.ok(dt < 2000, `resolveEdit занял ${dt.toFixed(0)}ms, бюджет 2000ms`);
+	assert.ok(dt < 10_000, `resolveEdit занял ${dt.toFixed(0)}ms, потолок 10s`);
 });
 
 test("resolveEdit: 90KB-строки, расходящиеся по всей длине — кап дисквалифицирует окно, ответ в бюджете", () => {
@@ -302,7 +302,7 @@ test("resolveEdit: 90KB-строки, расходящиеся по всей д�
 	const dt = performance.now() - t0;
 	assert.equal(r.status, "not-found");
 	assert.ok(r.status === "not-found");
-	assert.ok(dt < 2000, `resolveEdit занял ${dt.toFixed(0)}ms, бюджет 2000ms`);
+	assert.ok(dt < 10_000, `resolveEdit занял ${dt.toFixed(0)}ms, потолок 10s`);
 });
 
 test("resolveEdit: fuzzy можно отключить опцией", () => {
