@@ -13,10 +13,14 @@ frontmatter, роутинг, ссылки, обезличенность, кар�
 - Парсер frontmatter — прецедент `extensions/subagents/agents.ts`: минимальное
   YAML-подмножество (key: value, кавычки, CRLF), без зависимостей. Новых зависимостей
   не добавляем.
-- Discovery pi (docs/skills.md): пользовательский `<agentDir>/skills`; проектные
-  `.agents/skills` — от cwd по предкам, стоп на корне репо (есть `.git`); `SKILL.md`
-  ищется рекурсивно; коллизии имён — первый найденный + warning; «кривой» SKILL.md
-  или пустой description — pi молча НЕ ГРУЗИТ; name ≠ каталогу — pi не предупреждает.
+- Discovery pi (docs/skills.md; ПОРЯДОК исправлен по итогам reviewer, сверка с dist 0.85.1
+  package-manager.addAutoDiscoveredResources): (1) `<cwd>/.pi/skills`, (2) `.agents/skills`
+  предков от cwd до корня репо (есть `.git`) — оба проектных места pi гейтит флагом trusted,
+  (3) `<agentDir>/skills`, (4) `~/.agents/skills`; first-wins → проектный скилл побеждает
+  пользовательский при коллизии. `SKILL.md` ищется рекурсивно; коллизии имён — первый найденный
+  + warning; «кривой» SKILL.md или пустой description — pi молча НЕ ГРУЗИТ; description >1024 —
+  у pi лишь warning-диагностика, скилл ГРУЗИТСЯ (тоже уточнено reviewer'ом — не отказ загрузки);
+  name ≠ каталогу — pi не предупреждает.
   Spec-поля: name, description, license, compatibility, metadata, allowed-tools,
   disable-model-invocation. name: строчные/цифры/дефисы, без ведущих/хвостовых/подряд
   идущих, ≤64; description ≤1024.
