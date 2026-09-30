@@ -10,7 +10,7 @@
  * Читает ~/.pi/agent/sessions/**\/*.jsonl. Ничего не пишет.
  */
 import { join } from "node:path";
-import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { ScrollReport } from "../shared/scroll-report.ts";
 import { buildLedger, GROUPS, parseArgs, PERIODS, type SessionSummary, type StatsArgs } from "./ledger.ts";
 import { loadIndex, refreshSharedIndex, saveIndex } from "../shared/session-index.ts";
@@ -45,23 +45,61 @@ export default function (pi: ExtensionAPI) {
 		},
 		handler: async (args, ctx) => {
 			const parsed = parseArgs(args ?? "");
-			const ledger = build(parsed);
 
 			if (ctx.mode !== "tui") {
+				// CLI/не-TUI путь: синхронный билд, как раньше — без лоадера и оверлея.
+				const ledger = build(parsed);
 				const text = renderLedger(ledger, parsed.by, 120).join("\n");
 				ctx.ui.notify(ctx.hasUI ? summaryLine(ledger) : text, "info");
 				if (!ctx.hasUI) process.stdout.write(`${text}\n`);
 				return;
 			}
 
+			// Холодный /stats не должен выглядеть зависшим: оверлей открывается сразу
+			// с лоадером («indexing sessions…»), тяжёлая индексация стартует после yield —
+			// через два кадра рендера pi-tui (троттлинг MIN_RENDER_INTERVAL_MS = 16мс),
+			// затем лоадер подменяется на отчёт. Esc во время индексации закрывает оверлей
+			// и отменяет ожидание билда.
 			await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
-				return new ScrollReport({
-					tui,
-					theme,
-					onClose: () => done(),
-					render: (width, th) => renderLedger(build(parsed), parsed.by, width, th),
-					helpSuffix: " · args: today|yesterday|7d|30d|all · project|model|day|tool|session · <project>",
-				});
+				let closed = false;
+				let report: ScrollReport | undefined;
+
+				const finish = () => {
+					if (closed) return;
+					closed = true;
+					done();
+				};
+
+				const loader = new BorderedLoader(tui, theme, "indexing sessions…");
+				loader.onAbort = () => finish();
+
+				const timer = setTimeout(() => {
+					if (closed || loader.signal.aborted) return;
+					report = new ScrollReport({
+						tui,
+						theme,
+						onClose: finish,
+						// Как и раньше: первый рендер и `r` пересобирают ledger (перечитывают индекс).
+						render: (width, th) => renderLedger(build(parsed), parsed.by, width, th),
+						helpSuffix: " · args: today|yesterday|7d|30d|all · project|model|day|tool|session · <project>",
+					});
+					loader.dispose(); // гасим спиннер — дальше рисует ScrollReport
+					tui.requestRender();
+				}, 32);
+
+				return {
+					render: (width) => (report ?? loader).render(width),
+					handleInput: (data) => (report ?? loader).handleInput(data),
+					handleMouse: (event) => report?.handleMouse(event),
+					invalidate: () => {
+						loader.invalidate();
+						report?.invalidate();
+					},
+					dispose: () => {
+						clearTimeout(timer);
+						loader.dispose();
+					},
+				};
 			});
 		},
 	});

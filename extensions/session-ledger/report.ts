@@ -13,11 +13,14 @@ import {
 	topSessions,
 	dayOf,
 } from "./ledger.ts";
+import { chip } from "../shared/chip.ts";
 
 export type Color = "accent" | "success" | "error" | "warning" | "muted" | "dim" | "text" | "toolTitle" | "borderMuted";
 
 export interface Styler {
 	fg(color: Color, text: string): string;
+	/** B8: опциональная подложка (есть у Theme, нет у CLI plainStyler — чип деградирует в fg-only). */
+	bg?(color: string, text: string): string;
 	bold(text: string): string;
 }
 
@@ -237,8 +240,29 @@ export function renderLedger(
 	lines.push(st.fg("borderMuted", "─".repeat(Math.min(width, 110))));
 	const promptTotal = promptTokens(t);
 	const nestedPrompt = promptTokens(n);
+	// B8: bg-чипы на статусных метриках totals-строки. Токены — из ThemeBg pi-coding-agent
+	// (docs/themes.md): customMessageBg/toolSuccessBg/toolPendingBg/toolErrorBg. Guard:
+	// chip() деградирует до fg-only, если у стайлера нет bg (CLI plainStyler) или токена
+	// нет в теме (Theme.bg бросает).
+	const cachePct = cachePercent(t);
+	const cacheChip =
+		cachePct === null
+			? `cache ${fmtPercent(null)}`
+			: chip(
+					st,
+					`cache ${fmtPercent(cachePct)}`,
+					cachePct >= 70
+						? { fg: "success", bg: "toolSuccessBg" }
+						: cachePct < 30
+							? { fg: "warning", bg: "toolPendingBg" }
+							: { fg: "muted" },
+				);
+	const errorsChip =
+		t.toolErrors > 0
+			? chip(st, `${t.toolErrors} errors`, { fg: "error", bg: "toolErrorBg" })
+			: `${t.toolErrors} errors`;
 	lines.push(
-		`${muted("Totals")}  ${st.bold(fmtCost(t.cost))} · ${t.turns} turns · prompt ${fmtTokens(promptTotal)} (main ${fmtTokens(promptTotal - nestedPrompt)} · nested ${fmtTokens(nestedPrompt)} · cache ${fmtPercent(cachePercent(t))}) · output ${fmtTokens(t.output)} · ${t.toolCalls} tool calls (${t.toolErrors} errors) · ${t.compactions} compactions${t.branchSummaries ? ` · ${t.branchSummaries} branch summaries` : ""}${t.errors ? ` · ${t.errors} LLM errors` : ""}${t.aborted ? ` · ${t.aborted} aborted` : ""}`,
+		`${muted("Totals")}  ${st.bold(chip(st, fmtCost(t.cost), { fg: "accent", bg: "customMessageBg" }))} · ${t.turns} turns · prompt ${fmtTokens(promptTotal)} (main ${fmtTokens(promptTotal - nestedPrompt)} · nested ${fmtTokens(nestedPrompt)} · ${cacheChip}) · output ${fmtTokens(t.output)} · ${t.toolCalls} tool calls (${errorsChip}) · ${t.compactions} compactions${t.branchSummaries ? ` · ${t.branchSummaries} branch summaries` : ""}${t.errors ? ` · ${t.errors} LLM errors` : ""}${t.aborted ? ` · ${t.aborted} aborted` : ""}`,
 	);
 	lines.push("");
 

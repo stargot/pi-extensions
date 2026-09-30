@@ -394,3 +394,37 @@ test("renderLedger/summaryLine: nested-брейкдаун и счётчики un
 	assert.ok(line.includes("3 invalid files"));
 	assert.ok(line.includes("cache — ·"));
 });
+
+test("totals-чипы (B8): с bg-стилером — ANSI-подложки на статусах, с plain — текст без падения", () => {
+	const now = Date.parse("2026-09-06T10:00:00.000Z");
+	const a = parseSessionText(sessionText(), "/a")!;
+	const ledger = buildLedger([a], "30d", { now, scanned: 2, skipped: 0 });
+
+	// Стилер с парой fg/bg (как Theme): totals-строка несёт bg-escape выбранных токенов
+	const themed = renderLedger(ledger, "project", 200, {
+		fg: (_c, t) => t,
+		bold: (t) => t,
+		bg: (_c, t) => t,
+	});
+	const totals = themed.find((l) => l.includes("Totals"));
+	assert.ok(totals, "totals line present");
+	// чип-паддинг вокруг метрик:
+	assert.ok(totals.includes(" $"), "cost chip padded");
+	assert.ok(/ cache \d+% | cache — /.test(totals), "cache chip padded");
+
+	// Стилер с бросающим bg (нет токена): чип деградирует в fg-only, рендер не падает
+	const throwing = renderLedger(ledger, "project", 200, {
+		fg: (_c, t) => t,
+		bold: (t) => t,
+		bg: (c, _t) => {
+			throw new Error(`Unknown theme background color: ${c}`);
+		},
+	});
+	assert.ok(throwing.some((l) => l.includes("Totals")));
+
+	// plainStyler (CLI): без bg-метода — чипы как обычный текст с паддингом
+	const plain = renderLedger(ledger, "project", 200);
+	const plainTotals = plain.find((l) => l.includes("Totals"));
+	assert.ok(plainTotals?.includes("$"));
+	assert.ok(plainTotals?.includes("errors"));
+});

@@ -25,6 +25,7 @@ import {
 	type TuiMouseEventResult,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { chip } from "../shared/chip.ts";
 import { GraphModel, type ChildItem, type Item, fmtClock, fmtDur, fmtK, fmtMoney, oneLine } from "./session.ts";
 
 const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -44,6 +45,7 @@ const MAP_COLOR: Record<string, string> = {
 
 interface UiTheme {
 	fg(color: string, text: string): string;
+	bg?(color: string, text: string): string;
 	bold(text: string): string;
 }
 
@@ -569,7 +571,19 @@ export class TraceView {
 						? th.fg("error", "✗")
 						: th.fg("accent", `${this.spin()} running`);
 			const chipDur = c.endMs !== undefined ? fmtDur(c.endMs - c.startMs) : "";
-			const left = ` ⚒ ${th.fg("toolTitle", c.name)} ${th.fg("dim", c.label)}`;
+			// B8: имя инструмента — чип с подложкой по статусу (ThemeBg: toolSuccessBg /
+			// toolErrorBg / toolPendingBg). Guard: темы без bg-токена и duck-typed темы без
+			// bg деградируют до fg-only (shared/chip.ts).
+			const badge = chip(
+				th,
+				`⚒ ${c.name}`,
+				c.status === "error"
+					? { fg: "error", bg: "toolErrorBg" }
+					: c.status === "running"
+						? { fg: "accent", bg: "toolPendingBg" }
+						: { fg: "toolTitle", bg: "toolSuccessBg" },
+			);
+			const left = ` ${badge} ${th.fg("dim", c.label)}`;
 			card.addChild(textLine(this.chipRow(left, `${th.fg("muted", chipDur)} ${glyph}`, inner)));
 			kinds.push(c.status === "error" ? "E" : c.status === "running" ? "R" : "t");
 		}
