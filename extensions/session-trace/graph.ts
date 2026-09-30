@@ -1,10 +1,30 @@
 /**
  * session-trace — TUI-компонент: лента ходов агента как flow-граф.
  * Режимы: live (follow за хвостом файла) и replay (проигрывание по timestamp'ам).
+ *
+ * Композиция на примитивах pi-tui (паттерн — shared/scroll-report.ts):
+ * карточки — Box, лента — ScrollView, мини-карта — соседняя колонка HStack.
+ * Состояние скролла (scrollTop, клампы) принадлежит ScrollView; follow-режим
+ * («держать хвост») остаётся флагом TraceView и каждый рендер пинокает
+ * scrollToEnd() — так бейдж LIVE/PAUSED/▶ не зависит от внутреннего
+ * followingEnd у ScrollView. В оверлее ctx.ui.custom колесо мыши приходит в
+ * handleMouse самого компонента (routeWheel идёт мимо оверлея), в alt-screen
+ * (cli.ts) — через dispatchMouseToLayout в тот же handleMouse.
  */
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { basename } from "node:path";
-import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	Box,
+	type Component,
+	HStack,
+	Key,
+	matchesKey,
+	ScrollView,
+	truncateToWidth,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { GraphModel, type ChildItem, type Item, fmtClock, fmtDur, fmtK, fmtMoney, oneLine } from "./session.ts";
 
 const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -32,6 +52,11 @@ interface TuiLike {
 	terminal: { rows: number; columns: number };
 }
 
+/** Однострочный компонент для Box: отдаёт готовую строку, ширины касается сам Box. */
+function textLine(s: string): Component {
+	return { render: () => [s], invalidate: () => {} };
+}
+
 export class TraceView {
 	private tui: TuiLike;
 	private theme: UiTheme;
@@ -49,7 +74,6 @@ export class TraceView {
 	private speed = 8;
 	private paused = false;
 	private follow: boolean;
-	private scrollBack = 0;
 	private lastTick = Date.now();
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private closed = false;
@@ -63,6 +87,56 @@ export class TraceView {
 	private cache:
 		| { width: number; version: number; lines: string[]; kinds: string[]; matchStarts: number[] }
 		| undefined;
+
+	/** Вьюпорт: нарезает кэш ленты по scrollTop (в оверлее layout-движка нет). */
+	private readonly viewport: Component = {
+		render: (_width: number) => {
+			const lines = this.cache?.lines ?? [];
+			const body = this.mapState.body;
+			const top = this.scrollView.scrollTop;
+			const out: string[] = [];
+			for (let r = 0; r < body; r++) out.push(lines[top + r] ?? "");
+			return out;
+		},
+		invalidate: () => {},
+	};
+	private readonly scrollView = new ScrollView(this.viewport, { scrollbar: "hidden" });
+	/** Состояние мини-карты на текущий кадр; читается map-колонкой HStack. */
+	private mapState = { kinds: [] as string[], top: 0, body: 0, total: 0, show: false };
+	/** Мини-карта: силуэт ленты (▪ по самому «тяжёлому» классу) + ▐ позиция вьюпорта. */
+	private readonly mapComp: Component = {
+		render: () => {
+			const { kinds, top, body, total, show } = this.mapState;
+			const out: string[] = [];
+			for (let r = 0; r < body; r++) {
+				if (!show || total === 0) {
+					out.push("  ");
+					continue;
+				}
+				// диапазон исходных строк, который представляет эта строка карты
+				const a = Math.floor((total * r) / body);
+				const bEnd = Math.max(a + 1, Math.floor((total * (r + 1)) / body));
+				let bestW = 0;
+				let bestK = ".";
+				for (let i = a; i < kinds.length && i < bEnd + 1; i++) {
+					const w = KIND_WEIGHT[kinds[i]] ?? 0;
+					if (w > bestW) {
+						bestW = w;
+						bestK = kinds[i];
+					}
+				}
+				const inView = bEnd > top && a < top + body;
+				const glyph = bestK === "." ? " " : this.theme.fg(MAP_COLOR[bestK] ?? "dim", "▪");
+				out.push(glyph + (inView ? this.theme.fg("accent", "▐") : " "));
+			}
+			return out;
+		},
+		invalidate: () => {},
+	};
+	private readonly feedRow = new HStack([
+		{ component: this.scrollView, grow: 1 },
+		{ component: this.mapComp, basis: MAP, grow: 0, shrink: 0 },
+	]);
 
 	constructor(opts: {
 		tui: TuiLike;
@@ -243,25 +317,35 @@ export class TraceView {
 			this.jumpMatch(data === "n" ? 1 : -1);
 		} else if (matchesKey(data, Key.up)) {
 			this.follow = false;
-			this.scrollBack += 3;
+			this.scrollView.scrollBy(-3);
 		} else if (matchesKey(data, Key.down)) {
-			this.scrollBack = Math.max(0, this.scrollBack - 3);
-			if (this.scrollBack === 0) this.follow = true;
+			this.scrollView.scrollBy(3);
+			if (this.atTail()) this.follow = true;
 		} else if (matchesKey(data, Key.pageUp)) {
 			this.follow = false;
-			this.scrollBack += rows - 3;
+			this.scrollView.scrollBy(-(rows - 3));
 		} else if (matchesKey(data, Key.pageDown)) {
-			this.scrollBack = Math.max(0, this.scrollBack - (rows - 3));
-			if (this.scrollBack === 0) this.follow = true;
+			this.scrollView.scrollBy(rows - 3);
+			if (this.atTail()) this.follow = true;
 		} else if (matchesKey(data, Key.home)) {
 			this.follow = false;
-			this.scrollBack = Number.MAX_SAFE_INTEGER / 2;
+			this.scrollView.scrollToStart();
 		} else if (matchesKey(data, Key.end) || data === "f") {
 			this.jumpToEnd();
 		} else if (this.mode === "replay") {
 			this.handleReplayKeys(data);
 		}
 		this.tui.requestRender();
+	}
+
+	/** Колесо мыши: в оверлее routeWheel идёт мимо, в alt-screen событие приходит
+	 * сюда через dispatchMouseToLayout — в обоих случаях крутим наш ScrollView. */
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
+		this.scrollView.scrollBy(event.wheelDelta);
+		if (event.wheelDelta < 0) this.follow = false;
+		else if (this.atTail()) this.follow = true;
+		return { handled: true };
 	}
 
 	private handleReplayKeys(data: string): void {
@@ -275,17 +359,27 @@ export class TraceView {
 			this.follow = false;
 			this.paused = true;
 			this.seekTo(Math.max(0, this.playheadMs - 5000));
+			this.scrollView.scrollToEnd();
 		} else if (matchesKey(data, Key.right)) {
 			this.follow = false;
 			this.paused = true;
 			this.seekTo(this.playheadMs + 5000);
+			this.scrollView.scrollToEnd();
 		} else if (data === "l") {
 			this.jumpToEnd();
 		} else if (data === "r") {
 			this.follow = false;
 			this.paused = false;
 			this.seekTo(this.entries[0]?.ms ?? 0);
+			this.scrollView.scrollToEnd();
 		}
+	}
+
+	/** Вьюпорт сидит на хвосте ленты (последняя строка контента видна). */
+	private atTail(): boolean {
+		const total = this.cache?.lines.length ?? 0;
+		const body = Math.max(6, this.tui.terminal.rows) - 2;
+		return this.scrollView.scrollTop >= Math.max(0, total - body);
 	}
 
 	/** n/N: к следующему/предыдущему совпадению фильтра (без фильтра — к соседнему элементу). */
@@ -299,9 +393,7 @@ export class TraceView {
 
 		if (this.matchCursor < 0 || this.matchCursor >= ms.length) {
 			// первый прыжок: от текущей позиции вьюпорта
-			const body = Math.max(4, this.tui.terminal.rows - 2);
-			const maxStart = Math.max(0, this.cache!.lines.length - body);
-			const cur = this.follow ? maxStart : Math.max(0, Math.min(maxStart, maxStart - this.scrollBack));
+			const cur = this.scrollView.scrollTop;
 			this.matchCursor = dir === 1 ? ms.findIndex((s) => s > cur) : -1;
 			if (dir === 1 && this.matchCursor < 0) this.matchCursor = 0; // по кругу
 			if (dir === -1) {
@@ -319,17 +411,14 @@ export class TraceView {
 			if (this.matchCursor < 0) this.matchCursor = ms.length - 1;
 		}
 
-		const body2 = Math.max(4, this.tui.terminal.rows - 2);
-		const maxStart2 = Math.max(0, this.cache!.lines.length - body2);
 		const target = ms[this.matchCursor];
 		this.follow = false;
-		this.scrollBack = Math.max(0, maxStart2 - target);
+		this.scrollView.scrollTo(target, { disableFollow: true });
 		this.tui.requestRender();
 	}
 
 	private jumpToEnd(): void {
 		this.follow = true;
-		this.scrollBack = 0;
 		this.feedAvailable();
 	}
 
@@ -354,55 +443,20 @@ export class TraceView {
 			};
 		}
 		const { lines, kinds } = this.cache;
-		const maxStart = Math.max(0, lines.length - body);
-		let start = this.follow ? maxStart : maxStart - this.scrollBack;
-		start = Math.max(0, Math.min(maxStart, start));
-		const showMap = lines.length > body;
-		const out = [this.header(width, start)];
-		for (let r = 0; r < body; r++) {
-			const line = lines[start + r];
-			if (!showMap || line === undefined) {
-				out.push(line ?? "");
-				continue;
-			}
-			out.push(this.mapRow(line, contentW, kinds, start, body, r, lines.length));
-		}
+		this.scrollView.updateLayout(lines.length, body, () => this.tui.requestRender());
+		// follow-режим и играющий replay держат хвост; стоит пользователю
+		// уехать вверх (scrollTop < хвоста) — вьюпорт больше не дёргается
+		if (this.follow || (this.mode === "replay" && this.atTail())) this.scrollView.scrollToEnd();
+		const top = this.scrollView.scrollTop;
+		this.mapState = { kinds, top, body, total: lines.length, show: lines.length > body };
+		const out = [this.header(width, top)];
+		out.push(...this.feedRow.render(width));
 		while (out.length < rows) out.push("");
-		out[rows - 1] = this.footer(width, start, lines.length);
+		out[rows - 1] = this.footer(width, top, lines.length);
 		return out;
 	}
 
-	/** Строка ленты, дополненная справа колонкой мини-карты. */
-	private mapRow(
-		line: string,
-		contentW: number,
-		kinds: string[],
-		start: number,
-		body: number,
-		r: number,
-		total: number,
-	): string {
-		const th = this.theme;
-		const pad = contentW - visibleWidth(line);
-		// диапазон исходных строк, который представляет эта строка карты
-		const a = Math.floor((total * r) / body);
-		const bEnd = Math.max(a + 1, Math.floor((total * (r + 1)) / body));
-		let bestW = 0;
-		let bestK = ".";
-		for (let i = a; i < kinds.length && i < bEnd + 1; i++) {
-			const w = KIND_WEIGHT[kinds[i]] ?? 0;
-			if (w > bestW) {
-				bestW = w;
-				bestK = kinds[i];
-			}
-		}
-		const inView = bEnd > start && a < start + body;
-		const glyph = bestK === "." ? " " : th.fg(MAP_COLOR[bestK] ?? "dim", "▪");
-		const bar = inView ? th.fg("accent", "▐") : " ";
-		return line + " ".repeat(Math.max(0, pad)) + glyph + bar;
-	}
-
-	private badge(start: number): string {
+	private badge(top: number): string {
 		const th = this.theme;
 		let b: string;
 		if (this.mode === "live" || this.follow) b = th.fg("accent", th.bold("LIVE ●"));
@@ -416,13 +470,13 @@ export class TraceView {
 			b += " " + th.fg("dim", `${this.matchCursor + 1}/${ms.length}`);
 		} else if ((this.filterQ || this.errorsOnly) && ms && ms.length) {
 			let idx = 0;
-			for (const s of ms) if (s <= start) idx++;
+			for (const s of ms) if (s <= top) idx++;
 			b += " " + th.fg("dim", `${Math.min(idx + 1, ms.length)}/${ms.length}`);
 		}
 		return b;
 	}
 
-	private header(width: number, start: number): string {
+	private header(width: number, top: number): string {
 		const th = this.theme;
 		const m = this.model;
 		const fileLabel =
@@ -437,14 +491,14 @@ export class TraceView {
 			m.totals.cost > 0 ? fmtMoney(m.totals.cost) : "",
 		].filter(Boolean) as string[];
 		const left = parts.join(sep);
-		const b = this.badge(start);
+		const b = this.badge(top);
 		const pad = width - visibleWidth(left) - visibleWidth(b) - 1;
 		return pad > 0 ? `${left} ${" ".repeat(pad)}${b}` : truncateToWidth(`${left} ${b}`, width);
 	}
 
-	private footer(width: number, start: number, total: number): string {
+	private footer(width: number, top: number, total: number): string {
 		const th = this.theme;
-		const pos = th.fg("dim", `${Math.min(start + 1, total)}/${total}`);
+		const pos = th.fg("dim", `${Math.min(top + 1, total)}/${total}`);
 		let hints: string;
 		if (this.editing) {
 			hints = ` filter: ${this.filterQ}▏ enter — применить · esc — сброс `;
@@ -462,64 +516,50 @@ export class TraceView {
 		return SPIN[Math.floor(Date.now() / 90) % SPIN.length];
 	}
 
-	private cardEdge(left: string, title: string, width: number): string {
-		const th = this.theme;
-		const inner = width - visibleWidth(left) - visibleWidth("─" + title) - 1;
-		const dashes = "─".repeat(Math.max(0, inner));
-		return th.fg("border", left + dashes) + th.fg("dim", title) + th.fg("border", "─┐");
-	}
-
-	private cardRow(left: string, right: string, inner: number): string {
+	/** Контент чипа: слева имя+лейбл, справа длительность и глиф статуса. */
+	private chipRow(left: string, right: string, inner: number): string {
 		const gap = inner - visibleWidth(left) - visibleWidth(right);
-		const content = gap >= 1 ? left + " ".repeat(gap) + right : truncateToWidth(`${left} ${right}`, inner);
-		const padding = " ".repeat(Math.max(0, inner - visibleWidth(content)));
-		return this.theme.fg("border", "│") + content + padding + this.theme.fg("border", "│");
-	}
-
-	private plainRow(content: string, inner: number): string {
-		const padding = " ".repeat(Math.max(0, inner - visibleWidth(content)));
-		return this.theme.fg("border", "│") + content + padding + this.theme.fg("border", "│");
+		return gap >= 1 ? left + " ".repeat(gap) + right : truncateToWidth(`${left} ${right}`, inner);
 	}
 
 	private childLines(c: ChildItem, width: number, out: string[], kinds: string[]): void {
 		const th = this.theme;
-		const inner = Math.max(8, width - 2);
 		const title =
-			` ⧉ субагент: ${c.agent}` +
+			`⧉ субагент: ${c.agent}` +
 			` · ${fmtClock(c.ts)}` +
 			(c.tokensOut ? ` · ↓${fmtK(c.tokensOut)}` : "") +
 			(c.cost ? ` · ${fmtMoney(c.cost)}` : "");
-		out.push(this.cardEdge("┌─", title, width));
+		const card = new Box(1, 0);
+		card.addChild(textLine(th.fg("dim", ` ${title}`)));
 		kinds.push("C");
-		out.push(this.plainRow(` ${th.fg("text", c.task)}`, inner));
+		card.addChild(textLine(` ${th.fg("text", c.task)}`));
 		kinds.push("C");
-		out.push(this.plainRow(` ${th.fg("dim", basename(c.session))}`, inner));
+		card.addChild(textLine(` ${th.fg("dim", basename(c.session))}`));
 		kinds.push("C");
-		out.push(this.plainRow(` ${th.fg("toolTitle", "→ /graph " + c.session)}`, inner));
+		card.addChild(textLine(` ${th.fg("toolTitle", "→ /graph " + c.session)}`));
 		kinds.push("C");
-		out.push(th.fg("border", `└${"─".repeat(width - 2)}┘`));
-		kinds.push("C");
+		card.addChild(textLine("")); // отбивка вместо нижней рамки
+		kinds.push(".");
+		out.push(...card.render(width));
 	}
 
 	private cardLines(t: any, width: number, out: string[], kinds: string[]): void {
-		const put = (s: string, k: string) => {
-			out.push(s);
-			kinds.push(k);
-		};
 		const th = this.theme;
 		const inner = Math.max(8, width - 2);
 		const running = t.chips.some((c: any) => c.status === "running");
 		const ends = t.chips.map((c: any) => c.endMs).filter((x: any) => x !== undefined) as number[];
 		const dur = ends.length > 0 ? fmtDur(Math.max(...ends) - t.startMs) : "";
 		const title =
-			` T${t.index} · ${fmtClock(t.startMs)}` +
+			`T${t.index} · ${fmtClock(t.startMs)}` +
 			(dur ? ` · ${dur}` : "") +
 			(t.model ? ` · ${t.model}` : "") +
 			(t.tokensOut ? ` · ↓${fmtK(t.tokensOut)}` : "") +
 			(t.cost ? ` · ${fmtMoney(t.cost)}` : "") +
 			(t.stopReason === "aborted" ? " · aborted" : "") +
 			(running ? " · working" : "");
-		put(this.cardEdge("┌─", title, width), running ? "R" : "t");
+		const card = new Box(1, 0);
+		card.addChild(textLine(th.fg("dim", ` ${title}`)));
+		kinds.push(running ? "R" : "t");
 
 		for (const c of t.chips) {
 			const glyph =
@@ -528,23 +568,26 @@ export class TraceView {
 					: c.status === "error"
 						? th.fg("error", "✗")
 						: th.fg("accent", `${this.spin()} running`);
-			const dur = c.endMs !== undefined ? fmtDur(c.endMs - c.startMs) : "";
-			const left = `${th.fg("toolTitle", c.name)} ${th.fg("dim", c.label)}`;
-			put(
-				this.cardRow(` ⚒ ${left}`, `${th.fg("muted", dur)} ${glyph}`, inner),
-				c.status === "error" ? "E" : c.status === "running" ? "R" : "t",
-			);
+			const chipDur = c.endMs !== undefined ? fmtDur(c.endMs - c.startMs) : "";
+			const left = ` ⚒ ${th.fg("toolTitle", c.name)} ${th.fg("dim", c.label)}`;
+			card.addChild(textLine(this.chipRow(left, `${th.fg("muted", chipDur)} ${glyph}`, inner)));
+			kinds.push(c.status === "error" ? "E" : c.status === "running" ? "R" : "t");
 		}
 		if (t.thinking) {
-			put(this.plainRow(` ${th.fg("muted", `⋮ ${t.thinking}`)}`, inner), "t");
+			card.addChild(textLine(` ${th.fg("muted", `⋮ ${t.thinking}`)}`));
+			kinds.push("t");
 		}
 		if (t.text) {
-			put(this.plainRow(` ${th.fg("text", `«${t.text}»`)}`, inner), "t");
+			card.addChild(textLine(` ${th.fg("text", `«${t.text}»`)}`));
+			kinds.push("t");
 		}
 		if (t.errorMessage) {
-			put(this.plainRow(` ${th.fg("error", `✗ ${oneLine(t.errorMessage, inner - 4)}`)}`, inner), "E");
+			card.addChild(textLine(` ${th.fg("error", `✗ ${oneLine(t.errorMessage, inner - 4)}`)}`));
+			kinds.push("E");
 		}
-		put(th.fg("border", `└${"─".repeat(width - 2)}┘`), "t");
+		card.addChild(textLine("")); // отбивка вместо нижней рамки
+		kinds.push(".");
+		out.push(...card.render(width));
 	}
 
 	/** Проходит ли элемент под активными фильтрами (подстрока и/или «только ошибки»). */
@@ -572,8 +615,8 @@ export class TraceView {
 
 	private summaryLines(width: number, kinds: string[]): string[] {
 		const th = this.theme;
-		const out: string[] = ["", ` ${th.bold("Модели")}`, th.fg("dim", " ─────────────────────────────────────────")];
-		kinds.push(".", ".", ".");
+		const out: string[] = ["", ` ${th.bold("Модели")}`];
+		kinds.push(".", ".");
 		const rows = [...this.model.models.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].turns - a[1].turns);
 		for (const [name, s] of rows) {
 			const left = ` ${th.fg("toolTitle", oneLine(name, Math.max(12, width - 44)))}`;
