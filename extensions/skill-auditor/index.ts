@@ -7,14 +7,16 @@
  *
  * `/audit` runs the pipeline for the session cwd and shows the markdown
  * report: in a TUI session in a scrollable viewer (ScrollReport, like
- * /handoff), elsewhere as a brief notify (severity counters + hint). The `go`
- * verb (semantic review prompt) arrives in T6 — the footer hint is plain text
- * for now.
+ * /handoff), elsewhere as a brief notify (severity counters + hint).
+ * `/audit go` runs the same pipeline and, after a confirm, injects the report
+ * into the model as a semantic review prompt (buildSemanticPrompt) via
+ * pi.sendUserMessage — recommendations only, skill files stay untouched.
  */
 import { userInfo } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ScrollReport } from "../shared/scroll-report.ts";
 import { type Finding, auditSkills } from "./lint.ts";
+import { buildSemanticPrompt } from "./prompt.ts";
 import { buildReport } from "./report.ts";
 import { discoverSkillLocations, discoverSkills } from "./skills.ts";
 
@@ -45,21 +47,32 @@ function countersLine(findings: Finding[], skills: number): string {
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("audit", {
 		description: "Read-only skill audit: frontmatter, routing, references, scope map",
-		handler: async (_args, ctx) => {
+		handler: async (args, ctx) => {
 			try {
 				const locations = discoverSkillLocations(ctx.cwd, process.env);
 				const discovery = discoverSkills(locations);
 				const audit = auditSkills(discovery, { username: currentUsername() });
+				const report = buildReport(audit, { now: new Date(), cwd: ctx.cwd });
+
+				// Same verb extraction as /handoff: "go" or anything starting with "go ".
+				const verb = args.trim().split(/\s+/)[0] ?? "";
+				if (verb === "go") {
+					const ok = await ctx.ui.confirm(
+						"Отправить отчёт модели на семантический разбор?",
+						"Механический отчёт уйдёт модели как промпт: роутинг description, пересечения скиллов, кандидаты на перенос в .agents/skills и на disable-model-invocation. Только рекомендации — файлы скиллов не затрагиваются.",
+					);
+					if (!ok) return;
+					pi.sendUserMessage(buildSemanticPrompt(report, ctx.cwd));
+					return;
+				}
 
 				if (ctx.hasUI && ctx.mode === "tui") {
-					const report = buildReport(audit, { now: new Date(), cwd: ctx.cwd });
 					await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
 						return new ScrollReport({
 							tui,
 							theme,
 							onClose: () => done(),
 							render: (_width, th) => [
-								// T6: здесь появится обработка go, пока это просто подсказка.
 								th.fg("dim", " go — семантический разбор · esc — закрыть"),
 								...report.split("\n"),
 							],
