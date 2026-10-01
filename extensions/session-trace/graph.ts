@@ -4,6 +4,9 @@
  *
  * Композиция на примитивах pi-tui (паттерн — shared/scroll-report.ts):
  * карточки — Box, лента — ScrollView, мини-карта — соседняя колонка HStack.
+ * Клавиши действий (/, e, m, d, n/N, f, q и replay-набор) — action'ы ext.trace.*
+ * из shared/keybindings.ts (переопределяются в <agentDir>/keybindings.json);
+ * скролл-навигация и esc/ctrl+c — как раньше, литерально.
  * Состояние скролла (scrollTop, клампы) принадлежит ScrollView; follow-режим
  * («держать хвост») остаётся флагом TraceView и каждый рендер пинокает
  * scrollToEnd() — так бейдж LIVE/PAUSED/▶ не зависит от внутреннего
@@ -35,6 +38,7 @@ import {
 	type DiffDisplayRow,
 	type DiffRow,
 } from "../shared/line-diff.ts";
+import { actionHint, getExtKeybindings, matchAction } from "../shared/keybindings.ts";
 import { GraphModel, type ChildItem, type Item, fmtClock, fmtDur, fmtK, fmtMoney, oneLine } from "./session.ts";
 import { cacheHitRatio, cacheLevel, CONTEXT_HISTORY_LIMIT } from "./context-history.ts";
 
@@ -106,6 +110,8 @@ export class TraceView {
 	private cache:
 		| { width: number; version: number; lines: string[]; kinds: string[]; matchStarts: number[] }
 		| undefined;
+	/** Клавиши ext.*: свой менеджер с definitions расширений (см. shared/keybindings.ts). */
+	private readonly kb = getExtKeybindings();
 
 	/** Вьюпорт: нарезает кэш ленты по scrollTop (в оверлее layout-движка нет). */
 	private readonly viewport: Component = {
@@ -305,15 +311,19 @@ export class TraceView {
 			return;
 		}
 
-		// B6: режим контекст-диффа — свой набор клавиш; q/esc/d возвращают к ленте,
-		// а не закрывают оверлей. Ctrl+C закрывает и отсюда.
+		// B6: режим контекст-диффа — свой набор клавиш; d/q (действия diff/close) и
+		// esc возвращают к ленте, а не закрывают оверлей. Ctrl+C закрывает и отсюда.
 		if (this.diffMode) {
 			if (matchesKey(data, Key.ctrl("c"))) {
 				this.dispose();
 				this.onClose();
 				return;
 			}
-			if (data === "d" || data === "q" || matchesKey(data, Key.escape)) {
+			if (
+				matchAction(this.kb, data, "ext.trace.diff", ["d"]) ||
+				matchAction(this.kb, data, "ext.trace.close", ["q"]) ||
+				matchesKey(data, Key.escape)
+			) {
 				this.exitDiff();
 			} else if (matchesKey(data, Key.up)) {
 				this.moveDiffSel(-1);
@@ -325,14 +335,14 @@ export class TraceView {
 				this.scrollView.scrollBy(rows - 3);
 			} else if (matchesKey(data, Key.home)) {
 				this.scrollView.scrollToStart();
-			} else if (matchesKey(data, Key.end) || data === "f") {
+			} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow", ["f"])) {
 				this.scrollView.scrollToEnd();
 			}
 			this.tui.requestRender();
 			return;
 		}
 
-		if (matchesKey(data, Key.ctrl("c")) || data === "q") {
+		if (matchesKey(data, Key.ctrl("c")) || matchAction(this.kb, data, "ext.trace.close", ["q"])) {
 			this.dispose();
 			this.onClose();
 			return;
@@ -350,19 +360,21 @@ export class TraceView {
 				this.onClose();
 				return;
 			}
-		} else if (data === "/") {
+		} else if (matchAction(this.kb, data, "ext.trace.filter", ["/"])) {
 			this.editing = true;
-		} else if (data === "e") {
+		} else if (matchAction(this.kb, data, "ext.trace.errors", ["e"])) {
 			this.errorsOnly = !this.errorsOnly;
 			this.matchCursor = -1;
 			this.cache = undefined;
-		} else if (data === "m") {
+		} else if (matchAction(this.kb, data, "ext.trace.models", ["m"])) {
 			this.summary = !this.summary;
 			this.cache = undefined;
-		} else if (data === "d") {
+		} else if (matchAction(this.kb, data, "ext.trace.diff", ["d"])) {
 			this.enterDiff();
-		} else if (data === "n" || data === "N") {
-			this.jumpMatch(data === "n" ? 1 : -1);
+		} else if (matchAction(this.kb, data, "ext.trace.jumpMatch", ["n", "shift+n"])) {
+			// направление — по регистру клавиши (нижний — вперёд): при дефолтах n/N
+			// это точная прежняя семантика, при переопределении — эвристика
+			this.jumpMatch(data === data.toLowerCase() ? 1 : -1);
 		} else if (matchesKey(data, Key.up)) {
 			this.follow = false;
 			this.scrollView.scrollBy(-3);
@@ -378,7 +390,7 @@ export class TraceView {
 		} else if (matchesKey(data, Key.home)) {
 			this.follow = false;
 			this.scrollView.scrollToStart();
-		} else if (matchesKey(data, Key.end) || data === "f") {
+		} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow", ["f"])) {
 			this.jumpToEnd();
 		} else if (this.mode === "replay") {
 			this.handleReplayKeys(data);
@@ -397,25 +409,25 @@ export class TraceView {
 	}
 
 	private handleReplayKeys(data: string): void {
-		if (matchesKey(data, Key.space)) {
+		if (matchAction(this.kb, data, "ext.trace.pause", [Key.space])) {
 			this.paused = !this.paused;
-		} else if (data === "+" || data === "=") {
+		} else if (matchAction(this.kb, data, "ext.trace.faster", ["+", "="])) {
 			this.speed = Math.min(256, this.speed * 2);
-		} else if (data === "-" || data === "_") {
+		} else if (matchAction(this.kb, data, "ext.trace.slower", ["-", "_"])) {
 			this.speed = Math.max(0.25, this.speed / 2);
-		} else if (matchesKey(data, Key.left)) {
+		} else if (matchAction(this.kb, data, "ext.trace.seekBack", [Key.left])) {
 			this.follow = false;
 			this.paused = true;
 			this.seekTo(Math.max(0, this.playheadMs - 5000));
 			this.scrollView.scrollToEnd();
-		} else if (matchesKey(data, Key.right)) {
+		} else if (matchAction(this.kb, data, "ext.trace.seekForward", [Key.right])) {
 			this.follow = false;
 			this.paused = true;
 			this.seekTo(this.playheadMs + 5000);
 			this.scrollView.scrollToEnd();
-		} else if (data === "l") {
+		} else if (matchAction(this.kb, data, "ext.trace.live", ["l"])) {
 			this.jumpToEnd();
-		} else if (data === "r") {
+		} else if (matchAction(this.kb, data, "ext.trace.restart", ["r"])) {
 			this.follow = false;
 			this.paused = false;
 			this.seekTo(this.entries[0]?.ms ?? 0);
@@ -568,13 +580,15 @@ export class TraceView {
 		const pos = th.fg("dim", `${Math.min(top + 1, total)}/${total}`);
 		let hints: string;
 		if (this.diffMode) {
-			hints = " ↑↓ ход · PgUp/PgDn scroll · d/esc/q — назад к ленте ";
+			hints = ` ↑↓ ход · PgUp/PgDn scroll · ${actionHint(this.kb, "ext.trace.diff")} / esc / ${actionHint(this.kb, "ext.trace.close")} — назад к ленте `;
 		} else if (this.editing) {
 			hints = ` filter: ${this.filterQ}▏ enter — применить · esc — сброс `;
 		} else {
 			const nav =
-				this.mode === "live" ? "↑↓ scroll · f follow" : "space pause · ←→ seek · +/- speed · l live · r restart";
-			hints = ` ${nav} · / filter · n/N jump · e errors · m models · d context-diff · esc close `;
+				this.mode === "live"
+					? `↑↓ scroll · ${actionHint(this.kb, "ext.trace.follow", "follow")}`
+					: `space pause · ←→ seek · +/- speed · ${actionHint(this.kb, "ext.trace.live", "live")} · ${actionHint(this.kb, "ext.trace.restart", "restart")}`;
+			hints = ` ${nav} · ${actionHint(this.kb, "ext.trace.filter", "filter")} · ${actionHint(this.kb, "ext.trace.jumpMatch", "jump")} · ${actionHint(this.kb, "ext.trace.errors", "errors")} · ${actionHint(this.kb, "ext.trace.models", "models")} · ${actionHint(this.kb, "ext.trace.diff", "context-diff")} · esc clear · ${actionHint(this.kb, "ext.trace.close", "close")} `;
 		}
 		const right = `${hints}${pos} `;
 		const pad = width - visibleWidth(right);
@@ -712,7 +726,7 @@ export class TraceView {
 			out.push(th.fg("dim", " пока нет ответов модели"));
 			kinds.push(".");
 		}
-		out.push("", th.fg("dim", " m — вернуться к ленте · esc — сбросить всё"));
+		out.push("", th.fg("dim", ` ${actionHint(this.kb, "ext.trace.models")} — вернуться к ленте · esc — сбросить всё`));
 		kinds.push(".", ".");
 		return out;
 	}
@@ -763,7 +777,7 @@ export class TraceView {
 		const snaps = this.model.history.snapshots;
 		if (snaps.length === 0) {
 			out.push(th.fg("dim", "  ходов пока нет — дифф появится после первого ответа модели"));
-			out.push("", th.fg("dim", " d/esc — назад к ленте"));
+			out.push("", th.fg("dim", ` ${actionHint(this.kb, "ext.trace.diff")} / esc — назад к ленте`));
 			kinds.push(".", ".", ".");
 			return { lines: out, kinds };
 		}
@@ -780,7 +794,13 @@ export class TraceView {
 			kinds.push("t");
 		}
 		this.pushDiffDetail(out, kinds);
-		out.push("", th.fg("dim", " + добавлено · − удалено · ~ изменено · ⋮ разрыв · d/esc — назад к ленте"));
+		out.push(
+			"",
+			th.fg(
+				"dim",
+				` + добавлено · − удалено · ~ изменено · ⋮ разрыв · ${actionHint(this.kb, "ext.trace.diff")} / esc — назад к ленте`,
+			),
+		);
 		kinds.push(".", ".");
 		return { lines: out, kinds };
 	}

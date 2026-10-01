@@ -2,8 +2,9 @@
  * session-recall: интерактивный список результатов на SelectList из pi-tui.
  * Строка результата: primary — заголовок (дата, проект, роль, сессия), secondary — фрагмент
  * с подсветкой термов (highlight из search.ts). Выделение, пейджинг и колесо мыши принадлежат
- * SelectList; ResultsView — контейнер: заголовок, разделитель, подсказка и q/Esc/Ctrl+C.
- * ↑↓ j k PgUp PgDn Home End · Enter выбрать · q Esc Ctrl+C закрыть.
+ * SelectList; ResultsView — контейнер: заголовок, разделитель, подсказка и закрытие через
+ * action ext.recall.close (по умолчанию q/Esc, переопределяется в keybindings.json), Ctrl+C.
+ * ↑↓ j k PgUp PgDn Home End · Enter выбрать.
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -20,6 +21,7 @@ import {
 	VStack,
 } from "@earendil-works/pi-tui";
 import { formatDate, type Hit, highlight } from "./search.ts";
+import { actionHint, getExtKeybindings, matchAction } from "../shared/keybindings.ts";
 
 export interface ResultsViewOptions {
 	tui: TUI;
@@ -50,6 +52,8 @@ export class ResultsView implements Component {
 	private readonly root: Component;
 	/** Зеркало selectedIndex SelectList — для относительных PgUp/PgDn/j/k. */
 	private selected = 0;
+	/** Клавиши ext.*: свой менеджер с definitions расширений (см. shared/keybindings.ts). */
+	private readonly kb = getExtKeybindings();
 
 	constructor(options: ResultsViewOptions) {
 		this.tui = options.tui;
@@ -101,7 +105,7 @@ export class ResultsView implements Component {
 
 		const shown = this.hits.length;
 		const header = `${th.bold(th.fg("accent", " Recall"))}  ${th.fg("muted", this.queryText)}  ${th.fg("dim", `${shown === this.total ? shown : `${shown} of ${this.total}`} results`)}`;
-		const help = th.fg("dim", "↑↓ PgUp PgDn move · Enter open · q/esc close");
+		const help = th.fg("dim", `↑↓ PgUp PgDn move · Enter open · ${actionHint(this.kb, "ext.recall.close", "close")}`);
 		// Разделитель — точно по ширине (без ellipsis-артефактов TruncatedText), как раньше.
 		const separator: Component = {
 			render: (w) => [th.fg("borderMuted", "─".repeat(Math.min(w, 110)))],
@@ -123,7 +127,7 @@ export class ResultsView implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
+		if (matchesKey(data, "ctrl+c") || matchAction(this.kb, data, "ext.recall.close", ["q", "escape"])) {
 			this.onClose();
 			return;
 		}

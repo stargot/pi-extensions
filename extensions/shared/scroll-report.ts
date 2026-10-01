@@ -1,6 +1,8 @@
 /**
  * Общий прокручиваемый компонент для текстовых отчётов внутри ctx.ui.custom().
- * Клавиши: ↑↓ j k PgUp PgDn Space Home End g G · r пересчитать · q Esc Ctrl+C закрыть.
+ * Клавиши: ↑↓ j k PgUp PgDn Space Home End g G скролл; пересчитать/закрыть — action'ы
+ * ext.report.* из shared/keybindings.ts (по умолчанию r и q/Esc, переопределяются
+ * в <agentDir>/keybindings.json), Ctrl+C закрывает всегда.
  *
  * Композиция на примитивах pi-tui: строки render() → Text → ScrollView,
  * help-строка с позицией (n-m/total) — под вьюпортом через VStack. Состояние
@@ -25,6 +27,7 @@ import {
 	type TuiMouseEventResult,
 	VStack,
 } from "@earendil-works/pi-tui";
+import { actionHint, getExtKeybindings, matchAction } from "./keybindings.ts";
 
 export interface ScrollReportOptions {
 	tui: TUI;
@@ -54,6 +57,8 @@ export class ScrollReport implements Component {
 
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	/** Клавиши ext.*: свой менеджер с definitions расширений (см. shared/keybindings.ts). */
+	private readonly kb = getExtKeybindings();
 
 	constructor(options: ScrollReportOptions) {
 		this.tui = options.tui;
@@ -86,11 +91,11 @@ export class ScrollReport implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
+		if (matchesKey(data, "ctrl+c") || matchAction(this.kb, data, "ext.report.close", ["q", "escape"])) {
 			this.onClose();
 			return;
 		}
-		if (data === "r") {
+		if (matchAction(this.kb, data, "ext.report.refresh", ["r"])) {
 			this.invalidate();
 			this.tui.requestRender();
 			return;
@@ -142,7 +147,7 @@ export class ScrollReport implements Component {
 		const position = all.length > rows ? ` ${top + 1}-${Math.min(all.length, top + rows)}/${all.length}` : "";
 		const help = this.theme.fg(
 			"dim",
-			`↑↓ PgUp PgDn Home End scroll · r refresh · q/esc close${position}${this.helpSuffix}`,
+			`↑↓ PgUp PgDn Home End scroll · ${actionHint(this.kb, "ext.report.refresh", "refresh")} · ${actionHint(this.kb, "ext.report.close", "close")}${position}${this.helpSuffix}`,
 		);
 		this.help.setText(truncateToWidth(help, width));
 		return this.root.render(width);
