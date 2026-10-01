@@ -127,7 +127,7 @@ export class ResultsView implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "ctrl+c") || matchAction(this.kb, data, "ext.recall.close", ["q", "escape"])) {
+		if (matchesKey(data, "ctrl+c") || matchAction(this.kb, data, "ext.recall.close")) {
 			this.onClose();
 			return;
 		}

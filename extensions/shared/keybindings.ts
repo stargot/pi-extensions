@@ -13,7 +13,7 @@
  *     и передаём как userBindings. Отсутствие/битый JSON → {} без ошибок.
  *
  * Guard-фоллбэк: matchAction() при пустом getKeys(id) (например, действие отключено
- * через `[]`) срабатывает на литералы-дефолты — оверлеи остаются управляемыми.
+ * через `[]`) срабатывает на дефолты из definitions — оверлеи остаются управляемыми.
  * Хелперы pi keyText/keyHint не используем — рендер клавиш свой (getKeys().join("/"),
  * конвенция pi), красит переданный в компонент theme.
  */
@@ -131,24 +131,46 @@ export function getExtKeybindings(): KeybindingsManager {
 	return singleton;
 }
 
+/** Дефолты id из definitions; незнакомый id дефолтов не имеет → []. */
+function defaultKeysFor(id: Keybinding): KeyId[] {
+	const def = (EXT_KEYBINDINGS as Partial<Record<Keybinding, KeybindingDefinition>>)[id];
+	return def ? toKeyIds(def.defaultKeys) : [];
+}
+
+/**
+ * Единый путь резолва клавиш действия: getKeys менеджера, при пустом списке —
+ * дефолты из definitions (отключённый `[]`-биндинг уводит на дефолты; у
+ * незнакомого менеджеру id дефолтов нет → []).
+ */
+export function resolveKeys(kb: KeybindingsManager, id: Keybinding): KeyId[] {
+	const keys = kb.getKeys(id);
+	return keys.length > 0 ? keys : defaultKeysFor(id);
+}
+
+/**
+ * Конкретный совпавший ключ из резолвнутого списка resolveKeys — например, для
+ * направления jumpMatch (индекс ключа, а не регистр data); undefined — не совпало.
+ */
+export function matchActionKey(kb: KeybindingsManager, data: string, id: Keybinding): KeyId | undefined {
+	return resolveKeys(kb, id).find((key) => matchesKey(data, key));
+}
+
 /**
  * Проверка клавиши с guard-фоллбэком: пока действие известно менеджеру — матчится
  * через него (пользовательские переопределения и отключение работают), при пустом
- * getKeys (незнакомый менеджеру id или `[]` в конфиге) — на литералы fallback.
+ * getKeys (незнакомый менеджеру id или `[]` в конфиге) — на дефолты из definitions.
  */
-export function matchAction(kb: KeybindingsManager, data: string, id: Keybinding, fallback: KeyId[]): boolean {
-	return kb.getKeys(id).length > 0 ? kb.matches(data, id) : fallback.some((k) => matchesKey(data, k));
+export function matchAction(kb: KeybindingsManager, data: string, id: Keybinding): boolean {
+	return matchActionKey(kb, data, id) !== undefined;
 }
 
 /**
  * Человекочитаемый рендер клавиш действия: "q/escape" или "q/escape: Close".
- * Пустые keys (действие отключено) → дефолт из definitions — литералы всё равно
+ * Пустые keys (действие отключено) → дефолт из definitions — дефолты всё равно
  * срабатывают через guard-фоллбэк matchAction, подсказка должна им соответствовать.
  */
 export function actionHint(kb: KeybindingsManager, id: ExtAction, description?: string): string {
-	const keys = kb.getKeys(id);
-	const resolved = keys.length > 0 ? keys : toKeyIds(EXT_KEYBINDINGS[id].defaultKeys);
-	const base = resolved.join("/");
+	const base = resolveKeys(kb, id).join("/");
 	return description ? `${base}: ${description}` : base;
 }
 

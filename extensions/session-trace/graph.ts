@@ -38,7 +38,7 @@ import {
 	type DiffDisplayRow,
 	type DiffRow,
 } from "../shared/line-diff.ts";
-import { actionHint, getExtKeybindings, matchAction } from "../shared/keybindings.ts";
+import { actionHint, getExtKeybindings, matchAction, matchActionKey, resolveKeys } from "../shared/keybindings.ts";
 import { GraphModel, type ChildItem, type Item, fmtClock, fmtDur, fmtK, fmtMoney, oneLine } from "./session.ts";
 import { cacheHitRatio, cacheLevel, CONTEXT_HISTORY_LIMIT } from "./context-history.ts";
 
@@ -320,8 +320,8 @@ export class TraceView {
 				return;
 			}
 			if (
-				matchAction(this.kb, data, "ext.trace.diff", ["d"]) ||
-				matchAction(this.kb, data, "ext.trace.close", ["q"]) ||
+				matchAction(this.kb, data, "ext.trace.diff") ||
+				matchAction(this.kb, data, "ext.trace.close") ||
 				matchesKey(data, Key.escape)
 			) {
 				this.exitDiff();
@@ -335,14 +335,14 @@ export class TraceView {
 				this.scrollView.scrollBy(rows - 3);
 			} else if (matchesKey(data, Key.home)) {
 				this.scrollView.scrollToStart();
-			} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow", ["f"])) {
+			} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow")) {
 				this.scrollView.scrollToEnd();
 			}
 			this.tui.requestRender();
 			return;
 		}
 
-		if (matchesKey(data, Key.ctrl("c")) || matchAction(this.kb, data, "ext.trace.close", ["q"])) {
+		if (matchesKey(data, Key.ctrl("c")) || matchAction(this.kb, data, "ext.trace.close")) {
 			this.dispose();
 			this.onClose();
 			return;
@@ -360,21 +360,24 @@ export class TraceView {
 				this.onClose();
 				return;
 			}
-		} else if (matchAction(this.kb, data, "ext.trace.filter", ["/"])) {
+		} else if (matchAction(this.kb, data, "ext.trace.filter")) {
 			this.editing = true;
-		} else if (matchAction(this.kb, data, "ext.trace.errors", ["e"])) {
+		} else if (matchAction(this.kb, data, "ext.trace.errors")) {
 			this.errorsOnly = !this.errorsOnly;
 			this.matchCursor = -1;
 			this.cache = undefined;
-		} else if (matchAction(this.kb, data, "ext.trace.models", ["m"])) {
+		} else if (matchAction(this.kb, data, "ext.trace.models")) {
 			this.summary = !this.summary;
 			this.cache = undefined;
-		} else if (matchAction(this.kb, data, "ext.trace.diff", ["d"])) {
+		} else if (matchAction(this.kb, data, "ext.trace.diff")) {
 			this.enterDiff();
-		} else if (matchAction(this.kb, data, "ext.trace.jumpMatch", ["n", "shift+n"])) {
-			// направление — по регистру клавиши (нижний — вперёд): при дефолтах n/N
-			// это точная прежняя семантика, при переопределении — эвристика
-			this.jumpMatch(data === data.toLowerCase() ? 1 : -1);
+		} else if (matchAction(this.kb, data, "ext.trace.jumpMatch")) {
+			// направление — по индексу совпавшего ключа в резолвнутом списке: первая
+			// клавиша — вперёд (+1), вторая и далее — назад (-1). Не по регистру data:
+			// при переопределении ["j","k"] обе клавиши строчные и старая регистр-
+			// эвристика молча вела всё вперёд. matchAction выше уже гарантирует матч.
+			const matched = matchActionKey(this.kb, data, "ext.trace.jumpMatch");
+			this.jumpMatch(resolveKeys(this.kb, "ext.trace.jumpMatch").indexOf(matched!) <= 0 ? 1 : -1);
 		} else if (matchesKey(data, Key.up)) {
 			this.follow = false;
 			this.scrollView.scrollBy(-3);
@@ -390,7 +393,7 @@ export class TraceView {
 		} else if (matchesKey(data, Key.home)) {
 			this.follow = false;
 			this.scrollView.scrollToStart();
-		} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow", ["f"])) {
+		} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow")) {
 			this.jumpToEnd();
 		} else if (this.mode === "replay") {
 			this.handleReplayKeys(data);
@@ -409,25 +412,25 @@ export class TraceView {
 	}
 
 	private handleReplayKeys(data: string): void {
-		if (matchAction(this.kb, data, "ext.trace.pause", [Key.space])) {
+		if (matchAction(this.kb, data, "ext.trace.pause")) {
 			this.paused = !this.paused;
-		} else if (matchAction(this.kb, data, "ext.trace.faster", ["+", "="])) {
+		} else if (matchAction(this.kb, data, "ext.trace.faster")) {
 			this.speed = Math.min(256, this.speed * 2);
-		} else if (matchAction(this.kb, data, "ext.trace.slower", ["-", "_"])) {
+		} else if (matchAction(this.kb, data, "ext.trace.slower")) {
 			this.speed = Math.max(0.25, this.speed / 2);
-		} else if (matchAction(this.kb, data, "ext.trace.seekBack", [Key.left])) {
+		} else if (matchAction(this.kb, data, "ext.trace.seekBack")) {
 			this.follow = false;
 			this.paused = true;
 			this.seekTo(Math.max(0, this.playheadMs - 5000));
 			this.scrollView.scrollToEnd();
-		} else if (matchAction(this.kb, data, "ext.trace.seekForward", [Key.right])) {
+		} else if (matchAction(this.kb, data, "ext.trace.seekForward")) {
 			this.follow = false;
 			this.paused = true;
 			this.seekTo(this.playheadMs + 5000);
 			this.scrollView.scrollToEnd();
-		} else if (matchAction(this.kb, data, "ext.trace.live", ["l"])) {
+		} else if (matchAction(this.kb, data, "ext.trace.live")) {
 			this.jumpToEnd();
-		} else if (matchAction(this.kb, data, "ext.trace.restart", ["r"])) {
+		} else if (matchAction(this.kb, data, "ext.trace.restart")) {
 			this.follow = false;
 			this.paused = false;
 			this.seekTo(this.entries[0]?.ms ?? 0);

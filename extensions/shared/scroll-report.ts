@@ -91,11 +91,11 @@ export class ScrollReport implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "ctrl+c") || matchAction(this.kb, data, "ext.report.close", ["q", "escape"])) {
+		if (matchesKey(data, "ctrl+c") || matchAction(this.kb, data, "ext.report.close")) {
 			this.onClose();
 			return;
 		}
-		if (matchAction(this.kb, data, "ext.report.refresh", ["r"])) {
+		if (matchAction(this.kb, data, "ext.report.refresh")) {
 			this.invalidate();
 			this.tui.requestRender();
 			return;
