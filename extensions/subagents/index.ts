@@ -77,15 +77,22 @@ import { readNameRegistry, registryPath, uniqueName, upsertName, type RegistryEn
 import {
 	closePane,
 	createSubagentPane,
+	type DeliveryResult,
+	deliverMessage,
 	listPaneIds,
 	paneExists,
 	parseSentinel,
 	readScreenTail,
 	runScriptInPane,
 	sendInterrupt,
-	sendText,
 } from "./mux.ts";
-import { cancelSidecarPath, classifyExitSidecar, fmtElapsed, resolveInterrupt } from "./shared.ts";
+import {
+	cancelSidecarPath,
+	classifyExitSidecar,
+	describePromptFailure,
+	fmtElapsed,
+	resolveInterrupt,
+} from "./shared.ts";
 import {
 	BatchCard,
 	errorLine,
@@ -1063,15 +1070,21 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					}
 					await sleep(INTERRUPT_SETTLE_MS);
 				}
+				let delivery: DeliveryResult;
 				try {
-					sendText(running.paneId, message);
+					delivery = deliverMessage(running.paneId, message);
 				} catch {
 					// Pane died during the settle sleep — the next pollTick
-					// completes the entry; a steer into a dead pane must not
-					// surface as a tool error.
+					// completes the entry; a steer into a dead pane surfaces as
+					// this readable error, not a raw CLI failure.
 					throw new Error(
 						`Could not deliver the message: pane of subagent "${name}" is already gone (it finished or crashed).`,
 					);
+				}
+				if (!delivery.ok) {
+					// herdr refused or lost the delivery (ADR-1): the structured
+					// outcome names the story — surface it verbatim as a tool error.
+					throw new Error(describePromptFailure(delivery.outcome ?? "error", name));
 				}
 				running.activity.lastChangeAt = Date.now();
 				running.activity.stalled = false;

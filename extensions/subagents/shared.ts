@@ -1,7 +1,12 @@
 /**
- * Pure helpers shared by the mux backends: completion sentinel parsing and
- * split-layout math. No child_process, no env reads — safe to unit-test.
+ * Pure helpers shared by the mux backends: completion sentinel parsing,
+ * split-layout math and steer-delivery failure texts. No child_process,
+ * no env reads — safe to unit-test.
  */
+
+// Type-only: erased at runtime, so this creates no import cycle with herdr.ts
+// (which imports shared.ts for the runtime helpers below).
+import type { AgentPromptOutcome } from "./herdr.ts";
 
 // ── Completion detection ──
 
@@ -72,6 +77,48 @@ export function resolveInterrupt(interrupt: boolean | undefined, stalled: boolea
 	if (interrupt === true) return true;
 	if (interrupt === false) return false;
 	return stalled;
+}
+
+// ── Steer delivery failures (herdr `agent prompt`, ADR-1) ──
+
+/**
+ * Human-readable tool-error text for a failed `agent prompt` delivery, named
+ * after the outcome herdr reported (ADR-1 in docs/herdr-agent-surface-backlog.md).
+ * Same "Could not deliver the message" house style as the pane-gone error in
+ * index.ts, but each outcome tells its own story and what to do next:
+ * refused_blocked — the text was rejected BEFORE reaching the pane (the child
+ * sits in an approval UI), so a blind retry would fail the same way; stalled —
+ * the text was submitted but the child never showed working; timeout — the
+ * wait window elapsed, pane still alive; not_found — the pane no longer runs
+ * an agent, the subagent is gone; error — anything unmapped.
+ */
+export function describePromptFailure(outcome: AgentPromptOutcome, name: string): string {
+	const head = `Could not deliver the message to subagent "${name}"`;
+	switch (outcome) {
+		case "refused_blocked":
+			return (
+				`${head}: the subagent is waiting for input (blocked) and the message was NOT delivered — ` +
+				`answer its question, or resend with interrupt: true to break it out first.`
+			);
+		case "stalled":
+			return (
+				`${head}: the subagent never showed working after the message was submitted — ` +
+				`it may have finished or crashed; its pane tells which.`
+			);
+		case "timeout":
+			return (
+				`${head}: herdr timed out waiting for the subagent to settle — its pane is still alive, ` +
+				`so retry, or use interrupt: true if it is stuck in a long turn.`
+			);
+		case "not_found":
+			return `${head}: the pane of subagent "${name}" runs no agent anymore (it finished or crashed) — it is already gone.`;
+		case "error":
+			return `${head}: herdr reported an unrecognized failure — check the subagent's pane and retry.`;
+		case "delivered":
+			// Unreachable through the ok:false path; kept so the switch is
+			// exhaustive over AgentPromptOutcome without a crash.
+			return `${head}: delivery reported as delivered but could not be confirmed — check the subagent's pane.`;
+	}
 }
 
 // ── Display formatting ──

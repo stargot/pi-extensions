@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cancelSidecarPath, classifyExitSidecar, resolveInterrupt } from "../shared.ts";
+import { cancelSidecarPath, classifyExitSidecar, describePromptFailure, resolveInterrupt } from "../shared.ts";
 
 test("cancelSidecarPath: appends .cancel to the session file", () => {
 	assert.equal(
@@ -54,4 +54,49 @@ test("classifyExitSidecar: garbage input → unknown", () => {
 
 test("classifyExitSidecar: empty string → unknown", () => {
 	assert.deepEqual(classifyExitSidecar(""), { kind: "unknown" });
+});
+
+// ── describePromptFailure — steer delivery outcomes (ADR-1) ──
+
+test("describePromptFailure: refused_blocked — text rejected before reaching the pane", () => {
+	const text = describePromptFailure("refused_blocked", "scout");
+	// House style shared with the pane-gone delivery error in index.ts.
+	assert.ok(text.startsWith("Could not deliver the message"));
+	assert.match(text, /scout/);
+	assert.match(text, /NOT delivered/);
+	// The two escape hatches the caller actually has.
+	assert.match(text, /answer/);
+	assert.match(text, /interrupt/);
+});
+
+test("describePromptFailure: stalled — submitted, but the child never showed working", () => {
+	const text = describePromptFailure("stalled", "worker");
+	assert.ok(text.startsWith("Could not deliver the message"));
+	assert.match(text, /worker/);
+	assert.match(text, /working/);
+});
+
+test("describePromptFailure: timeout — wait window elapsed, pane still alive", () => {
+	const text = describePromptFailure("timeout", "scout");
+	assert.match(text, /scout/);
+	assert.match(text, /timed out/);
+	assert.match(text, /alive/);
+});
+
+test("describePromptFailure: not_found — the pane runs no agent anymore", () => {
+	const text = describePromptFailure("not_found", "scout");
+	assert.match(text, /scout/);
+	assert.match(text, /already gone/);
+});
+
+test("describePromptFailure: error — unrecognized herdr failure", () => {
+	const text = describePromptFailure("error", "scout");
+	assert.ok(text.startsWith("Could not deliver the message"));
+	assert.match(text, /scout/);
+	assert.match(text, /unrecognized/);
+});
+
+test("describePromptFailure: delivered fallback stays readable for exhaustiveness", () => {
+	// Unreachable through the ok:false path, but must still return text.
+	assert.match(describePromptFailure("delivered", "scout"), /Could not deliver the message/);
 });

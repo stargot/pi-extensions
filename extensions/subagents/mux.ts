@@ -101,6 +101,31 @@ export function sendText(paneId: string, text: string): void {
 	else wezterm.sendText(paneId, text);
 }
 
+/** Result of a steer delivery: ok = the message reached the child. */
+export interface DeliveryResult {
+	ok: boolean;
+	/** Structured herdr prompt outcome — always set on failure; undefined on wezterm success. */
+	outcome?: herdr.AgentPromptOutcome;
+}
+
+/**
+ * Deliver a steering message to a pane (ADR-1 in docs/herdr-agent-surface-backlog.md):
+ * herdr goes through `agent prompt` — a blocked child refuses the text BEFORE
+ * it is typed, and ok means the child was seen working|settling, so nothing
+ * drops silently; wezterm keeps the plain sendText. The herdr branch never
+ * throws — failures return a structured outcome; the wezterm branch still
+ * propagates sendText failures (pane gone) to the caller's catch.
+ */
+export function deliverMessage(paneId: string, text: string): DeliveryResult {
+	const backend = requireBackend();
+	if (backend === "herdr") {
+		const outcome = herdr.promptAgent(paneId, text);
+		return { ok: outcome === "delivered", outcome };
+	}
+	wezterm.sendText(paneId, text);
+	return { ok: true };
+}
+
 /** Interrupt the foreground program in a pane (Esc aborts pi's turn, Ctrl+C kills a command). */
 export function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): void {
 	const backend = requireBackend();
