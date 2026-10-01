@@ -79,6 +79,8 @@ import {
 	createSubagentPane,
 	type DeliveryResult,
 	deliverMessage,
+	herdrAgentName,
+	labelPane,
 	listPaneIds,
 	paneExists,
 	parseSentinel,
@@ -762,6 +764,9 @@ function doSpawn(
 		cwd,
 		runningCount: columnPanes.length,
 		topPane: columnPanes[0],
+		// Stable pane label (ADR-3) — applied inside the split, before the
+		// launcher runs, so the name is right from the first frame.
+		label: herdrAgentName(name),
 	});
 	if (!columnPanes.includes(paneId)) columnPanes.push(paneId);
 
@@ -874,6 +879,9 @@ function doResume(
 		// The pane is sitting at a pwsh prompt — run the resume launcher there.
 		runScriptInPane(entry.paneId, scriptPath);
 		paneId = entry.paneId;
+		// Re-used pane: re-apply our label (ADR-3) — the previous run may have
+		// left a stale or collision-suffixed name on it.
+		labelPane(paneId, herdrAgentName(name));
 	} else {
 		// Split targets must be live panes (see doSpawn).
 		pruneColumnPanes();
@@ -882,6 +890,7 @@ function doResume(
 			cwd: entry.cwd ?? ctx.cwd,
 			runningCount: columnPanes.length,
 			topPane: columnPanes[0],
+			label: herdrAgentName(name),
 		});
 		if (!columnPanes.includes(paneId)) columnPanes.push(paneId);
 	}

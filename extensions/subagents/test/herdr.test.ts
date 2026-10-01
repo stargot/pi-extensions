@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
 	herdrAgentName,
+	labelWithIdSuffix,
 	parseAgentPromptOutput,
 	parsePaneListIds,
 	parseSplitPaneId,
@@ -236,4 +237,19 @@ test("herdrAgentName: empty and all-separator input fall back", () => {
 	assert.equal(herdrAgentName(""), "subagent");
 	assert.equal(herdrAgentName("!!!"), "subagent");
 	assert.equal(herdrAgentName("---"), "subagent");
+});
+
+// ── labelWithIdSuffix (ADR-3 collision retry) ──
+
+test("labelWithIdSuffix: pane id sanitizes into the suffix", () => {
+	assert.equal(labelWithIdSuffix("scout", "w6:p2"), "scout-w6-p2");
+	assert.equal(labelWithIdSuffix("scout", "w1:p12"), "scout-w1-p12");
+});
+
+test("labelWithIdSuffix: base is cut so the result stays within the 32-char cap", () => {
+	const suffixed = labelWithIdSuffix("a".repeat(32), "w1:p12");
+	// "w1:p12" → 6-char suffix; 32-char base cut to 25 + "-" + 6 = 32.
+	assert.equal(suffixed.length, 32);
+	assert.equal(suffixed, "a".repeat(25) + "-w1-p12");
+	assert.ok(/^[a-z][a-z0-9_-]{0,31}$/.test(suffixed));
 });

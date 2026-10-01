@@ -162,6 +162,8 @@ export interface CreatePaneOptions {
 	runningCount: number;
 	/** Top pane of the existing subagent column (required when runningCount > 0). */
 	topPane?: string;
+	/** Stable herdr agent label for the new pane (ADR-3); best-effort, never fails the split. */
+	label?: string;
 }
 
 /**
@@ -249,6 +251,9 @@ function splitPane(target: string, stacking: boolean, opts: CreatePaneOptions): 
 		"--no-focus",
 	]);
 	const paneId = parseSplitPaneId(out);
+	// Label before the launcher runs, so the name is correct from the first
+	// frame (ADR-3). Cosmetics: a failed rename never fails the spawn.
+	if (opts.label) applyPaneLabel(paneId, opts.label);
 	launchScript(paneId, opts.ps1Path);
 	return paneId;
 }
@@ -377,4 +382,28 @@ export function renameAgent(paneId: string, name: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * Collision-retry label (ADR-3): the base (already sanitized) shortened to
+ * make room for a `-<id8>` suffix derived from the pane id — pane ids are
+ * unique, so the suffixed label is, which settles clashes between two parent
+ * sessions spawning the same agent name. The result stays within the 32-char
+ * herdr label cap.
+ */
+export function labelWithIdSuffix(base: string, paneId: string): string {
+	const id8 = herdrAgentName(paneId).slice(0, 8); // "w6:p2" → "w6-p2"
+	return `${base.slice(0, 31 - id8.length)}-${id8}`;
+}
+
+/**
+ * Label a pane's agent with the ADR-3 retry: first attempt is the plain
+ * sanitized label; on refusal or collision one retry with the pane-id
+ * suffix, then a silent give-up — renaming is cosmetics, all addressing
+ * goes through pane ids. Never throws.
+ */
+export function applyPaneLabel(paneId: string, label: string): void {
+	const base = herdrAgentName(label);
+	if (renameAgent(paneId, base)) return;
+	renameAgent(paneId, labelWithIdSuffix(base, paneId));
 }

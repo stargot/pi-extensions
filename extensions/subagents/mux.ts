@@ -25,6 +25,8 @@ export interface CreatePaneOptions {
 	runningCount: number;
 	/** Top pane of the existing subagent column (required when runningCount > 0). */
 	topPane?: string;
+	/** Stable herdr agent label for the new pane (ADR-3); best-effort, ignored by wezterm. */
+	label?: string;
 }
 
 /**
@@ -126,6 +128,19 @@ export function deliverMessage(paneId: string, text: string): DeliveryResult {
 	return { ok: true };
 }
 
+/**
+ * Set the stable pane label (ADR-3 in docs/herdr-agent-surface-backlog.md):
+ * herdr renames the pane's agent — plain sanitized label first, one
+ * `-<id8>`-suffixed retry on refusal/collision, then a silent give-up;
+ * wezterm has no agent names, so it is a no-op. Never throws: labeling is
+ * cosmetics, addressing always goes through pane ids.
+ */
+export function labelPane(paneId: string, label: string): void {
+	const backend = activeBackend();
+	if (!backend) return;
+	if (backend === "herdr") herdr.applyPaneLabel(paneId, label);
+}
+
 /** Interrupt the foreground program in a pane (Esc aborts pi's turn, Ctrl+C kills a command). */
 export function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): void {
 	const backend = requireBackend();
@@ -159,3 +174,6 @@ export function activatePane(paneId: string): void {
 // ── Completion detection (backend-independent) ──
 
 export { parseSentinel, SENTINEL_PATTERN };
+
+/** Subagent display name → herdr agent label (ADR-3), so callers stay mux-imported. */
+export { herdrAgentName } from "./herdr.ts";
