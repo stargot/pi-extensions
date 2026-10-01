@@ -39,8 +39,14 @@
  *     timeout, agent_not_found
  *   - `agent rename <id> <name>` exits 0 with the agent_info envelope, the
  *     label at .result.agent.name (same envelope as `agent get`)
+ *   - `agent wait <id> --until <S>… [--timeout MS]` exits 0 the moment the
+ *     agent reaches one of the wanted settled states; for pi the usable
+ *     terminal state is "done" (turn finished — probed: idle at boot,
+ *     working during a turn, done at its end), a pane with no agent fails
+ *     fast with agent_not_found (exit 1), and once pi exits its agent
+ *     record is removed entirely (agent get → agent_not_found)
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { computeStackPercent } from "./shared.ts";
 
 const HERDR = "herdr";
@@ -406,4 +412,66 @@ export function applyPaneLabel(paneId: string, label: string): void {
 	const base = herdrAgentName(label);
 	if (renameAgent(paneId, base)) return;
 	renameAgent(paneId, labelWithIdSuffix(base, paneId));
+}
+
+// ── Agent wait / status parsing (shapes captured from 0.9.1-preview) ──
+
+/**
+ * Decode `herdr agent get <id>`: `.result.agent.agent_status` (idle | working
+ * | blocked | done | unknown). Live-probed against a pi pane (T4 probe):
+ * boot → idle, turn running → working, turn finished → done (persists while
+ * pi sits at its prompt). Defensive like parsePaneListIds: garbage, error
+ * envelopes (e.g. agent_not_found — the record is REMOVED once pi exits, it
+ * never lingers as done/unknown) or a non-zero exit → null.
+ */
+export function parseAgentStatus(out: string, exitCode: number): string | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(out);
+	} catch {
+		return null;
+	}
+	if (exitCode !== 0) return null;
+	const status = (parsed as { result?: { agent?: { agent_status?: unknown } } } | null)?.result?.agent?.agent_status;
+	return typeof status === "string" && status.length > 0 ? status : null;
+}
+
+// ── Done waiter (ADR-2 in docs/herdr-agent-surface-backlog.md) ──
+
+/**
+ * Two hours: a leak-proof net, not a working assumption. The waiter is killed
+ * by completeSubagent when the subagent finishes; the timeout only bounds the
+ * leftover process if the parent itself dies without a cleanup pass. On
+ * timeout herdr exits non-zero, so a stale waiter can never set the done flag.
+ */
+const DONE_WAITER_TIMEOUT_MS = 2 * 60 * 60_000;
+
+/**
+ * Start one background `herdr agent wait <paneId> --until <S>… ` process for
+ * a subagent pane. Exit 0 means herdr saw the agent reach one of the wanted
+ * settled states — index.ts turns that into its nativeDoneAt flag (ADR-2).
+ * Never throws: sync spawn failures return null, and async ones (ENOENT,
+ * herdr hiccup) arrive as an "error" event, which is swallowed here so an
+ * unhandled 'error' cannot crash the parent — the exit code just stays
+ * non-zero and the sidecar watcher remains the source of truth.
+ *
+ * Probe notes driving the --until choice (herdr 0.9.1-preview): a pane with
+ * no agent yet fails the wait fast with agent_not_found (exit 1 — harmless,
+ * never a false done), and an exited pi leaves no agent record at all, so
+ * "done" (the last pre-exit state) is the only reachable terminal signal.
+ */
+export function spawnDoneWaiter(paneId: string, untilStatuses: string[]): ChildProcess | null {
+	try {
+		const args = ["agent", "wait", paneId];
+		// --until is repeatable ("repeat for more than one state"), one flag
+		// per status — a bare spread would feed the 2nd status as a positional.
+		for (const status of untilStatuses) args.push("--until", status);
+		args.push("--timeout", String(DONE_WAITER_TIMEOUT_MS));
+		const child = spawn(HERDR, args, { stdio: "ignore", windowsHide: true, detached: false });
+		child.on("error", () => {});
+		child.unref();
+		return child;
+	} catch {
+		return null;
+	}
 }

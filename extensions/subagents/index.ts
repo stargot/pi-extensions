@@ -32,7 +32,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -75,6 +75,7 @@ import { renderLauncherPs1, type LauncherSpec } from "./launcher.ts";
 import { formatUsage, summarizeSessionFile } from "./session-read.ts";
 import { readNameRegistry, registryPath, uniqueName, upsertName, type RegistryEntry } from "./registry.ts";
 import {
+	activeBackend,
 	closePane,
 	createSubagentPane,
 	type DeliveryResult,
@@ -118,6 +119,21 @@ const CANCEL_KILL_AFTER_MS = 10_000;
 // Esc → pi aborts its turn; give it a moment to settle before typing the
 // steer message into the fresh prompt.
 const INTERRUPT_SETTLE_MS = 1200;
+// ADR-2: one background `herdr agent wait` per auto-exit subagent, armed with
+// a delay from the pane spawn. Pi registers with herdr within ~2–5s of boot
+// (probe: visible at +3s); a waiter aimed at a not-yet-registered pane fails
+// fast with agent_not_found (exit 1 — harmless, no false done), so the delay
+// only has to cover a slow boot: 10s does, with margin.
+const NATIVE_WAITER_DELAY_MS = 10_000;
+// A native done flag older than this means the launcher sidecars are truly
+// lost, not "pi just exited, .done is mid-write" — the grace re-opens that
+// race so the sidecar path (step 1) still wins whenever it can.
+const NATIVE_DONE_GRACE_MS = 5000;
+// Settled states the done-waiter fires on (probe, herdr 0.9.1-preview): pi
+// never reported "unknown", but a wedged/unclassifiable agent should still
+// end the wait; "done" (turn finished) is the only state pi reaches before
+// its record is removed on exit. --until is repeatable, one flag per state.
+const NATIVE_DONE_UNTIL = ["done", "unknown"];
 const MAX_SUMMARY_CHARS = 2000;
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DONE_EXTENSION_PATH = join(MODULE_DIR, "subagent-done.ts");
@@ -172,6 +188,11 @@ interface RunningSubagent {
 	/** Set by subagent_cancel — armed the pane force-close grace period. */
 	cancelRequested: boolean;
 	cancelStartedAt?: number;
+	/** Set when the herdr done-waiter observed a terminal agent state (ADR-2). */
+	nativeDoneAt?: number;
+	/** Background `herdr agent wait` child and its pending arming timer (herdr backend, auto-exit only). */
+	doneWaiter?: ChildProcess;
+	doneWaiterTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface SpawnParams {
@@ -367,10 +388,63 @@ function updateWidget(): void {
 
 // ── Completion / steering ──
 
+/**
+ * Arm the native done-waiter for a subagent (ADR-2): one background `herdr
+ * agent wait` process, spawned NATIVE_WAITER_DELAY_MS after the pane spawn;
+ * its exit(0) stamps running.nativeDoneAt for pollTick. Backend check goes
+ * through mux's activeBackend — index.ts stays herdr-agnostic (no direct
+ * herdr imports); the delayed import is of a module already in the ESM graph
+ * via mux, so it resolves without I/O. Auto-exit children only: herdr's
+ * "done" means "turn finished", which for an interactive child (one that
+ * waits for the next steering message at its prompt) is not completion.
+ * Best-effort by design: a failed/late/missing waiter changes nothing — the
+ * sidecar watcher remains the source of truth.
+ */
+function armDoneWaiter(running: RunningSubagent): void {
+	if (activeBackend() !== "herdr" || !running.autoExit) return;
+	const timer = setTimeout(() => {
+		running.doneWaiterTimer = undefined;
+		void import("./herdr.ts")
+			.then((herdr) => {
+				// Completed (or session reset) while the module promise settled:
+				// never spawn a waiter for a dead entry — it would orphan.
+				if (runningSubagents.get(running.id) !== running) return;
+				const waiter = herdr.spawnDoneWaiter(running.paneId, NATIVE_DONE_UNTIL);
+				if (!waiter) return;
+				waiter.on("exit", (code) => {
+					if (code === 0) running.nativeDoneAt = Date.now();
+				});
+				running.doneWaiter = waiter;
+			})
+			.catch(() => {
+				// No waiter, no flag — the watcher alone finishes the entry.
+			});
+	}, NATIVE_WAITER_DELAY_MS);
+	// A pending arm must never keep the parent alive (session_shutdown drops
+	// the map without completing entries).
+	timer.unref();
+	running.doneWaiterTimer = timer;
+}
+
 function completeSubagent(
 	running: RunningSubagent,
-	result: { exitCode: number; errorMessage?: string; crashed?: boolean; cancelled?: boolean },
+	result: { exitCode: number; errorMessage?: string; crashed?: boolean; cancelled?: boolean; note?: string },
 ): void {
+	// ADR-2 teardown: the done-waiter (or its pending arming timer) must not
+	// outlive the entry — every completion path goes through this function.
+	if (running.doneWaiterTimer) {
+		clearTimeout(running.doneWaiterTimer);
+		running.doneWaiterTimer = undefined;
+	}
+	if (running.doneWaiter) {
+		try {
+			running.doneWaiter.kill();
+		} catch {
+			// Already gone.
+		}
+		running.doneWaiter = undefined;
+	}
+
 	runningSubagents.delete(running.id);
 	publishRunningChildrenCount();
 
@@ -459,6 +533,7 @@ function completeSubagent(
 				...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
 				...(usage ? { usage } : {}),
 				...(model ? { model } : {}),
+				...(result.note ? { note: result.note } : {}),
 			},
 		} as Parameters<ExtensionAPI["sendMessage"]>[0],
 		{ triggerTurn: true, deliverAs: "steer" },
@@ -571,21 +646,31 @@ function pollTick(): void {
 			continue;
 		}
 
-		// 3. Pane vanished without finishing → crashed or closed by the user.
+		// 3. Native done signal (ADR-2): the background `herdr agent wait` saw
+		// a terminal settled state, but no sidecar landed — the launcher's
+		// writes are lost. The grace re-opens the common race where pi just
+		// exited and the launcher has not written .done yet; if .done appears
+		// in that window, step 1 above still wins with the real exit code.
+		if (running.nativeDoneAt !== undefined && now - running.nativeDoneAt >= NATIVE_DONE_GRACE_MS) {
+			completeSubagent(running, { exitCode: 0, note: "native done, sidecar lost" });
+			continue;
+		}
+
+		// 4. Pane vanished without finishing → crashed or closed by the user.
 		if (!alive.has(running.paneId)) {
 			columnPanes = columnPanes.filter((id) => id !== running.paneId);
 			completeSubagent(running, { exitCode: 1, crashed: true, errorMessage: "pane closed" });
 			continue;
 		}
 
-		// 4. Screen sentinel fallback (sidecars failed to write).
+		// 5. Screen sentinel fallback (sidecars failed to write).
 		const sentinel = parseSentinel(readScreenTail(running.paneId, 4));
 		if (sentinel !== null) {
 			completeSubagent(running, { exitCode: sentinel });
 			continue;
 		}
 
-		// 5. Cancel grace period: the child honors the flag within ~1s; a
+		// 6. Cancel grace period: the child honors the flag within ~1s; a
 		// pane still alive this long later is wedged — force-close it.
 		if (running.cancelRequested && now - (running.cancelStartedAt ?? now) > CANCEL_KILL_AFTER_MS) {
 			closePane(running.paneId);
@@ -788,6 +873,8 @@ function doSpawn(
 	};
 	runningSubagents.set(id, running);
 	publishRunningChildrenCount();
+	// Native done-waiter (ADR-2) — herdr backend, auto-exit children only.
+	armDoneWaiter(running);
 
 	const registryEntry: RegistryEntry & { paneId?: string } = {
 		name,
@@ -913,6 +1000,9 @@ function doResume(
 	};
 	runningSubagents.set(id, running);
 	publishRunningChildrenCount();
+	// Resume is a fresh run of the child — it gets its own waiter (ADR-2:
+	// one waiter per subagent run, armed at spawn).
+	armDoneWaiter(running);
 
 	const registryEntry: RegistryEntry & { paneId?: string } = { ...entry, paneId, registeredAt: startTime };
 	upsertName(sctx.registryFile, registryEntry);
@@ -968,6 +1058,16 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		if (tickTimer) {
 			clearInterval(tickTimer);
 			tickTimer = null;
+		}
+		// Drop pending done-waiters: nobody reads nativeDoneAt after shutdown,
+		// and an unref'd waiter would otherwise linger for its full timeout.
+		for (const stale of runningSubagents.values()) {
+			if (stale.doneWaiterTimer) clearTimeout(stale.doneWaiterTimer);
+			try {
+				stale.doneWaiter?.kill();
+			} catch {
+				// Already gone.
+			}
 		}
 		// Running panes keep living on purpose: autonomous children finish and
 		// leave their transcripts behind; their results are simply not delivered

@@ -4,6 +4,7 @@ import {
 	herdrAgentName,
 	labelWithIdSuffix,
 	parseAgentPromptOutput,
+	parseAgentStatus,
 	parsePaneListIds,
 	parseSplitPaneId,
 	selectSplitTarget,
@@ -41,6 +42,34 @@ test("parsePaneListIds: defensive against shape drift", () => {
 	assert.deepEqual(parsePaneListIds('{"result":{"panes":[]}}'), []);
 	assert.deepEqual(parsePaneListIds("garbage"), []);
 	assert.deepEqual(parsePaneListIds("{}"), []);
+});
+
+// ── parseAgentStatus (T4 probe, herdr 0.9.1-preview) ──
+
+// Real response captured from herdr 0.9.1-preview (`herdr agent get <pane>`):
+// pi inside the pane, turn finished. herdr's pi states, live-probed: boot →
+// idle, turn running → working, turn finished → done; once pi EXITS the
+// record is removed entirely (error envelope below), never lingering as
+// done/unknown — that probe decided the waiter's --until list.
+const AGENT_GET_DONE =
+	'{"id":"cli:agent:get","result":{"agent":{"agent":"pi","agent_session":{"agent":"pi","kind":"path","source":"herdr:pi","value":"C:\\\\Users\\\\starg\\\\.pi\\\\agent\\\\sessions\\\\probe.jsonl"},"agent_status":"done","cwd":"C:\\\\Temp\\\\probe","focused":false,"pane_id":"w1P:pB","revision":9,"screen_detection_skipped":true,"state_change_seq":141,"tab_id":"w1P:t1","terminal_id":"term_x","terminal_title":"π - probe","workspace_id":"w1P"},"type":"agent_info"}}';
+
+test("parseAgentStatus: real herdr 0.9.1 agent get envelope (pi, done)", () => {
+	assert.equal(parseAgentStatus(AGENT_GET_DONE, 0), "done");
+});
+
+test("parseAgentStatus: error envelope — exited pi leaves no record → null", () => {
+	const NOT_FOUND =
+		'{"error":{"code":"agent_not_found","message":"agent target w1P:pB not found"},"id":"cli:agent:get"}';
+	assert.equal(parseAgentStatus(NOT_FOUND, 1), null);
+});
+
+test("parseAgentStatus: defensive against shape drift", () => {
+	assert.equal(parseAgentStatus("garbage", 0), null);
+	assert.equal(parseAgentStatus("", 0), null);
+	assert.equal(parseAgentStatus('"{"result":{"agent":{}}}"', 0), null);
+	assert.equal(parseAgentStatus('"{"result":{"agent":{"agent_status":7}}}"', 0), null);
+	assert.equal(parseAgentStatus(AGENT_GET_DONE, 1), null); // non-zero exit never yields a status
 });
 
 // ── selectSplitTarget ──
