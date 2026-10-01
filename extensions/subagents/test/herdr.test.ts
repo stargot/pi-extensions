@@ -7,6 +7,7 @@ import {
 	parseAgentStatus,
 	parsePaneListIds,
 	parseSplitPaneId,
+	pickFailureOutput,
 	selectSplitTarget,
 } from "../herdr.ts";
 
@@ -198,6 +199,35 @@ test("parseAgentPromptOutput: defensive — garbage, empty, unknown codes never 
 	// An unparseable body never counts as delivered, whatever the exit code.
 	assert.equal(parseAgentPromptOutput("", 0), "error");
 	assert.equal(parseAgentPromptOutput("garbage", 0), "error");
+});
+
+// ── pickFailureOutput ──
+
+test("pickFailureOutput: live not_found refusal arrives on STDERR (the fix-2 finding)", () => {
+	// Live-probed: herdr prints error envelopes on stderr of the non-zero exit;
+	// before the stderr capture this collapsed into the catch-all "error".
+	assert.equal(pickFailureOutput("", PROMPT_NOT_FOUND), PROMPT_NOT_FOUND);
+	assert.equal(pickFailureOutput(undefined, PROMPT_NOT_FOUND), PROMPT_NOT_FOUND);
+});
+
+test("pickFailureOutput: stdout still wins when both pipes carry text", () => {
+	assert.equal(pickFailureOutput(PROMPT_NOT_FOUND, "stderr noise"), PROMPT_NOT_FOUND);
+	assert.equal(pickFailureOutput(PROMPT_NOT_FOUND, undefined), PROMPT_NOT_FOUND);
+});
+
+test("pickFailureOutput: blank/whitespace-only pipes count as empty", () => {
+	assert.equal(pickFailureOutput("   \r\n", "\t"), "");
+	assert.equal(pickFailureOutput(undefined, undefined), "");
+	assert.equal(pickFailureOutput("", ""), "");
+	assert.equal(pickFailureOutput("", "   "), "");
+});
+
+test("pickFailureOutput + parseAgentPromptOutput: stderr path classifies as not_found", () => {
+	// The exact promptAgent failure path: execFileSync throws, stderr carries
+	// the envelope, exit code 1 — must yield the structured outcome, not "error".
+	const failure = { stdout: "", stderr: PROMPT_NOT_FOUND, status: 1 } as const;
+	assert.equal(parseAgentPromptOutput(pickFailureOutput(failure.stdout, failure.stderr), failure.status), "not_found");
+	assert.equal(parseAgentPromptOutput(pickFailureOutput("", PROMPT_BLOCKED), 1), "refused_blocked");
 });
 
 // ── Fixture shape pins (live get / prompt / rename envelopes) ──

@@ -257,8 +257,11 @@ function splitPane(target: string, stacking: boolean, opts: CreatePaneOptions): 
 		"--no-focus",
 	]);
 	const paneId = parseSplitPaneId(out);
-	// Label before the launcher runs, so the name is correct from the first
-	// frame (ADR-3). Cosmetics: a failed rename never fails the spawn.
+	// Best-effort FIRST attempt only (ADR-3): the agent record comes into
+	// being when the child registers (~+3s after boot), so this split-time
+	// rename reliably misses (agent_not_found) — the spawner re-applies the
+	// label deferred, once the record is up. Cosmetics: a failed rename
+	// never fails the spawn.
 	if (opts.label) applyPaneLabel(paneId, opts.label);
 	launchScript(paneId, opts.ps1Path);
 	return paneId;
@@ -337,10 +340,10 @@ export function activatePane(_paneId: string): void {}
  * refuses up front (agent_blocked) when the child is waiting for input, and
  * --wait turns "typed into the pane" into "the child was seen working" — so
  * nothing is ever dropped silently. TARGET is always the pane id, never a
- * name. Never throws: herdr's JSON errors (printed on stdout of the non-zero
- * exit and reaped off the thrown execFileSync error) and any CLI failure
- * (missing binary, our own timeout kill) collapse into an outcome; "error"
- * is the catch-all.
+ * never throws: herdr's JSON errors (printed on STDERR of the non-zero exit
+ * and reaped off the thrown execFileSync error via pickFailureOutput) and any
+ * CLI failure (missing binary, our own timeout kill) collapse into an
+ * outcome; "error" is the catch-all.
  */
 export function promptAgent(paneId: string, text: string, timeoutMs = 15_000): AgentPromptOutcome {
 	try {
@@ -350,11 +353,23 @@ export function promptAgent(paneId: string, text: string, timeoutMs = 15_000): A
 		const out = runHerdr(args, timeoutMs + 2_000);
 		return parseAgentPromptOutput(out, 0);
 	} catch (err) {
-		const failure = err as { stdout?: unknown; status?: unknown };
-		const out = typeof failure.stdout === "string" ? failure.stdout : "";
+		const failure = err as { stdout?: unknown; stderr?: unknown; status?: unknown };
 		const exitCode = typeof failure.status === "number" ? failure.status : 1;
-		return parseAgentPromptOutput(out, exitCode);
+		return parseAgentPromptOutput(pickFailureOutput(failure.stdout, failure.stderr), exitCode);
 	}
+}
+
+/**
+ * Raw body for failure classification, from both pipes of a failed
+ * execFileSync. Live-probed (herdr 0.9.1): error envelopes are printed on
+ * STDERR of the non-zero exit, so a stdout-only read collapsed every
+ * structured refusal (not_found, blocked, …) into the catch-all "error".
+ * Takes whichever pipe actually carries text (stdout wins when both do);
+ * "" when neither does (e.g. our own timeout kill).
+ */
+export function pickFailureOutput(stdout: unknown, stderr: unknown): string {
+	const out = [stdout, stderr].find((s): s is string => typeof s === "string" && s.trim().length > 0);
+	return out ?? "";
 }
 
 /**
@@ -406,12 +421,13 @@ export function labelWithIdSuffix(base: string, paneId: string): string {
  * Label a pane's agent with the ADR-3 retry: first attempt is the plain
  * sanitized label; on refusal or collision one retry with the pane-id
  * suffix, then a silent give-up — renaming is cosmetics, all addressing
- * goes through pane ids. Never throws.
+ * goes through pane ids. Never throws. Returns whether either attempt
+ * stuck, so deferred re-label callers know to stop retrying.
  */
-export function applyPaneLabel(paneId: string, label: string): void {
+export function applyPaneLabel(paneId: string, label: string): boolean {
 	const base = herdrAgentName(label);
-	if (renameAgent(paneId, base)) return;
-	renameAgent(paneId, labelWithIdSuffix(base, paneId));
+	if (renameAgent(paneId, base)) return true;
+	return renameAgent(paneId, labelWithIdSuffix(base, paneId));
 }
 
 // ── Agent wait / status parsing (shapes captured from 0.9.1-preview) ──

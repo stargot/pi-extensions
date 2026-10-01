@@ -125,6 +125,11 @@ const INTERRUPT_SETTLE_MS = 1200;
 // fast with agent_not_found (exit 1 — harmless, no false done), so the delay
 // only has to cover a slow boot: 10s does, with margin.
 const NATIVE_WAITER_DELAY_MS = 10_000;
+// Deferred re-label ceiling (ADR-3): the +10s re-label can still miss (slow
+// boot), so pollTick retries the rename every tick while labelPending — then
+// surrenders for good here. Renaming stays cosmetics (all addressing goes
+// through pane ids); the ceiling just bounds how long the cosmetics retry.
+const LABEL_PENDING_MAX_MS = 60_000;
 // A native done flag older than this means the launcher sidecars are truly
 // lost, not "pi just exited, .done is mid-write" — the grace re-opens that
 // race so the sidecar path (step 1) still wins whenever it can.
@@ -193,6 +198,13 @@ interface RunningSubagent {
 	/** Background `herdr agent wait` child and its pending arming timer (herdr backend, auto-exit only). */
 	doneWaiter?: ChildProcess;
 	doneWaiterTimer?: ReturnType<typeof setTimeout>;
+	/**
+	 * Herdr only: the split-time label inside createSubagentPane reliably
+	 * misses (the agent record appears only when the child registers), so a
+	 * deferred re-label — the +10s timer, with pollTick retrying to
+	 * LABEL_PENDING_MAX_MS — still has to apply it.
+	 */
+	labelPending?: boolean;
 }
 
 interface SpawnParams {
@@ -388,27 +400,55 @@ function updateWidget(): void {
 
 // ── Completion / steering ──
 
+// Dynamic herdr import, cached: static herdr imports in index.ts are
+// forbidden (this module stays backend-agnostic — mux is the only surface),
+// while the deferred re-label (ADR-3) and the done-waiter need herdr
+// directly. The ESM module promise is memoized, so repeated loads are free.
+let herdrModule: Promise<typeof import("./herdr.ts")> | null = null;
+function loadHerdr(): Promise<typeof import("./herdr.ts")> {
+	herdrModule ??= import("./herdr.ts");
+	return herdrModule;
+}
+
 /**
  * Arm the native done-waiter for a subagent (ADR-2): one background `herdr
  * agent wait` process, spawned NATIVE_WAITER_DELAY_MS after the pane spawn;
- * its exit(0) stamps running.nativeDoneAt for pollTick. Backend check goes
- * through mux's activeBackend — index.ts stays herdr-agnostic (no direct
- * herdr imports); the delayed import is of a module already in the ESM graph
- * via mux, so it resolves without I/O. Auto-exit children only: herdr's
+ * its exit(0) stamps running.nativeDoneAt for pollTick — and the same timer
+ * carries the deferred re-label (ADR-3), since one delay covers both "pi has
+ * registered" and "safe to wait". Backend check goes through mux's
+ * activeBackend — index.ts stays herdr-agnostic (no direct herdr imports;
+ * the delayed import is of a module already in the ESM graph via mux, so it
+ * resolves without I/O). Auto-exit children only: herdr's
  * "done" means "turn finished", which for an interactive child (one that
  * waits for the next steering message at its prompt) is not completion.
  * Best-effort by design: a failed/late/missing waiter changes nothing — the
  * sidecar watcher remains the source of truth.
  */
 function armDoneWaiter(running: RunningSubagent): void {
-	if (activeBackend() !== "herdr" || !running.autoExit) return;
+	if (activeBackend() !== "herdr" || !running.autoExit) {
+		// No done-waiter timer to piggyback on (interactive child without
+		// auto-exit — herdr backend is guaranteed here, labelPending is never
+		// set elsewhere): the deferred re-label gets a standalone one-shot
+		// with the same delay and orphan guard.
+		if (running.labelPending) armDeferredRelabel(running);
+		return;
+	}
 	const timer = setTimeout(() => {
 		running.doneWaiterTimer = undefined;
-		void import("./herdr.ts")
+		void loadHerdr()
 			.then((herdr) => {
 				// Completed (or session reset) while the module promise settled:
 				// never spawn a waiter for a dead entry — it would orphan.
 				if (runningSubagents.get(running.id) !== running) return;
+				// Deferred re-label (ADR-3): the split-time rename inside
+				// createSubagentPane reliably missed (no agent record before
+				// the child registers), and this delay — the same one that
+				// makes the waiter safe — now covers registration, so the
+				// label can land for real. A miss leaves the flag up for the
+				// pollTick safety net.
+				if (running.labelPending && herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
+					running.labelPending = false;
+				}
 				const waiter = herdr.spawnDoneWaiter(running.paneId, NATIVE_DONE_UNTIL);
 				if (!waiter) return;
 				waiter.on("exit", (code) => {
@@ -424,6 +464,32 @@ function armDoneWaiter(running: RunningSubagent): void {
 	// the map without completing entries).
 	timer.unref();
 	running.doneWaiterTimer = timer;
+}
+
+/**
+ * Standalone deferred re-label for entries without a done-waiter timer to
+ * piggyback on (see armDoneWaiter). Same delay and orphan guard: at +10s the
+ * agent record is reliably up (pi registers within ~2–5s of boot), so one
+ * best-effort applyPaneLabel closes the split-time gap; a miss leaves
+ * labelPending up for the pollTick retry until LABEL_PENDING_MAX_MS. Never
+ * throws; the one-shot timer is never stored — completeSubagent need not
+ * clean it up, the orphan guard disposes of late fires.
+ */
+function armDeferredRelabel(running: RunningSubagent): void {
+	const timer = setTimeout(() => {
+		void loadHerdr()
+			.then((herdr) => {
+				if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
+				if (herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
+					running.labelPending = false;
+				}
+			})
+			.catch(() => {
+				// Miss — pollTick keeps retrying until the ceiling.
+			});
+	}, NATIVE_WAITER_DELAY_MS);
+	// Same discipline as the done-waiter arm: never keep the parent alive.
+	timer.unref();
 }
 
 function completeSubagent(
@@ -683,6 +749,27 @@ function pollTick(): void {
 			continue;
 		}
 
+		// 7. Deferred label safety net (ADR-3): the +10s re-label timer can
+		// still miss (slow boot); while labelPending, retry the rename every
+		// tick — one cheap CLI call, failing fast with agent_not_found —
+		// until it sticks or the 60s ceiling surrenders for good (renaming
+		// stays cosmetics: addressing always goes through pane ids).
+		if (running.labelPending) {
+			void loadHerdr()
+				.then((herdr) => {
+					if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
+					if (
+						herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name)) ||
+						now - running.startTime >= LABEL_PENDING_MAX_MS
+					) {
+						running.labelPending = false;
+					}
+				})
+				.catch(() => {
+					// herdr hiccup this tick — the ceiling surrenders eventually.
+				});
+		}
+
 		observeActivity(running, now);
 	}
 
@@ -849,8 +936,10 @@ function doSpawn(
 		cwd,
 		runningCount: columnPanes.length,
 		topPane: columnPanes[0],
-		// Stable pane label (ADR-3) — applied inside the split, before the
-		// launcher runs, so the name is right from the first frame.
+		// Stable pane label (ADR-3) — a best-effort FIRST attempt inside the
+		// split: the agent record appears only when the child registers, so
+		// this rename reliably misses and labelPending (below) re-applies the
+		// label deferred, once the record is up.
 		label: herdrAgentName(name),
 	});
 	if (!columnPanes.includes(paneId)) columnPanes.push(paneId);
@@ -870,6 +959,8 @@ function doSpawn(
 		agentDef: def,
 		activity: { state: null, lastChangeAt: startTime, stalled: false },
 		cancelRequested: false,
+		// The split-time label missed (herdr only) — deferred re-label pending.
+		labelPending: activeBackend() === "herdr",
 	};
 	runningSubagents.set(id, running);
 	publishRunningChildrenCount();
@@ -997,6 +1088,11 @@ function doResume(
 		agentDef: def,
 		activity: { state: null, lastChangeAt: startTime, stalled: false },
 		cancelRequested: false,
+		// Both branches label the pane before the fresh child registers (new
+		// pane: split-time rename; reused pane: labelPane right after the
+		// launcher — the previous run's agent record was removed on exit),
+		// so the deferred re-label has to close the gap (herdr only).
+		labelPending: activeBackend() === "herdr",
 	};
 	runningSubagents.set(id, running);
 	publishRunningChildrenCount();

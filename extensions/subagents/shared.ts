@@ -89,7 +89,9 @@ export function resolveInterrupt(interrupt: boolean | undefined, stalled: boolea
  * refused_blocked — the text was rejected BEFORE reaching the pane (the child
  * sits in an approval UI), so a blind retry would fail the same way; stalled —
  * the text was submitted but the child never showed working; timeout — the
- * wait window elapsed, pane still alive; not_found — the pane no longer runs
+ * wait window elapsed with the pane still alive, but the submission itself
+ * went through, so the message may have already landed (no blind resend);
+ * not_found — the pane no longer runs
  * an agent, the subagent is gone; error — anything unmapped.
  */
 export function describePromptFailure(outcome: AgentPromptOutcome, name: string): string {
@@ -107,8 +109,10 @@ export function describePromptFailure(outcome: AgentPromptOutcome, name: string)
 			);
 		case "timeout":
 			return (
-				`${head}: herdr timed out waiting for the subagent to settle — its pane is still alive, ` +
-				`so retry, or use interrupt: true if it is stuck in a long turn.`
+				`${head}: herdr timed out waiting for the subagent to settle — but with --wait the text was ` +
+				`already submitted, so it may have reached the subagent; do NOT resend blindly (duplicate risk) — ` +
+				`check the subagent's state first (its pane, or its next update), ` +
+				`or use interrupt: true if it is stuck in a long turn.`
 			);
 		case "not_found":
 			return `${head}: the pane of subagent "${name}" runs no agent anymore (it finished or crashed) — it is already gone.`;

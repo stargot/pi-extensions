@@ -76,11 +76,16 @@ test("describePromptFailure: stalled — submitted, but the child never showed w
 	assert.match(text, /working/);
 });
 
-test("describePromptFailure: timeout — wait window elapsed, pane still alive", () => {
+test("describePromptFailure: timeout — wait elapsed, message may have landed: no blind resend", () => {
 	const text = describePromptFailure("timeout", "scout");
 	assert.match(text, /scout/);
 	assert.match(text, /timed out/);
-	assert.match(text, /alive/);
+	// With --wait the submission itself went through — the old "retry" advice
+	// risked a duplicate: the text may already sit in the child's queue.
+	assert.match(text, /may have reached/);
+	assert.match(text, /NOT resend blindly/);
+	assert.match(text, /interrupt/);
+	assert.doesNotMatch(text, /\bretry\b/);
 });
 
 test("describePromptFailure: not_found — the pane runs no agent anymore", () => {

@@ -153,9 +153,11 @@ const waitExit = async (child: ChildProcess, timeoutMs: number): Promise<void> =
 // show the expected name. Live facts this step encodes (herdr 0.9.1): the
 // agent record only exists once pi is up, so the split-time rename inside
 // createSubagentPane lands nowhere (agent_not_found, dropped silently —
-// renaming is best-effort per ADR-3); the label sticks when applied to the
-// live agent, which is what doResume does on reuse. The step asserts that
-// contract and prints the split-time state for the record.
+// renaming is best-effort per ADR-3) — review finding №1. Production closes
+// the gap with a deferred re-label (~10s after spawn, pollTick safety net to
+// 60s); this e2e drives the primitives directly, so it performs the repair
+// itself — the same rename the deferred path and doResume make — and asserts
+// the label sticks once applied to the live agent.
 const wherePi = execFileSync("where.exe", ["pi"], { encoding: "utf8" });
 const piPath =
 	wherePi
@@ -234,8 +236,10 @@ if (!doneWaiter) fail("spawnDoneWaiter returned null");
 // caller gets a structured AgentPromptOutcome — never a raw exception. The
 // busy pane runs plain pwsh (no pi), so herdr has no agent record and
 // refuses with agent_not_found; live-probed, that envelope arrives on
-// STDERR, which promptAgent (stdout-only) maps to the catch-all "error" —
-// still structured. The assertion only requires a valid outcome.
+// STDERR, which promptAgent reads via pickFailureOutput — before the stderr
+// capture it collapsed into the catch-all "error" (review finding №2).
+// Strict assertion: a bare-pwsh pane must classify as exactly "not_found" —
+// anything else ("error" included) fails the step.
 const busyPs1Path = join(dir, "busy-launcher.ps1");
 writeFileSync(
 	busyPs1Path,
@@ -268,7 +272,12 @@ const PROMPT_OUTCOMES: readonly AgentPromptOutcome[] = [
 ];
 if (!PROMPT_OUTCOMES.includes(outcome))
 	fail(`promptAgent returned a value outside AgentPromptOutcome: ${String(outcome)}`);
-console.log(`prompt: OK (structured outcome "${outcome}"; not_found expected — plain shell pane)`);
+if (outcome !== "not_found")
+	fail(
+		`promptAgent returned "${outcome}" for a bare-pwsh pane — expected strictly "not_found" ` +
+			`(stderr envelope collapsed into the catch-all? see pickFailureOutput)`,
+	);
+console.log(`prompt: OK (strict "${outcome}" for the plain shell pane)`);
 until("__SUBAGENT_DONE_0__", () => readScreenTail(busyPane, 10), 40_000);
 console.log("busy child: finished after the sleep");
 
