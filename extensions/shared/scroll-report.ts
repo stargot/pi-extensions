@@ -1,9 +1,33 @@
 /**
  * Общий прокручиваемый компонент для текстовых отчётов внутри ctx.ui.custom().
- * Клавиши: ↑↓ j k PgUp PgDn Space Home End g G · r пересчитать · q Esc Ctrl+C закрыть.
+ * Клавиши: ↑↓ j k PgUp PgDn Space Home End g G скролл; пересчитать/закрыть — action'ы
+ * ext.report.* из shared/keybindings.ts (по умолчанию r и q/Esc, переопределяются
+ * в <agentDir>/keybindings.json), Ctrl+C закрывает всегда.
+ *
+ * Композиция на примитивах pi-tui: строки render() → Text → ScrollView,
+ * help-строка с позицией (n-m/total) — под вьюпортом через VStack. Состояние
+ * скролла (scrollTop, клампы) принадлежит ScrollView; клавиши и колесо мыши
+ * транслируются в его API (scrollBy/scrollToStart/scrollToEnd).
+ *
+ * Нюанс оверлеев: ctx.ui.custom рендерит компонент напрямую (component.render),
+ * минуя layout-движок pi-tui, поэтому updateLayout для ScrollView вызываем сами
+ * из render(), а «Unhandled wheel events scroll the nearest ScrollView» здесь не
+ * срабатывает (routeWheel идёт по основному layout) — wheel обрабатывается в
+ * handleMouse и делегируется тому же ScrollView.
  */
-import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { DynamicBorder, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+	type Component,
+	matchesKey,
+	ScrollView,
+	Text,
+	truncateToWidth,
+	type TUI,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	VStack,
+} from "@earendil-works/pi-tui";
+import { actionHint, getExtKeybindings, matchAction } from "./keybindings.ts";
 
 export interface ScrollReportOptions {
 	tui: TUI;
@@ -13,6 +37,8 @@ export interface ScrollReportOptions {
 	onClose: () => void;
 	/** Дополнительная подсказка в строке помощи, например список аргументов команды. */
 	helpSuffix?: string;
+	/** Рамка сверху/снизу (DynamicBorder). По умолчанию off — потребители рисуют свои заголовки. */
+	border?: boolean;
 }
 
 export class ScrollReport implements Component {
@@ -21,9 +47,18 @@ export class ScrollReport implements Component {
 	private readonly renderLines: (width: number, theme: Theme) => string[];
 	private readonly onClose: () => void;
 	private readonly helpSuffix: string;
-	private offset = 0;
+
+	/** Полный отчёт (все строки), кэшируется Text-ом по ширине. */
+	private readonly content = new Text("", 0, 0);
+	/** Help-строка с позицией, обновляется в render(). */
+	private readonly help = new Text("", 0, 0);
+	private readonly scrollView: ScrollView;
+	private readonly root: Component;
+
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	/** Клавиши ext.*: свой менеджер с definitions расширений (см. shared/keybindings.ts). */
+	private readonly kb = getExtKeybindings();
 
 	constructor(options: ScrollReportOptions) {
 		this.tui = options.tui;
@@ -31,65 +66,98 @@ export class ScrollReport implements Component {
 		this.renderLines = options.render;
 		this.onClose = options.onClose;
 		this.helpSuffix = options.helpSuffix ?? "";
-	}
 
-	private viewportRows(): number {
-		return Math.max(6, this.tui.terminal.rows - 3);
+		// Вьюпорт: нарезает полный контент по текущему scrollTop. В обычном layout
+		// это делает движок pi-tui (клип по scroll-rect), в оверлее — делаем сами.
+		const viewport: Component = {
+			render: (width: number) => {
+				const full = this.content.render(width);
+				const top = this.scrollView.scrollTop;
+				return full.slice(top, top + Math.max(0, this.scrollView.viewportHeight));
+			},
+			invalidate: () => this.content.invalidate(),
+		};
+		this.scrollView = new ScrollView(viewport);
+
+		this.root =
+			options.border === true
+				? new VStack([
+						new DynamicBorder((s) => this.theme.fg("border", s)),
+						this.scrollView,
+						this.help,
+						new DynamicBorder((s) => this.theme.fg("border", s)),
+					])
+				: new VStack([this.scrollView, this.help]);
 	}
 
 	handleInput(data: string): void {
-		const rows = this.viewportRows();
-		const total = this.lines(this.cachedWidth ?? this.tui.terminal.columns).length;
-		const maxOffset = Math.max(0, total - rows);
-
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
+		if (matchesKey(data, "ctrl+c") || matchAction(this.kb, data, "ext.report.close")) {
 			this.onClose();
 			return;
 		}
-		if (data === "r") {
+		if (matchAction(this.kb, data, "ext.report.refresh")) {
 			this.invalidate();
-		} else if (matchesKey(data, "up") || data === "k") {
-			this.offset = Math.max(0, this.offset - 1);
-		} else if (matchesKey(data, "down") || data === "j") {
-			this.offset = Math.min(maxOffset, this.offset + 1);
-		} else if (matchesKey(data, "pageUp")) {
-			this.offset = Math.max(0, this.offset - rows);
-		} else if (matchesKey(data, "pageDown") || data === " ") {
-			this.offset = Math.min(maxOffset, this.offset + rows);
-		} else if (matchesKey(data, "home") || data === "g") {
-			this.offset = 0;
-		} else if (matchesKey(data, "end") || data === "G") {
-			this.offset = maxOffset;
-		} else {
+			this.tui.requestRender();
 			return;
 		}
-		this.tui.requestRender();
+		const rows = this.scrollView.viewportHeight > 0 ? this.scrollView.viewportHeight : this.viewportRows();
+		let scrolled = true;
+		if (matchesKey(data, "up") || data === "k") {
+			this.scrollView.scrollBy(-1);
+		} else if (matchesKey(data, "down") || data === "j") {
+			this.scrollView.scrollBy(1);
+		} else if (matchesKey(data, "pageUp")) {
+			this.scrollView.scrollBy(-rows);
+		} else if (matchesKey(data, "pageDown") || data === " ") {
+			this.scrollView.scrollBy(rows);
+		} else if (matchesKey(data, "home") || data === "g") {
+			this.scrollView.scrollToStart();
+		} else if (matchesKey(data, "end") || data === "G") {
+			this.scrollView.scrollToEnd();
+		} else {
+			scrolled = false;
+		}
+		if (scrolled) this.tui.requestRender();
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
+		this.scrollView.scrollBy(event.wheelDelta);
+		return { handled: true };
+	}
+
+	private viewportRows(): number {
+		// Терминал минус help-строка и воздух; минимум 6 строк контента.
+		return Math.max(6, this.tui.terminal.rows - 3);
 	}
 
 	private lines(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		this.cachedLines = this.renderLines(width, this.theme).map((line) => truncateToWidth(line, width));
 		this.cachedWidth = width;
+		this.content.setText(this.cachedLines.join("\n"));
 		return this.cachedLines;
 	}
 
 	render(width: number): string[] {
 		const all = this.lines(width);
 		const rows = this.viewportRows();
-		const maxOffset = Math.max(0, all.length - rows);
-		if (this.offset > maxOffset) this.offset = maxOffset;
-		const slice = all.slice(this.offset, this.offset + rows);
-		const position =
-			all.length > rows ? ` ${this.offset + 1}-${Math.min(all.length, this.offset + rows)}/${all.length}` : "";
+		this.scrollView.updateLayout(all.length, rows, () => this.tui.requestRender());
+		const top = this.scrollView.scrollTop;
+		const position = all.length > rows ? ` ${top + 1}-${Math.min(all.length, top + rows)}/${all.length}` : "";
 		const help = this.theme.fg(
 			"dim",
-			`↑↓ PgUp PgDn Home End scroll · r refresh · q/esc close${position}${this.helpSuffix}`,
+			`↑↓ PgUp PgDn Home End scroll · ${actionHint(this.kb, "ext.report.refresh", "refresh")} · ${actionHint(this.kb, "ext.report.close", "close")}${position}${this.helpSuffix}`,
 		);
-		return [...slice, truncateToWidth(help, width)];
+		this.help.setText(truncateToWidth(help, width));
+		return this.root.render(width);
 	}
 
 	invalidate(): void {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.content.invalidate();
+		this.help.invalidate();
+		this.root.invalidate();
 	}
 }

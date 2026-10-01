@@ -14,7 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractUnits } from "../../session-recall/search.ts";
 import { parseSessionText } from "../../session-ledger/ledger.ts";
-import { loadIndex, parseSessionCombined, refreshSharedIndex, saveIndex } from "../session-index.ts";
+import {
+	INDEX_VERSION,
+	isNestedSessionFile,
+	loadIndex,
+	parseSessionCombined,
+	refreshSharedIndex,
+	saveIndex,
+} from "../session-index.ts";
 
 function sessionText(opts: { cwd?: string; name?: string } = {}): string {
 	const lines: unknown[] = [
@@ -98,11 +105,11 @@ test("loadIndex/saveIndex: roundtrip, corrupt file, version mismatch", () => {
 	try {
 		const combined = parseSessionCombined(sessionText(), "/x/s1.jsonl")!;
 		saveIndex(file, {
-			version: 1,
+			version: INDEX_VERSION,
 			files: { "/x/s1.jsonl": { mtimeMs: 1, size: 2, summary: combined.summary, units: combined.units } },
 		});
 		const loaded = loadIndex(file);
-		assert.equal(loaded.version, 1);
+		assert.equal(loaded.version, INDEX_VERSION);
 		assert.deepEqual(loaded.files["/x/s1.jsonl"]?.summary, combined.summary);
 
 		writeFileSync(file, "{corrupt", "utf8");
@@ -114,6 +121,101 @@ test("loadIndex/saveIndex: roundtrip, corrupt file, version mismatch", () => {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+test("loadIndex: legacy v1 cache (без nested/isNested) перестраивается, а не отдаёт неполные summary", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-shared-index-v1-"));
+	const file = join(dir, "cache", "session-index.json");
+	try {
+		mkdirSync(join(dir, "cache"), { recursive: true });
+		const legacy = parseSessionCombined(sessionText(), "/x/s1.jsonl")!.summary as unknown as Record<string, unknown>;
+		delete legacy.nested;
+		delete legacy.isNested;
+		writeFileSync(
+			file,
+			JSON.stringify({ version: 1, files: { "/x/s1.jsonl": { mtimeMs: 1, size: 2, summary: legacy, units: [] } } }),
+			"utf8",
+		);
+		assert.deepEqual(loadIndex(file).files, {});
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("nested-сплит: файлы под subagents/** помечаются isNested, usage зеркалится в summary.nested", () => {
+	const text = sessionText();
+	const main = parseSessionCombined(text, "/x/s1.jsonl")!.summary;
+	const nestedPosix = parseSessionCombined(text, "/x/subagents/child.jsonl")!.summary;
+	const nestedWin = parseSessionCombined(text, "C:\\pi\\sessions\\subagents\\child.jsonl")!.summary;
+
+	assert.equal(main.isNested, false);
+	assert.equal(main.nested.turns, 0);
+	assert.equal(main.nested.input, 0);
+
+	// Определение nested (сверено с реальным ~/.pi/agent/sessions): файл субагента лежит
+	// под <sessionsRoot>/subagents/**; pi-forge forgeNestedUsage в данных не встречается.
+	assert.equal(isNestedSessionFile("/x/subagents/child.jsonl"), true);
+	assert.equal(isNestedSessionFile("C:\\pi\\sessions\\subagents\\child.jsonl"), true);
+	assert.equal(isNestedSessionFile("/x/subagents-nested/s1.jsonl"), false);
+	assert.equal(nestedPosix.isNested, true);
+	assert.equal(nestedWin.isNested, true);
+
+	// stats остаётся комбинированным (обратная совместимость), nested — полная копия для nested-файла.
+	assert.deepEqual(nestedPosix.nested, nestedPosix.stats);
+	assert.ok(nestedPosix.stats.input > 0);
+});
+
+test("unknownUsage: assistant-запросы без usage считаются счётчиком", () => {
+	const lines = [
+		{ type: "session", version: 3, id: "s9", timestamp: "2026-09-05T12:00:00.000Z", cwd: "/work/alpha" },
+		{
+			type: "message",
+			id: "u1",
+			timestamp: "2026-09-05T12:00:01.000Z",
+			message: { role: "user", content: [{ type: "text", text: "go" }] },
+		},
+		// abort/error: usage отсутствует вовсе
+		{
+			type: "message",
+			id: "a1",
+			timestamp: "2026-09-05T12:00:02.000Z",
+			message: { role: "assistant", provider: "zai", model: "m", stopReason: "error", content: [] },
+		},
+		// usage есть, но все счётчики нулевые (pi-forge-совместимая трактовка «без usage»)
+		{
+			type: "message",
+			id: "a2",
+			timestamp: "2026-09-05T12:00:03.000Z",
+			message: {
+				role: "assistant",
+				provider: "zai",
+				model: "m",
+				stopReason: "aborted",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				content: [],
+			},
+		},
+		// нормальный запрос: в unknownUsage не попадает
+		{
+			type: "message",
+			id: "a3",
+			timestamp: "2026-09-05T12:00:04.000Z",
+			message: {
+				role: "assistant",
+				provider: "zai",
+				model: "m",
+				stopReason: "end",
+				usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+				content: [{ type: "text", text: "done" }],
+			},
+		},
+	];
+	const s = parseSessionCombined(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`, "/x/s9.jsonl")!.summary;
+	assert.equal(s.stats.turns, 3);
+	assert.equal(s.stats.unknownUsage, 2);
+	// Разрез по моделям согласован с итогом
+	assert.equal(s.byModel["zai/m"].unknownUsage, 2);
+	assert.equal(s.byDay["2026-09-05"].unknownUsage, 2);
 });
 
 test("refreshSharedIndex: incremental by mtime+size, drops removed, honors exclude", () => {

@@ -48,6 +48,8 @@ export interface Stats {
 	branchSummaries: number;
 	errors: number;
 	aborted: number;
+	/** Assistant-запросы без usage (поле отсутствует или все счётчики нулевые — abort/error). */
+	unknownUsage: number;
 }
 
 export interface ToolStats {
@@ -65,10 +67,33 @@ export interface SessionSummary {
 	startedAt: number;
 	endedAt: number;
 	userMessages: number;
+	/**
+	 * Полный расход файла: main + nested. Историческое поле — все существующие
+	 * колонки /stats и потребители читают его как прежде (обратная совместимость).
+	 */
 	stats: Stats;
+	/**
+	 * Nested-часть расхода: usage сессий-субагентов. Определение сверено с реальным
+	 * JSONL ~/.pi/agent/sessions: субагент получает собственный полный файл сессии
+	 * под `<sessionsRoot>/subagents/**` (расширение subagents) — а контракт
+	 * pi-forge `forgeNestedUsage` (toolResult.details) в наших данных не встречается.
+	 * Для main-файла — нулевой Stats; иначе nested ⊆ stats (main = stats − nested).
+	 */
+	nested: Stats;
+	/** Файл лежит под `<sessionsRoot>/subagents/**`. */
+	isNested: boolean;
 	byModel: Record<string, Stats>;
 	byDay: Record<string, Stats>;
 	byTool: Record<string, ToolStats>;
+}
+
+/**
+ * Nested-сессии — файлы субагентов под `<sessionsRoot>/subagents/**`. Проверка
+ * по сегменту пути: работает и с posix-, и с windows-разделителями; каталоги
+ * проектов в sessions root всегда кодируются префиксом `--` и не совпадают.
+ */
+export function isNestedSessionFile(file: string): boolean {
+	return file.split(/[\\/]/).includes("subagents");
 }
 
 export function emptyStats(): Stats {
@@ -86,6 +111,7 @@ export function emptyStats(): Stats {
 		branchSummaries: 0,
 		errors: 0,
 		aborted: 0,
+		unknownUsage: 0,
 	};
 }
 
@@ -160,6 +186,25 @@ function textOfJoined(content: unknown): string {
 		.join("\n");
 }
 
+/**
+ * Есть ли у сообщения REPORTED usage: поле отсутствует или все счётчики нулевые
+ * (pi-forge-совместимая трактовка: abort/error-запросы персистятся без usage).
+ */
+function hasReportedUsage(
+	usage:
+		| {
+				input?: number;
+				output?: number;
+				cacheRead?: number;
+				cacheWrite?: number;
+				cost?: { total?: number };
+		  }
+		| undefined,
+): boolean {
+	if (!usage) return false;
+	return Boolean(usage.input || usage.output || usage.cacheRead || usage.cacheWrite || usage.cost?.total);
+}
+
 /** Плоский текст для firstPrompt: блоки text через пробел (как в ledger). */
 function textOfSpaced(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -200,6 +245,8 @@ export function parseSessionCombined(
 		endedAt: 0,
 		userMessages: 0,
 		stats: emptyStats(),
+		nested: emptyStats(),
+		isNested: false,
 		byModel: {},
 		byDay: {},
 		byTool: {},
@@ -293,6 +340,9 @@ export function parseSessionCombined(
 				addUsage(t, usage);
 				if (message.stopReason === "error") t.errors += 1;
 				if (message.stopReason === "aborted") t.aborted += 1;
+				// pi-forge-совместимая трактовка (src/session-usage.ts: requestUsage): запрос без
+				// токенов (abort/error) не попадает в суммы — здесь он помечается счётчиком.
+				if (!hasReportedUsage(usage)) t.unknownUsage += 1;
 			}
 			for (const block of blocksOf(message.content)) {
 				if (block.type === "toolCall" && typeof block.name === "string") {
@@ -333,6 +383,10 @@ export function parseSessionCombined(
 	}
 
 	if (!header) return undefined;
+	summary.isNested = isNestedSessionFile(file);
+	// Nested-файл (субагент): весь его расход дублируется в summary.nested (⊆ stats);
+	// stats остаётся комбинированным — total в потребителях = main + nested не меняется.
+	if (summary.isNested) summary.nested = { ...summary.stats };
 	for (const stats of [...Object.values(summary.byModel), ...Object.values(summary.byDay)]) stats.sessions = 1;
 	if (sessionName) for (const u of units) u.sessionName = sessionName;
 	return { summary, units };
@@ -347,7 +401,8 @@ function bump<T extends Stats>(group: Record<string, T>, key: string): T {
 
 /** Текст юнита в кэше обрезается: поиск работает по началу, полный текст — в самом jsonl. */
 export const UNIT_TEXT_CACHE_CAP = 4 * 1024;
-const INDEX_VERSION = 1;
+/** v2: SessionSummary.nested/isNested (сплит main/nested) — старый кэш перестраивается. */
+export const INDEX_VERSION = 2;
 
 export interface SessionFileRecord {
 	mtimeMs: number;

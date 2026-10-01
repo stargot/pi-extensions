@@ -3,6 +3,77 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [Unreleased]
+
+### Fixed
+
+- **ui**: направление jumpMatch (n/N) в /trace считается по индексу совпавшей клавиши —
+  переопределение на две строчные клавиши (["j","k"]) больше не ломает «назад»;
+  клавиши-действия оверлеев резолвятся из единого реестра `shared/keybindings.ts`
+  (убраны дублирующие fallback-литералы).
+
+## [0.5.0] — 2026-10-01
+
+### Added
+
+- **shared/line-diff (B5)**: чистый line-diff, портированный из pi-forge:
+  `diffLines` с LCS и бюджетом ячеек (при превышении — фолбэк на replace),
+  инлайн-подсветка по графемам через `Intl.Segmenter`, side-by-side-строки,
+  инъекция стилизатора `DiffStyler`. Ноль импортов, самодостаточный модуль
+  без DOM — работает и в оверлеях, и в CLI. 15 тестов.
+- **session-trace (B6)**: rolling-история контекста — кольцевой буфер на 20
+  ходов со снимками (подписи сообщений + usage); для каждого хода —
+  prefix-walk-дифф с предыдущим: `deltaTokens`, `prefixRatio`,
+  `changedBlocks` (модель pi-forge). Клавиша `d` тогглит дифф-вью с
+  построчными деталями (+/−/~, инлайн-сегменты через shared/line-diff,
+  кап 300 строк); компакция сбрасывает контекст. Всё живёт в памяти и
+  рисуется только в локальном оверлее — на диск ничего не пишется.
+- **ui (B7)**: keybindings-менеджер для экшенов расширений: действия
+  объявляются через declaration merging (`ext.*`), собственный
+  `KeybindingsManager` читает `<agentDir>/keybindings.json`; при отсутствии
+  файла или невалидных биндингов — фоллбэк на guard-дефолты; `/help`
+  рендерится из фактических биндингов, а не из хардкода.
+- **ui (B8)**: `CancellableLoader` — холодный `/stats` больше не блокирует
+  интерфейс: оверлей открывается сразу с лоадером, индексация стартует
+  после yield, `Esc` отменяет. Рядом — `shared/chip.ts`: чипы как
+  bg(fg(text)) с деградацией в fg-only, если у темы нет bg-метода или
+  токен неизвестен (fg-only guard). +6 тестов.
+- **payload-capture (B9)**: новое расширение — arm-once захват
+  provider-запросов: `/payload arm [--save] | show | clear`, перехват через
+  `before_provider_request` всегда возвращает `undefined` (payload не
+  модифицируется). Приватность тройная: credential-поля вычищаются
+  redaction'ом до любого хранения, в память кладётся уже redacted-копия
+  (с капом размера и маркером усечения), на диск — только при явном
+  `--save` И в trusted-проекте (`<agentDir>/cache/payload-captures`);
+  по умолчанию ничего не сохраняется, разоружение на `session_shutdown`.
+  18 тестов.
+
+### Changed
+
+- **ui (B1)**: ScrollReport переписан на примитивы pi-tui (ScrollView/Box/
+  VStack) — drop-in с тем же публичным API (`ScrollReportOptions` +
+  `invalidate`), потребители (session-ledger, context-inspector) не тронуты;
+  колесо через `Component.handleMouse` (роутинг мыши оверлеев в
+  `ctx.ui.custom` не подключён), опциональный бордер через DynamicBorder.
+  11 новых тестов.
+- **session-recall (B2)**: ResultsView переведён на pi-tui SelectList —
+  индексные ключи элементов держат выделение стабильным сквозь внутренний
+  пейджинг, подсветка совпадений сохранена через identity description theme;
+  колесо и клик делегированы SelectList. Публичные опции не изменились.
+  +4 теста.
+- **session-trace (B3)**: TraceView переведён на pi-tui Box/ScrollView/
+  HStack: рукописные бордеры карточек и ручной scroll-offset заменены
+  примитивами, мини-карта собрана на HStack; wheel через
+  `Component.handleMouse`, follow-to-tail только когда прилипли к низу.
+  Поведение, клавиши, live/replay и логика мини-карты без изменений.
+- **session-ledger (B4)**: честная модель stats a-la pi-forge: usage
+  разделён на main/nested (nested — вложенные сессии/субагенты/**-файлы),
+  hit-rate считается из сумм токенов (при нулевом знаменателе — em-dash
+  вместо фиктивных процентов), счётчики `unknownUsage`/`invalidFiles`
+  показывают, сколько данных не удалось разобрать; бары — блочными глифами
+  через mixColors. `total = main + nested`, старые колонки сохранены;
+  INDEX_VERSION 2 с перестройкой v1-кэша.
+
 ## [0.4.0] — 2026-09-30
 
 ### Added
@@ -245,5 +316,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   действительно рендерится (TruncatedText терял вторую строку); legacy-записи
   без `details.summary` больше не показывают карточку с «(no summary)».
 
+[0.5.0]: https://github.com/stargot/pi-extensions/releases/tag/v0.5.0
+[0.4.0]: https://github.com/stargot/pi-extensions/releases/tag/v0.4.0
 [0.3.0]: https://github.com/stargot/pi-extensions/releases/tag/v0.3.0
 [0.2.0]: https://github.com/stargot/pi-extensions/releases/tag/v0.2.0

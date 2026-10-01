@@ -3,6 +3,7 @@
  * Формат файла: ~/.pi/agent/sessions/<--path-->/<ts>_<uuid>.jsonl, версия 3.
  * См. docs/session-format.md в дистрибутиве pi.
  */
+import { ContextHistory, type TurnTokens, makeSignature } from "./context-history.ts";
 
 export interface Chip {
 	callId: string;
@@ -19,6 +20,8 @@ export interface TurnItem {
 	startMs: number;
 	model?: string;
 	tokensOut?: number;
+	/** Полный usage хода: для контекст-диффа (cacheRead/cacheWrite) и шапок. */
+	tokens: TurnTokens;
 	cost?: number;
 	text?: string;
 	thinking?: string;
@@ -134,6 +137,10 @@ export class GraphModel {
 	items: Item[] = [];
 	sessionName?: string;
 	cwd?: string;
+	/** B6: кольцевый буфер последних 20 ходов для контекст-диффа (клавиша d в graph.ts). */
+	readonly history = new ContextHistory();
+	/** Бегущий список подписей сообщений контекста — источник messageSignature снапшотов. */
+	private ctxSigs: string[] = [];
 	totals = { input: 0, output: 0, cost: 0 };
 	/** итого по моделям: model -> [turns, input, output, cost] */
 	models = new Map<string, { turns: number; input: number; output: number; cost: number }>();
@@ -162,6 +169,9 @@ export class GraphModel {
 			case "compaction": {
 				const k = e.tokensBefore ? ` · ${fmtK(e.tokensBefore)} tok` : "";
 				this.marker(ts, "↻", `compaction${k}`);
+				// Контекст переписан — старые подписи больше не общий префикс: сброс,
+				// чтобы prefixRatio следующего хода честно показал холодный кэш.
+				this.ctxSigs = [];
 				break;
 			}
 			case "branch_summary":
@@ -205,6 +215,7 @@ export class GraphModel {
 			case "user": {
 				const text = oneLine(contentText(m.content), 100);
 				if (text) this.items.push({ kind: "user", ts, text });
+				this.ctxSigs.push(makeSignature("user", contentText(m.content)));
 				break;
 			}
 			case "bashExecution": {
@@ -214,12 +225,17 @@ export class GraphModel {
 					command: oneLine(m.command, 90),
 					exitCode: m.exitCode,
 				});
+				this.ctxSigs.push(makeSignature("bash", m.command));
 				break;
 			}
 			case "assistant":
 				this.feedAssistant(m, ts);
 				break;
 			case "toolResult":
+				// Подпись результата — часть контекста следующего хода, даже если чип не нашёлся.
+				this.ctxSigs.push(
+					makeSignature(m.toolName ? `toolResult(${m.toolName})` : "toolResult", contentText(m.content)),
+				);
 				this.resolveChip(m, ts);
 				break;
 			default:
@@ -229,13 +245,21 @@ export class GraphModel {
 
 	private feedAssistant(m: any, ts: number): void {
 		this.turnNo++;
+		const usage = m.usage ?? {};
+		const tokens: TurnTokens = {
+			input: usage.input ?? 0,
+			cacheRead: usage.cacheRead ?? 0,
+			cacheWrite: usage.cacheWrite ?? 0,
+			output: usage.output ?? 0,
+		};
 		const turn: TurnItem = {
 			kind: "turn",
 			index: this.turnNo,
 			startMs: ts,
 			model: m.model,
-			tokensOut: m.usage?.output,
-			cost: m.usage?.cost?.total,
+			tokensOut: usage.output,
+			tokens,
+			cost: usage.cost?.total,
 			stopReason: m.stopReason,
 			errorMessage: m.errorMessage,
 			chips: [],
@@ -250,6 +274,22 @@ export class GraphModel {
 		agg.output += m.usage?.output ?? 0;
 		agg.cost += m.usage?.cost?.total ?? 0;
 		this.models.set(mk, agg);
+
+		// B6: снимок контекста этого хода — подписи всех сообщений на момент ответа
+		// (включая сам ответ) + реальные токены. Буфер сам вытесняет старые ходы.
+		const content = Array.isArray(m.content) ? m.content : [];
+		const calls = content.filter((b: any) => b?.type === "toolCall").map((b: any) => b.name ?? "?");
+		const asstText =
+			contentText(content) ||
+			(calls.length > 0 ? `⚒ ${calls.join(", ")}` : (content.find((b: any) => b?.type === "thinking")?.thinking ?? ""));
+		this.ctxSigs.push(makeSignature("assistant", asstText));
+		this.history.push({
+			turnIndex: turn.index,
+			ts,
+			model: turn.model,
+			tokens,
+			messageSignature: this.ctxSigs.slice(),
+		});
 
 		if (Array.isArray(m.content)) {
 			for (const b of m.content) {

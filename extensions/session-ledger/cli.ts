@@ -42,7 +42,7 @@ function main(argv: string[]): number {
 
 	if (json) {
 		process.stdout.write(
-			`${JSON.stringify({ period, by, project, since: ledger.since, scanned: ledger.scanned, skipped, total: ledger.total, rows: groupRows(ledger, by) }, null, 2)}\n`,
+			`${JSON.stringify({ period, by, project, since: ledger.since, scanned: ledger.scanned, skipped, invalidFiles: ledger.invalidFiles, total: ledger.total, main: ledger.main, nested: ledger.nested, rows: groupRows(ledger, by) }, null, 2)}\n`,
 		);
 		return 0;
 	}
