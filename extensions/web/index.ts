@@ -63,7 +63,9 @@ const startBridgeOnce = dedupeInFlight(async (): Promise<void> => {
 		const handle = await startBridge(config);
 		if (handle.status === "disabled") {
 			bridgeDisabledReason = handle.disabledReason ?? "unknown reason";
-			console.warn(`[pi-web] browser bridge disabled: ${bridgeDisabledReason}`);
+			// No stdout/stderr write here: the TUI owns the terminal while pi
+			// runs — direct writes garble the UI. The session_start subscriber
+			// reports bridgeDisabledReason through ctx.ui instead.
 			return;
 		}
 		bridge = handle;
@@ -72,7 +74,7 @@ const startBridgeOnce = dedupeInFlight(async (): Promise<void> => {
 		// Defensive: startBridge is contractually non-throwing, but a
 		// surprise here must still never take the session down.
 		bridgeDisabledReason = error instanceof Error ? error.message : String(error);
-		console.warn(`[pi-web] browser bridge failed to start: ${bridgeDisabledReason}`);
+		// Surfaced by the session_start subscriber via bridgeDisabledReason.
 	}
 });
 
@@ -100,12 +102,28 @@ async function shutdownBridge(): Promise<void> {
 // ── Extension entry point ───────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_start", () => {
-		void ensureBridge().catch((error: unknown) => {
-			// Belt and braces: ensureBridge already catches its own failures;
-			// this guard only covers an unexpected throw in the plumbing.
-			console.warn(`[pi-web] browser bridge startup error: ${error instanceof Error ? error.message : String(error)}`);
-		});
+	pi.on("session_start", (_event, ctx) => {
+		// Repo-wide notify-or-stdout pattern (cf. quiz, session-trace,
+		// session-ledger): while pi runs, the TUI owns the terminal — any
+		// direct write garbles the UI, so diagnostics go through ctx.ui,
+		// falling back to stdout only when there is no UI (headless).
+		const report = (message: string, level: "warning" | "error") => {
+			if (ctx.hasUI) ctx.ui.notify(message, level);
+			else process.stdout.write(`${message}\n`);
+		};
+		void ensureBridge()
+			.then(() => {
+				// startBridge is contractually non-throwing: a "disabled" outcome
+				// (port range exhausted, token file unwritable) lands here with
+				// bridgeDisabledReason set — surface it instead of degrading
+				// web_fetch's fallback silently.
+				if (bridgeDisabledReason) report(`browser bridge disabled: ${bridgeDisabledReason}`, "warning");
+			})
+			.catch((error: unknown) => {
+				// Belt and braces: ensureBridge already catches its own failures;
+				// this guard only covers an unexpected throw in the plumbing.
+				report(`browser bridge startup error: ${error instanceof Error ? error.message : String(error)}`, "error");
+			});
 	});
 
 	pi.on("session_shutdown", () => {
