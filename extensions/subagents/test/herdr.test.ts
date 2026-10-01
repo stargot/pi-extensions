@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parsePaneListIds, parseSplitPaneId, selectSplitTarget } from "../herdr.ts";
+import {
+	herdrAgentName,
+	parseAgentPromptOutput,
+	parsePaneListIds,
+	parseSplitPaneId,
+	selectSplitTarget,
+} from "../herdr.ts";
 
 // Real response captured from herdr 0.9.0 (`herdr pane split …`).
 const SPLIT_OK =
@@ -75,4 +81,159 @@ test("selectSplitTarget: everything dead → throws, mentioning the parent pane 
 		/w1:p1/,
 	);
 	assert.throws(() => selectSplitTarget({ parentPaneId: "w1:p1", livePaneIds: new Set() }), /w1:p1/);
+});
+
+// ── Agent-surface fixtures (T1 step 0, captured live 2026-10-01) ──
+//
+// Captured inside herdr 0.9.1-preview: a disposable pane (w1P:p7) was split
+// off the worker session and pi was started in it; the responses below are
+// verbatim `agent get` / `agent prompt --wait` / `agent rename` output.
+// Live: AGENT_GET_OK, AGENT_GET_NOT_FOUND, PROMPT_OK, PROMPT_NOT_FOUND,
+// RENAME_OK, WAIT_TIMEOUT. Synthesized: PROMPT_BLOCKED, PROMPT_STALLED — a
+// live refusal needs an agent parked in an approval UI and could not be
+// triggered on demand, so their shape is copied from the live error envelope
+// of WAIT_TIMEOUT and the codes come from `herdr agent prompt --help`.
+
+// `herdr agent get w1P:p7` while pi sat idle in the pane (exit 0).
+const AGENT_GET_OK =
+	'{"id":"cli:agent:get","result":{"agent":{"agent":"pi","agent_session":{"agent":"pi","kind":"path","source":"herdr:pi","value":"C:\\\\Users\\\\starg\\\\.pi\\\\agent\\\\sessions\\\\--C--SFT_Storage-Projects-pi-extensions--\\\\2026-10-01T04-12-16-844Z_01a0f5a9-bc4c-7701-9c2f-a02a63bdffa5.jsonl"},"agent_status":"idle","cwd":"C:\\\\SFT_Storage\\\\Projects\\\\pi-extensions","focused":true,"pane_id":"w1P:p7","revision":7,"screen_detection_skipped":true,"state_change_seq":65,"tab_id":"w1P:t1","terminal_id":"term_65cbf9b06a54114","terminal_title":"π - pi-extensions","terminal_title_stripped":"π - pi-extensions","workspace_id":"w1P"},"type":"agent_info"}}';
+
+// `herdr agent get w1P:p7` while the pane still ran a plain pwsh (exit 1):
+// herdr only knows agents it has recognized — a shell is agent_not_found.
+const AGENT_GET_NOT_FOUND =
+	'{"error":{"code":"agent_not_found","message":"agent target w1P:p7 not found"},"id":"cli:agent:get"}';
+
+// `herdr agent prompt w1P:p7 "echo hi" --wait --timeout 15000` with pi idle
+// in the pane (exit 0): accepted and settled (status done, agent_prompted).
+const PROMPT_OK =
+	'{"id":"cli:agent:prompt","result":{"agent":{"agent":"pi","agent_session":{"agent":"pi","kind":"path","source":"herdr:pi","value":"C:\\\\Users\\\\starg\\\\.pi\\\\agent\\\\sessions\\\\--C--SFT_Storage-Projects-pi-extensions--\\\\2026-10-01T04-12-16-844Z_01a0f5a9-bc4c-7701-9c2f-a02a63bdffa5.jsonl"},"agent_status":"done","cwd":"C:\\\\SFT_Storage\\\\Projects\\\\pi-extensions","focused":true,"pane_id":"w1P:p7","revision":7,"screen_detection_skipped":true,"state_change_seq":67,"tab_id":"w1P:t1","terminal_id":"term_65cbf9b06a54114","terminal_title":"π - pi-extensions","terminal_title_stripped":"π - pi-extensions","workspace_id":"w1P"},"type":"agent_prompted"}}';
+
+// The same prompt BEFORE pi was started in the pane (exit 1) — the shape any
+// stale/closed pane id would produce.
+const PROMPT_NOT_FOUND =
+	'{"error":{"code":"agent_not_found","message":"agent target w1P:p7 not found"},"id":"cli:agent:prompt"}';
+
+// `herdr agent rename w1P:p7 t1-probe` (exit 0): the label lands at
+// .result.agent.name; envelope is the same agent_info as agent get.
+const RENAME_OK =
+	'{"id":"cli:agent:rename","result":{"agent":{"agent":"pi","agent_session":{"agent":"pi","kind":"path","source":"herdr:pi","value":"C:\\\\Users\\\\starg\\\\.pi\\\\agent\\\\sessions\\\\--C--SFT_Storage-Projects-pi-extensions--\\\\2026-10-01T04-12-16-844Z_01a0f5a9-bc4c-7701-9c2f-a02a63bdffa5.jsonl"},"agent_status":"done","cwd":"C:\\\\SFT_Storage\\\\Projects\\\\pi-extensions","focused":true,"name":"t1-probe","pane_id":"w1P:p7","revision":7,"screen_detection_skipped":true,"state_change_seq":67,"tab_id":"w1P:t1","terminal_id":"term_65cbf9b06a54114","terminal_title":"π - pi-extensions","terminal_title_stripped":"π - pi-extensions","workspace_id":"w1P"},"type":"agent_info"}}';
+
+// `herdr agent wait w1P:p7 --until blocked --timeout 300` (exit 1): the live
+// error envelope the synthesized prompt refusals borrow their shape from.
+const WAIT_TIMEOUT =
+	'{"error":{"code":"timeout","message":"timed out waiting for agent status"},"id":"cli:agent:wait"}';
+
+// Synthesized, shape from live timeout error (WAIT_TIMEOUT), code from
+// `agent prompt --help`: the child is already blocked, herdr rejects the
+// text BEFORE delivery (the reason ADR-1 wants --wait, not fire-and-forget).
+const PROMPT_BLOCKED =
+	'{"error":{"code":"agent_blocked","message":"agent is blocked; prompt rejected before delivery"},"id":"cli:agent:prompt"}';
+
+// Synthesized, same provenance: --wait saw no working|blocked within 5000ms
+// of an accepted submission.
+const PROMPT_STALLED =
+	'{"error":{"code":"agent_prompt_stalled","message":"no working or blocked state observed after submission"},"id":"cli:agent:prompt"}';
+
+// ── parseAgentPromptOutput ──
+
+test("parseAgentPromptOutput: live delivered response (exit 0)", () => {
+	assert.equal(parseAgentPromptOutput(PROMPT_OK, 0), "delivered");
+});
+
+test("parseAgentPromptOutput: live not_found refusal", () => {
+	assert.equal(parseAgentPromptOutput(PROMPT_NOT_FOUND, 1), "not_found");
+});
+
+test("parseAgentPromptOutput: blocked refusal (synthesized fixture)", () => {
+	assert.equal(parseAgentPromptOutput(PROMPT_BLOCKED, 1), "refused_blocked");
+});
+
+test("parseAgentPromptOutput: stalled (synthesized fixture)", () => {
+	assert.equal(parseAgentPromptOutput(PROMPT_STALLED, 1), "stalled");
+});
+
+test("parseAgentPromptOutput: live wait timeout shape maps to timeout", () => {
+	assert.equal(parseAgentPromptOutput(WAIT_TIMEOUT, 1), "timeout");
+});
+
+test("parseAgentPromptOutput: clean body with exit 0 is delivered", () => {
+	assert.equal(parseAgentPromptOutput('{"result":{"type":"agent_prompted"}}', 0), "delivered");
+});
+
+test("parseAgentPromptOutput: defensive — garbage, empty, unknown codes never throw", () => {
+	assert.equal(parseAgentPromptOutput("", 1), "error");
+	assert.equal(parseAgentPromptOutput("garbage", 1), "error");
+	assert.equal(parseAgentPromptOutput("{}", 1), "error");
+	assert.equal(parseAgentPromptOutput('{"error":{"code":"something_new"}}', 1), "error");
+	// An unparseable body never counts as delivered, whatever the exit code.
+	assert.equal(parseAgentPromptOutput("", 0), "error");
+	assert.equal(parseAgentPromptOutput("garbage", 0), "error");
+});
+
+// ── Fixture shape pins (live get / prompt / rename envelopes) ──
+
+test("fixture AGENT_GET_OK: idle pi recognized in the pane", () => {
+	const parsed = JSON.parse(AGENT_GET_OK) as {
+		result: { type: string; agent: { agent: string; agent_status: string; pane_id: string } };
+	};
+	assert.equal(parsed.result.type, "agent_info");
+	assert.equal(parsed.result.agent.agent, "pi");
+	assert.equal(parsed.result.agent.agent_status, "idle");
+	assert.equal(parsed.result.agent.pane_id, "w1P:p7");
+});
+
+test("fixture AGENT_GET_NOT_FOUND: a plain shell is not an agent", () => {
+	const parsed = JSON.parse(AGENT_GET_NOT_FOUND) as { error: { code: string } };
+	assert.equal(parsed.error.code, "agent_not_found");
+});
+
+test("fixture PROMPT_OK: agent_prompted envelope with the settled child", () => {
+	const parsed = JSON.parse(PROMPT_OK) as {
+		result: { type: string; agent: { pane_id: string; agent_status: string } };
+	};
+	assert.equal(parsed.result.type, "agent_prompted");
+	assert.equal(parsed.result.agent.pane_id, "w1P:p7");
+	assert.equal(parsed.result.agent.agent_status, "done");
+});
+
+test("fixture RENAME_OK: label lands on .result.agent.name", () => {
+	const parsed = JSON.parse(RENAME_OK) as { result: { type: string; agent: { name?: string } } };
+	assert.equal(parsed.result.type, "agent_info");
+	assert.equal(parsed.result.agent.name, "t1-probe");
+});
+
+// ── herdrAgentName (ADR-3 sanitizer table) ──
+
+test("herdrAgentName: lowercase and separator folding", () => {
+	assert.equal(herdrAgentName("Scout"), "scout");
+	assert.equal(herdrAgentName("  W1P Scout! "), "w1p-scout");
+	assert.equal(herdrAgentName("scout--agent__x"), "scout-agent-x");
+	assert.equal(herdrAgentName("a !!! b"), "a-b");
+});
+
+test("herdrAgentName: Cyrillic sanitizes away (a- prefix for a digit head)", () => {
+	// "скут" is a non-[a-z0-9] run → one hyphen, trimmed; the digit head then
+	// gets the a- prefix.
+	assert.equal(herdrAgentName("Скут-2"), "a-2");
+	// A mixed name keeps only its latin part.
+	assert.equal(herdrAgentName("scout-разведка"), "scout");
+	// A fully Cyrillic name sanitizes to empty → documented fallback.
+	assert.equal(herdrAgentName("разведка"), "subagent");
+});
+
+test("herdrAgentName: digit head gets a- prefix", () => {
+	assert.equal(herdrAgentName("7scout"), "a-7scout");
+});
+
+test("herdrAgentName: capped at 32 chars, no trailing hyphen after a cut", () => {
+	assert.equal(herdrAgentName("a".repeat(40)), "a".repeat(32));
+	assert.equal(herdrAgentName(`x`.repeat(31) + "-y"), "x".repeat(31));
+	// The prefix must not break the cap: a- + first 30 usable chars = 32.
+	assert.equal(herdrAgentName("1" + "a".repeat(40)), "a-1" + "a".repeat(29));
+});
+
+test("herdrAgentName: empty and all-separator input fall back", () => {
+	assert.equal(herdrAgentName(""), "subagent");
+	assert.equal(herdrAgentName("!!!"), "subagent");
+	assert.equal(herdrAgentName("---"), "subagent");
 });

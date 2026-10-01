@@ -27,6 +27,18 @@
  *   - `pane read` answers with plain text
  *   - herdr never reuses closed pane ids, so stale registry paneIds from
  *     finished sessions reliably report as gone
+ *
+ * Agent surface (live-verified against herdr 0.9.1-preview):
+ *   - a pane counts as an agent only once a recognized agent (pi) runs in
+ *     it; a plain shell pane answers {"error":{"code":"agent_not_found"}}
+ *     to agent get/prompt
+ *   - `agent prompt <id> <text> --wait --timeout MS` exits 0 with
+ *     {"result":{…,"type":"agent_prompted"}}; failures exit 1 with
+ *     {"error":{"code":…}} — agent_blocked (rejected BEFORE the text is
+ *     sent), agent_prompt_stalled (no working|blocked seen within 5s),
+ *     timeout, agent_not_found
+ *   - `agent rename <id> <name>` exits 0 with the agent_info envelope, the
+ *     label at .result.agent.name (same envelope as `agent get`)
  */
 import { execFileSync } from "node:child_process";
 import { computeStackPercent } from "./shared.ts";
@@ -97,6 +109,46 @@ export function parsePaneListIds(out: string): string[] {
 		if (typeof id === "string" && id.length > 0) ids.push(id);
 	}
 	return ids;
+}
+
+// ── Agent prompt parsing (exported for tests; shapes captured from 0.9.1) ──
+
+/**
+ * Outcome of a `herdr agent prompt` delivery attempt (ADR-1 in
+ * docs/herdr-agent-surface-backlog.md). "delivered" = herdr accepted the
+ * submission and observed the child settle; every failure names its story:
+ * refused_blocked (child sits in an approval UI, text rejected before
+ * delivery), stalled (child never showed working|blocked after acceptance),
+ * timeout, not_found, and error as the catch-all for anything unmapped.
+ */
+export type AgentPromptOutcome = "delivered" | "refused_blocked" | "stalled" | "timeout" | "not_found" | "error";
+
+/** `error.code` of a failed prompt → outcome; unknown codes fall to "error". */
+const PROMPT_ERROR_OUTCOMES: Record<string, AgentPromptOutcome> = {
+	agent_blocked: "refused_blocked",
+	agent_prompt_stalled: "stalled",
+	timeout: "timeout",
+	agent_not_found: "not_found",
+};
+
+/**
+ * Classify a `herdr agent prompt` response. Defensive like parsePaneListIds:
+ * garbage or empty output never throws and never counts as "delivered".
+ * An explicit error.code maps through PROMPT_ERROR_OUTCOMES; a clean body
+ * with exit 0 is "delivered"; everything else is "error".
+ */
+export function parseAgentPromptOutput(out: string, exitCode: number): AgentPromptOutcome {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(out);
+	} catch {
+		return "error";
+	}
+	const code = (parsed as { error?: { code?: unknown } } | null)?.error?.code;
+	if (typeof code === "string" && code.length > 0) {
+		return PROMPT_ERROR_OUTCOMES[code] ?? "error";
+	}
+	return exitCode === 0 ? "delivered" : "error";
 }
 
 // ── Surface primitives ──
@@ -266,3 +318,63 @@ export function closePane(paneId: string): void {
 
 /** No-op: herdr splits run with --no-focus, so the user never loses focus. */
 export function activatePane(_paneId: string): void {}
+
+// ── Agent surface primitives (prompt / rename) ──
+
+/**
+ * Deliver a steering message to a subagent (ADR-1): unlike `pane run`, herdr
+ * refuses up front (agent_blocked) when the child is waiting for input, and
+ * --wait turns "typed into the pane" into "the child was seen working" — so
+ * nothing is ever dropped silently. TARGET is always the pane id, never a
+ * name. Never throws: herdr's JSON errors (printed on stdout of the non-zero
+ * exit and reaped off the thrown execFileSync error) and any CLI failure
+ * (missing binary, our own timeout kill) collapse into an outcome; "error"
+ * is the catch-all.
+ */
+export function promptAgent(paneId: string, text: string, timeoutMs = 15_000): AgentPromptOutcome {
+	try {
+		const args = ["agent", "prompt", paneId, text, "--wait", "--timeout", String(timeoutMs)];
+		// The herdr-side timeout bounds the wait; execFileSync gets a small
+		// grace on top so herdr's own timeout JSON wins the race, not our kill.
+		const out = runHerdr(args, timeoutMs + 2_000);
+		return parseAgentPromptOutput(out, 0);
+	} catch (err) {
+		const failure = err as { stdout?: unknown; status?: unknown };
+		const out = typeof failure.stdout === "string" ? failure.stdout : "";
+		const exitCode = typeof failure.status === "number" ? failure.status : 1;
+		return parseAgentPromptOutput(out, exitCode);
+	}
+}
+
+/**
+ * Sanitize a subagent display name into a herdr agent label (ADR-3), i.e.
+ * something matching `[a-z][a-z0-9_-]{0,31}`: lowercase, every non-[a-z0-9]
+ * run becomes one hyphen, edges trimmed, capped at 32 chars, a non-letter
+ * head gets an "a-" prefix (cap preserved), and a name that sanitizes away
+ * entirely falls back to "subagent".
+ */
+export function herdrAgentName(raw: string): string {
+	let name = raw
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 32);
+	name = name.replace(/-+$/, ""); // a 32-char cut may land right after a hyphen
+	if (name.length === 0) return "subagent";
+	if (!/^[a-z]/.test(name)) name = `a-${name.slice(0, 30)}`;
+	return name;
+}
+
+/**
+ * Label a pane's agent (`agent rename`) — best-effort per ADR-3: renaming
+ * is cosmetics (all addressing goes through pane ids), so any failure —
+ * herdr gone, target unknown, name rejected — just reports false.
+ */
+export function renameAgent(paneId: string, name: string): boolean {
+	try {
+		runHerdr(["agent", "rename", paneId, name]);
+		return true;
+	} catch {
+		return false;
+	}
+}
