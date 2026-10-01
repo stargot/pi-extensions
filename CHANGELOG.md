@@ -3,6 +3,15 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [Unreleased]
+
+### Fixed
+
+- **ui**: направление jumpMatch (n/N) в /trace считается по индексу совпавшей клавиши —
+  переопределение на две строчные клавиши (["j","k"]) больше не ломает «назад»;
+  клавиши-действия оверлеев резолвятся из единого реестра `shared/keybindings.ts`
+  (убраны дублирующие fallback-литералы).
+
 ## [0.5.0] — 2026-10-01
 
 > Примечание: записи session-index, quiz и security-фикс session-trace ниже

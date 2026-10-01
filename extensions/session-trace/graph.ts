@@ -38,7 +38,7 @@ import {
 	type DiffDisplayRow,
 	type DiffRow,
 } from "../shared/line-diff.ts";
-import { actionHint, getExtKeybindings, matchAction, matchActionKey, resolveKeys } from "../shared/keybindings.ts";
+import { actionHint, getExtKeybindings, matchAction, matchActionIndex } from "../shared/keybindings.ts";
 import { GraphModel, type ChildItem, type Item, fmtClock, fmtDur, fmtK, fmtMoney, oneLine } from "./session.ts";
 import { cacheHitRatio, cacheLevel, CONTEXT_HISTORY_LIMIT } from "./context-history.ts";
 
@@ -371,32 +371,34 @@ export class TraceView {
 			this.cache = undefined;
 		} else if (matchAction(this.kb, data, "ext.trace.diff")) {
 			this.enterDiff();
-		} else if (matchAction(this.kb, data, "ext.trace.jumpMatch")) {
+		} else {
 			// направление — по индексу совпавшего ключа в резолвнутом списке: первая
 			// клавиша — вперёд (+1), вторая и далее — назад (-1). Не по регистру data:
 			// при переопределении ["j","k"] обе клавиши строчные и старая регистр-
-			// эвристика молча вела всё вперёд. matchAction выше уже гарантирует матч.
-			const matched = matchActionKey(this.kb, data, "ext.trace.jumpMatch");
-			this.jumpMatch(resolveKeys(this.kb, "ext.trace.jumpMatch").indexOf(matched!) <= 0 ? 1 : -1);
-		} else if (matchesKey(data, Key.up)) {
-			this.follow = false;
-			this.scrollView.scrollBy(-3);
-		} else if (matchesKey(data, Key.down)) {
-			this.scrollView.scrollBy(3);
-			if (this.atTail()) this.follow = true;
-		} else if (matchesKey(data, Key.pageUp)) {
-			this.follow = false;
-			this.scrollView.scrollBy(-(rows - 3));
-		} else if (matchesKey(data, Key.pageDown)) {
-			this.scrollView.scrollBy(rows - 3);
-			if (this.atTail()) this.follow = true;
-		} else if (matchesKey(data, Key.home)) {
-			this.follow = false;
-			this.scrollView.scrollToStart();
-		} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow")) {
-			this.jumpToEnd();
-		} else if (this.mode === "replay") {
-			this.handleReplayKeys(data);
+			// эвристика молча вела всё вперёд.
+			const idx = matchActionIndex(this.kb, data, "ext.trace.jumpMatch");
+			if (idx >= 0) {
+				this.jumpMatch(idx <= 0 ? 1 : -1);
+			} else if (matchesKey(data, Key.up)) {
+				this.follow = false;
+				this.scrollView.scrollBy(-3);
+			} else if (matchesKey(data, Key.down)) {
+				this.scrollView.scrollBy(3);
+				if (this.atTail()) this.follow = true;
+			} else if (matchesKey(data, Key.pageUp)) {
+				this.follow = false;
+				this.scrollView.scrollBy(-(rows - 3));
+			} else if (matchesKey(data, Key.pageDown)) {
+				this.scrollView.scrollBy(rows - 3);
+				if (this.atTail()) this.follow = true;
+			} else if (matchesKey(data, Key.home)) {
+				this.follow = false;
+				this.scrollView.scrollToStart();
+			} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow")) {
+				this.jumpToEnd();
+			} else if (this.mode === "replay") {
+				this.handleReplayKeys(data);
+			}
 		}
 		this.tui.requestRender();
 	}

@@ -20,9 +20,9 @@ import {
 	getExtKeybindings,
 	loadUserBindings,
 	matchAction,
+	matchActionIndex,
 	matchActionKey,
 	parseUserBindings,
-	resolveKeys,
 } from "../keybindings.ts";
 
 const manager = (userBindings?: KeybindingsConfig) => new KeybindingsManager(EXT_KEYBINDINGS, userBindings);
@@ -73,6 +73,7 @@ test("незнакомый id — тихо: getKeys → [], matches → false, m
 	// используют только id из merging, так что это чисто defensive-семантика)
 	assert.equal(matchAction(kb, "q", unknown), false);
 	assert.equal(matchActionKey(kb, "q", unknown), undefined);
+	assert.equal(matchActionIndex(kb, "q", unknown), -1);
 });
 
 test("parseUserBindings: валидный JSON разбирается", () => {
@@ -142,39 +143,35 @@ test("синглтон-конфигурация: менеджер на наши�
 	assert.deepEqual(kb.getKeys("ext.report.close"), ["q", "escape"]);
 });
 
-test("matchActionKey: направление jumpMatch — по индексу совпавшего ключа, не по регистру", () => {
+test("matchActionIndex: направление jumpMatch — по индексу совпавшего ключа, не по регистру", () => {
 	const kb = manager();
-	// дефолты ["n","shift+n"]: "n" → первый ключ (вперёд +1), "N" → второй (назад -1)
+	// дефолты ["n","shift+n"]: "n" → индекс 0 (вперёд), "N" → индекс 1 (назад)
 	assert.equal(matchActionKey(kb, "n", "ext.trace.jumpMatch"), "n");
 	assert.equal(matchActionKey(kb, "N", "ext.trace.jumpMatch"), "shift+n"); // legacy-матч заглавной
 	assert.equal(matchActionKey(kb, "x", "ext.trace.jumpMatch"), undefined);
-	assert.equal(jumpDir(kb, "n"), 1);
-	assert.equal(jumpDir(kb, "N"), -1);
+	assert.equal(matchActionIndex(kb, "n", "ext.trace.jumpMatch"), 0);
+	assert.equal(matchActionIndex(kb, "N", "ext.trace.jumpMatch"), 1);
+	assert.equal(matchActionIndex(kb, "x", "ext.trace.jumpMatch"), -1);
 
 	// переопределение ["j","k"]: обе строчные — старая регистр-эвристика (data ===
 	// data.toLowerCase() → +1) молча вела обе клавиши вперёд; по индексу — корректно
 	const over = manager({ "ext.trace.jumpMatch": ["j", "k"] });
 	assert.equal(matchActionKey(over, "j", "ext.trace.jumpMatch"), "j");
 	assert.equal(matchActionKey(over, "k", "ext.trace.jumpMatch"), "k");
-	assert.equal(jumpDir(over, "j"), 1);
-	assert.equal(jumpDir(over, "k"), -1);
+	assert.equal(matchActionIndex(over, "j", "ext.trace.jumpMatch"), 0);
+	assert.equal(matchActionIndex(over, "k", "ext.trace.jumpMatch"), 1);
 	assert.equal(matchAction(over, "k", "ext.trace.jumpMatch"), true);
 });
 
-test("matchActionKey: отключённый биндинг [] фоллбэчится на дефолты definitions", () => {
+test("matchActionIndex: отключённый биндинг [] фоллбэчится на дефолты definitions", () => {
 	const kb = manager({ "ext.trace.jumpMatch": [] });
 	assert.deepEqual(kb.getKeys("ext.trace.jumpMatch"), []);
 	assert.equal(matchActionKey(kb, "n", "ext.trace.jumpMatch"), "n");
 	assert.equal(matchActionKey(kb, "N", "ext.trace.jumpMatch"), "shift+n");
+	assert.equal(matchActionIndex(kb, "n", "ext.trace.jumpMatch"), 0);
+	assert.equal(matchActionIndex(kb, "N", "ext.trace.jumpMatch"), 1);
 	assert.equal(matchAction(kb, "N", "ext.trace.jumpMatch"), true);
 });
-
-/** Направление как в graph.ts: индекс совпавшего ключа в резолвнутом списке ≤ 0 → вперёд (+1), иначе назад (-1). */
-function jumpDir(kb: KeybindingsManager, data: string): 1 | -1 {
-	const matched = matchActionKey(kb, data, "ext.trace.jumpMatch");
-	if (matched === undefined) return 1;
-	return resolveKeys(kb, "ext.trace.jumpMatch").indexOf(matched) <= 0 ? 1 : -1;
-}
 
 test("getExtKeybindings(): мемоизация — два вызова возвращают один инстанс", () => {
 	assert.strictEqual(getExtKeybindings(), getExtKeybindings());

@@ -156,6 +156,16 @@ export function matchActionKey(kb: KeybindingsManager, data: string, id: Keybind
 }
 
 /**
+ * Единая формула направления jumpMatch: индекс совпавшего ключа в resolveKeys
+ * (один резолв, один проход), -1 — не совпало. Одна клавиша — индекс 0 — «вперёд»,
+ * вторая и далее — «назад». Одно-клавишное переопределение (["j"]) даёт всегда
+ * индекс 0 → направление всегда «вперёд» — осознанный компромисс.
+ */
+export function matchActionIndex(kb: KeybindingsManager, data: string, id: Keybinding): number {
+	return resolveKeys(kb, id).findIndex((key) => matchesKey(data, key));
+}
+
+/**
  * Проверка клавиши с guard-фоллбэком: пока действие известно менеджеру — матчится
  * через него (пользовательские переопределения и отключение работают), при пустом
  * getKeys (незнакомый менеджеру id или `[]` в конфиге) — на дефолты из definitions.
