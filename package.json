@@ -1,6 +1,6 @@
 {
 	"name": "pi-extensions",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"private": true,
 	"license": "MIT",
 	"description": "Personal pi package: extensions for the pi coding agent",
