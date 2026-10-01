@@ -1,12 +1,18 @@
 # TODO
 
-- [ ] **subagents: глубокая интеграция с herdr через agent-surface.** Сейчас
-      вотчер завершения и stalled-детект — собственные (activity-файл + сайдкары).
-      herdr умеет больше нативно: `herdr agent prompt <name> --wait` (отправка
-      промта и ожидание settled-состояния), `herdr agent wait --until blocked`
-      (субагент запросил approval/ответ), бейджи working/blocked/idle уже
-      работают сами (herdr распознаёт pi). Идея: `subagent_message` для
-      herdr-панелей шлёт промт через `agent prompt`, а вотчер дополнительно
-      подхватывает `blocked`-состояния детей и уведомляет родителя.
-      Справка: `herdr --skill`, https://herdr.dev/docs/agent-skill/
-      (проверено на herdr 0.9.0, сентябрь 2026).
+- [x] **subagents: интеграция с herdr через agent-surface — реализуемая часть
+      сделана.** Из трёх точек интеграции, описанных в
+      [herdr-agent-surface-backlog.md](herdr-agent-surface-backlog.md),
+      сделаны все три: доставка `subagent_message` через
+      `herdr agent prompt <paneId> --wait --timeout 15000` со структурированными
+      отказами (ADR-1), фоновый `herdr agent wait --until done,unknown` как
+      запасной сигнал завершения рядом с вотчером (ADR-2), rename-лейблы панелей
+      с санитайзером и ретраем `-<id8>` (ADR-3). Финальный коммит серии: `205a350`
+      (T4; перед ним 08de4e8 → 649f570 → a47f92a).
+      **Blocked / отложено:** уведомление родителя о blocked-детях — нативный
+      blocked-эмиттер для pi в herdr 0.9.1 не работает: событие `herdr:blocked`
+      никто не эмитит, screen-манифест pi.toml содержит только working-правила;
+      собственный socket-эмиттер делать не будем (связка с внутренним протоколом
+      herdr). Из живой пробы T4: запись агента в herdr удаляется после выхода pi
+      (`agent_not_found`), а `done` = конец хода — поэтому waiter армится только
+      для autoExit-детей.

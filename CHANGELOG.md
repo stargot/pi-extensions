@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ## [Unreleased]
 
+### Added
+
+- **subagents**: интеграция с agent-surface herdr (≥ 0.9.1) — три точки поверх
+  существующего вотчера (вотчер остаётся источником истины, WezTerm-путь не тронут).
+  Steer-доставка через `herdr agent prompt <paneId> --wait --timeout 15000`:
+  отказ до отправки при blocked-ребёнке и структурированные исходы
+  (`agent_blocked`/`agent_prompt_stalled`/`timeout`/`agent_not_found`) разворачиваются
+  в человекочитаемый tool error — ничего не пропадает молча. Фоновый
+  `herdr agent wait --until done,unknown` на каждого herdr-ребёнка с auto-exit
+  (через ~10 с после спавна) — запасной сигнал завершения: exit(0) ставит флаг,
+  по которому вотчер после грейса 5 с закрывает запись, если сайдкары потерялись.
+  Rename-лейблы панелей через `herdr agent rename` (санитайзер до
+  `[a-z][a-z0-9_-]{0,31}`, коллизия → ретрай `-<id8>`) — стабильные имена
+  в `herdr agent list` с первого кадра.
+
 ### Fixed
 
 - **ui**: направление jumpMatch (n/N) в /trace считается по индексу совпавшей клавиши —

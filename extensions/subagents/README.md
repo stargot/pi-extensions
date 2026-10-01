@@ -34,6 +34,9 @@ API (split/send/read/list/close). Выбор — `selectBackend` в `mux.ts`, п
 | Создать панель | `cli split-pane` (+ `activate-pane` — возвращает украденный фокус) | `pane split --no-focus` (фокус не трогает) + `pane run` с лаунчером |
 | Отправить текст | `cli send-text` (bracketed paste + Enter) | `pane run` (текст + Enter одной записью) |
 | Прервать (Esc/Ctrl+C) | `cli send-text` (raw-байты, без перевода строки) | `pane send-keys` (`esc` / `ctrl+c`) |
+| Доставить steer | `cli send-text` (bracketed paste + Enter) | `agent prompt <paneId> --wait --timeout 15000` (структурированные отказы) |
+| Нативный сигнал завершения | — (только вотчер по сайдкарам) | фоновый `agent wait --until done,unknown` рядом с вотчером |
+| Переименовать панель (лейбл) | — (no-op) | `agent rename <paneId> <label>` (санитайзер + ретрай `-<id8>`) |
 | Прочитать экран | `cli get-text` | `pane read --source recent --lines N` |
 | Список панелей | `cli list --format json` | `pane list` (id вида `w1:p2`) |
 | Закрыть | `cli kill-pane` | `pane close` |
@@ -43,6 +46,42 @@ herdr распознаёт pi нативно (`herdr agent list`) — панел
 завершившаяся auto-exit-панель схлопывается сразу после доставки результата
 родителю — на обеих поверхностях, WezTerm и herdr, — так что воркспейс
 не зарастает мёртвыми панелями.
+
+## Agent-surface (herdr)
+
+Внутри herdr (≥ 0.9.1) расширение использует его agent-surface (`herdr agent …`)
+в трёх точках — как дополнение, а не замену собственного вотчера и сайдкаров
+(вотчер остаётся источником истины). Детали и отвергнутые альтернативы —
+в [docs/herdr-agent-surface-backlog.md](../../docs/herdr-agent-surface-backlog.md).
+
+1. **Доставка steer через `agent prompt`** (ADR-1). `subagent_message` для
+   herdr-панели идёт через `herdr agent prompt <paneId> --wait --timeout 15000`:
+   herdr отвергает текст ДО отправки, если ребёнок ждёт ввода (`agent_blocked`),
+   а `--wait` подтверждает, что ребёнок «увиден working», — ничего не теряется
+   молча, как было бы с «напечатать в панель». Любой отказ (`agent_blocked`,
+   `agent_prompt_stalled`, `timeout`, `agent_not_found`) превращается в tool
+   error с человекочитаемой расшифровкой и советом (`describePromptFailure`);
+   worst case — блокировка tool-вызова на 15 с. TARGET — всегда pane id, не имя;
+   Esc-ветка (`interrupt: true`) не изменилась. На WezTerm — прежний send-text.
+2. **Фоновый сигнал завершения `agent wait`** (ADR-2). Через ~10 с после спавна
+   для каждого herdr-ребёнка поднимается один detached-waiter
+   `herdr agent wait <paneId> --until done,unknown`; его exit(0) ставит флаг
+   `nativeDoneAt`, по которому вотчер (после грейса 5 с, закрывающего гонку
+   «pi вышел, лаунчер ещё не записал .done») завершает запись, даже если
+   сайдкары потерялись. `done` в herdr = конец хода, поэтому интерактивным
+   детям (без auto-exit) waiter не армится — у них «конец хода» не завершение;
+   а из живой пробы: после выхода pi запись агента в herdr удаляется
+   (`agent_not_found`), поэтому `unknown` тоже считается терминальным.
+   CLI из тика вотчера не вызывается вовсе — только чтение флага (нулевой
+   оверхед). На WezTerm waiter не поднимается.
+3. **Лейблы панелей `agent rename`** (ADR-3). Сразу после сплита и до запуска
+   лаунчера панель получает лейбл `herdrAgentName(name)`: lowercase,
+   не-`[a-z0-9]` → один дефис, обрезка 32, начало с буквы, пусто → `subagent`;
+   отказ/коллизия → один ретрай с суффиксом `-<id8>` (pane id уникален —
+   суффикс уникальный), дальше молча сдаться: вся адресация и так по pane id,
+   rename — косметика ради читаемого `herdr agent list`. `doResume`
+   переименовывает переиспользуемую/новую панель тем же лейблом. На WezTerm —
+   no-op.
 
 ## Как это работает
 
@@ -190,7 +229,7 @@ heartbeat, поэтому здоровая долгая генерация мо�
 | `subagent-done.ts` | Child-расширение: identity, активность, auto-exit, `.exit`, cancel-поллинг |
 | `mux.ts` | Диспетчер поверхностей: выбор herdr/wezterm, общее API для index.ts |
 | `wezterm.ts` | Бэкенд WezTerm: все вызовы `wezterm cli` изолированы здесь |
-| `herdr.ts` | Бэкенд herdr: все вызовы `herdr pane …` + парсеры JSON-ответов |
+| `herdr.ts` | Бэкенд herdr: все вызовы `herdr pane …` / `herdr agent …` + парсеры JSON-ответов |
 | `shared.ts` | Чистые хелперы: сентинел завершения, математика стопки панелей, cancel-сайдкар/interrupt |
 | `launcher.ts` | Генерация `.ps1`-лаунчеров (чистая, тестируемая) |
 | `agents.ts` | Обнаружение агентов + парсер frontmatter |
