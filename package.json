@@ -36,6 +36,7 @@
 	"pi": {
 		"extensions": [
 			"./extensions/ask-user-question/index.ts",
+			"./extensions/bg-jobs/index.ts",
 			"./extensions/context-inspector/index.ts",
 			"./extensions/edit-guard/index.ts",
 			"./extensions/payload-capture/index.ts",
