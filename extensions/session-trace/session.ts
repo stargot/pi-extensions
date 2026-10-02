@@ -177,6 +177,13 @@ export class GraphModel {
 			case "branch_summary":
 				this.marker(ts, "⑂", oneLine(e.summary ?? "branch", 90));
 				break;
+			case "context_edit": {
+				// Формат 1.0.0: append-only правка ранней записи контекста
+				// (replacement: null — запись убрана из контекста модели).
+				const id = oneLine(e.targetId ?? "?", 12);
+				this.marker(ts, "✎", `${id} ${e.replacement == null ? "cleared" : "replaced"}`);
+				break;
+			}
 			case "label":
 				if (e.label) this.marker(ts, "⚑", oneLine(e.label, 60));
 				break;

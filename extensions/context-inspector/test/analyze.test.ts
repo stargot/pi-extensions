@@ -133,6 +133,73 @@ test("analyzeEntries groups by role and tool, finds largest, tracks compaction",
 	assert.ok(result.largest[0].preview.endsWith("…"));
 });
 
+test("analyzeEntries survives retain-none compaction with summary:null", () => {
+	const entries = [
+		{ type: "compaction", id: "c1", summary: null, tokensBefore: 120_000, firstKeptEntryId: "c1" },
+		{ type: "branch_summary", id: "b1", summary: null, fromId: "m0" },
+		{ type: "message", id: "m1", message: { role: "user", content: "hi", timestamp: 0 } },
+		{ type: "message", id: "m2", message: { role: "assistant", content: "hello", timestamp: 0 } },
+	];
+	const result = analyzeEntries(entries as never, textEstimate);
+	// компакция всё ещё даёт запись (pi отправляет compactionSummary даже без текста), branch_summary без
+	// summary пропускается, как в sessionEntryToContextMessages
+	assert.equal(result.count, 3);
+	assert.equal(result.compaction?.summaryTokens, 0);
+	assert.equal(result.compaction?.tokensBefore, 120_000);
+	assert.equal(result.byRole.compaction.tokens, 0);
+	assert.equal(result.byRole.user.tokens, 1);
+	assert.equal(result.byRole.assistant.tokens, 2);
+});
+
+test("analyzeEntries applies context_edit: null replacement drops the target's contribution", () => {
+	const entries = [
+		{ type: "message", id: "m1", message: { role: "user", content: "x".repeat(400), timestamp: 0 } },
+		{ type: "context_edit", id: "e1", targetId: "m1", replacement: null },
+		{ type: "message", id: "m2", message: { role: "user", content: "kept", timestamp: 0 } },
+	];
+	const result = analyzeEntries(entries as never, textEstimate);
+	assert.equal(result.count, 1); // вклад m1 исключён, осталась только m2
+	assert.equal(result.byRole.user.count, 1);
+	assert.equal(result.byRole.user.tokens, 1); // estimateText("kept") = 1
+});
+
+test("analyzeEntries applies context_edit: replacement content feeds token shares", () => {
+	const original = "x".repeat(400);
+	const entries = [
+		{ type: "message", id: "u1", message: { role: "user", content: original, timestamp: 0 } },
+		{ type: "context_edit", id: "e1", targetId: "u1", replacement: { content: "tiny" } },
+		{
+			type: "message",
+			id: "a1",
+			message: { role: "assistant", content: [{ type: "text", text: original }], timestamp: 0 },
+		},
+		{ type: "context_edit", id: "e2", targetId: "a1", replacement: { content: "short" } },
+		{ type: "message", id: "s1", message: { role: "system", content: original, timestamp: 0 } },
+		{ type: "context_edit", id: "e3", targetId: "s1", replacement: { content: "nope" } },
+	];
+	const untouched = analyzeEntries(entries.filter((e) => e.type !== "context_edit") as never, textEstimate);
+	const projected = analyzeEntries(entries as never, textEstimate);
+	// user: строка подменена целиком ("tiny" → 1 токен вместо 100)
+	assert.equal(projected.byRole.user.tokens, 1);
+	// assistant: строка оборачивается в text-блок — вклад резко меньше исходного
+	assert.ok(projected.byRole.assistant.tokens < untouched.byRole.assistant.tokens);
+	const assistantStat = projected.largest.find((s) => s.entryId === "a1");
+	assert.ok(assistantStat?.preview.includes("short"));
+	// system-роли не трогаются (projectContextEntry в pi меняет только 4 роли)
+	assert.equal(projected.byRole.system.tokens, untouched.byRole.system.tokens);
+});
+
+test("analyzeEntries counts only the newest compaction when an older one is retained", () => {
+	const entries = [
+		{ type: "compaction", id: "c1", summary: "n".repeat(40), tokensBefore: 120_000, firstKeptEntryId: "c0" },
+		{ type: "compaction", id: "c0", summary: "o".repeat(40), tokensBefore: 50_000, firstKeptEntryId: "old" },
+	];
+	const result = analyzeEntries(entries as never, textEstimate);
+	assert.equal(result.compaction?.tokensBefore, 120_000);
+	assert.equal(result.compaction?.summaryTokens, 10);
+	assert.equal(result.byRole.compaction.count, 1);
+});
+
 test("analyzeEntries falls back to text estimate when estimator throws or returns 0", () => {
 	const entries = [{ type: "message", id: "m1", message: { role: "user", content: "x".repeat(40), timestamp: 0 } }];
 	const throwing = analyzeEntries(entries as never, () => {

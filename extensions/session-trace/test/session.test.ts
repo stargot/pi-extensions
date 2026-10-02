@@ -184,6 +184,93 @@ test("child links are accepted under the legacy pitrace:subagents type too", () 
 	);
 });
 
+test("context_edit entries produce ✎ markers (cleared / replaced)", () => {
+	const m = feed(new GraphModel(), [
+		{ type: "session", version: 3, id: "s1", timestamp: iso(0), cwd: "C:\\Proj\\alpha" },
+		{
+			type: "message",
+			id: "u1",
+			parentId: "s1",
+			timestamp: iso(1),
+			message: { role: "user", content: [{ type: "text", text: "первый вопрос" }] },
+		},
+		{
+			// Формат 1.0.0: запись убрана из контекста модели
+			type: "context_edit",
+			id: "e1",
+			parentId: "u1",
+			timestamp: iso(1, 5),
+			targetId: "u1",
+			replacement: null,
+		},
+		{
+			// …а здесь content ранней записи подменён
+			type: "context_edit",
+			id: "e2",
+			parentId: "e1",
+			timestamp: iso(1, 9),
+			targetId: "u1",
+			replacement: { content: [{ type: "text", text: "переписанный вопрос" }] },
+		},
+	]);
+	const markers = m.items.filter(
+		(i): i is Extract<(typeof m.items)[number], { kind: "marker" }> => i.kind === "marker",
+	);
+	assert.deepEqual(
+		markers.map((x) => [x.icon, x.text]),
+		[
+			["✎", "u1 cleared"],
+			["✎", "u1 replaced"],
+		],
+	);
+
+	// Длинный targetId обрезается, как тексты соседних маркеров
+	const long = feed(new GraphModel(), [
+		{
+			type: "context_edit",
+			id: "e3",
+			timestamp: iso(2),
+			targetId: "abcdefghijklmnopqrstuvwxyz",
+			replacement: null,
+		},
+	]);
+	const mk = long.items.find(
+		(i): i is Extract<(typeof long.items)[number], { kind: "marker" }> => i.kind === "marker",
+	)!;
+	assert.ok(mk.text.startsWith("abcdefghijk…"));
+	assert.ok(mk.text.endsWith("cleared"));
+});
+
+test("retain-none compaction and null-summary branch_summary do not crash the parser", () => {
+	const m = feed(new GraphModel(), [
+		{ type: "session", version: 3, id: "s1", timestamp: iso(0), cwd: "C:\\Proj\\alpha" },
+		{
+			// retain-none: compaction без summary и без удержанных записей
+			type: "compaction",
+			id: "k1",
+			parentId: "s1",
+			timestamp: iso(1),
+			summary: null,
+			firstKeptEntryId: null,
+			tokensBefore: 50000,
+		},
+		{ type: "branch_summary", id: "br1", parentId: "k1", timestamp: iso(1, 1), summary: null },
+		// summary может и вовсе отсутствовать
+		{ type: "branch_summary", id: "br2", parentId: "br1", timestamp: iso(1, 2) },
+	]);
+	const markers = m.items.filter(
+		(i): i is Extract<(typeof m.items)[number], { kind: "marker" }> => i.kind === "marker",
+	);
+	assert.deepEqual(
+		markers.map((x) => [x.icon, x.text]),
+		[
+			["↻", "compaction · 50.0k tok"],
+			["⑂", "branch"],
+			["⑂", "branch"],
+		],
+	);
+});
+
 test("GraphModel tolerates broken and unknown entries", () => {
 	const m = new GraphModel();
 	for (const e of [null, "str", {}, { type: "unknown" }, { type: "message" }, { type: "message", message: {} }]) {

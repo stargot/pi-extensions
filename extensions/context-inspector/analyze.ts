@@ -6,7 +6,7 @@
  * как в самом pi (см. core/compaction estimateTokens); точные числа даёт только
  * usage из ответа провайдера.
  */
-import type { BuildSystemPromptOptions, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { BuildSystemPromptOptions, ContextEditEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 export type EstimateText = (text: string) => number;
 export type EstimateMessage = (message: unknown) => number;
@@ -215,6 +215,19 @@ export function analyzeEntries(
 	let compaction: MessagesBreakdown["compaction"];
 	let index = 0;
 
+	// pi 1.0: buildContextEntries() (dist/core/session-manager.js) только собирает путь с последней
+	// компакцией, а context_edit применяет позже buildSessionProjection() → projectContextEntry():
+	// replacement === null исключает вклад target'а целиком, иначе подменяется его content.
+	// index.ts скармливает нам именно buildContextEntries(), поэтому проекцию повторяем здесь,
+	// чтобы вклады токенов совпадали с тем, что реально увидит модель.
+	const edits = new Map<string, ContextEditEntry>();
+	for (const entry of entries) {
+		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
+	}
+	// В buildSessionProjection() вклад сообщений даёт только компакция с index 0 (новейшая);
+	// старые компакции, удержанные внутри kept-диапазона, вклада не дают.
+	let compactionSeen = false;
+
 	const add = (group: Record<string, GroupStat>, key: string, tokens: number) => {
 		if (!group[key]) group[key] = { count: 0, tokens: 0 };
 		const g = group[key];
@@ -223,14 +236,23 @@ export function analyzeEntries(
 	};
 
 	for (const entry of entries) {
+		if (entry.type === "context_edit") continue; // применяются через edits ниже
+		const edit = edits.get(entry.id);
+		if (edit && edit.replacement === null) continue; // target исключён из контекста
+
 		if (entry.type === "compaction") {
-			const tokens = estimate(entry.summary);
+			if (compactionSeen) continue; // старая компакция — вклада не даёт
+			compactionSeen = true;
+			// retain-none компакция несёт summary: null (тип врет: объявлен string) — оценка 0 токенов.
+			const summary = entry.summary ?? "";
+			const tokens = estimate(summary);
 			compaction = { summaryTokens: tokens, tokensBefore: entry.tokensBefore };
 			add(byRole, "compaction", tokens);
-			stats.push({ index: index++, entryId: entry.id, role: "compaction", tokens, preview: preview(entry.summary) });
+			stats.push({ index: index++, entryId: entry.id, role: "compaction", tokens, preview: preview(summary) });
 			continue;
 		}
 		if (entry.type === "branch_summary") {
+			if (!entry.summary) continue; // pi (sessionEntryToContextMessages) пропускает пустые summary
 			const tokens = estimate(entry.summary);
 			add(byRole, "branchSummary", tokens);
 			stats.push({ index: index++, entryId: entry.id, role: "branchSummary", tokens, preview: preview(entry.summary) });
@@ -239,7 +261,8 @@ export function analyzeEntries(
 		if (entry.type !== "message") continue;
 
 		const message = entry.message as { role: string; toolName?: string; content?: unknown; customType?: string };
-		const tokens = safeEstimate(message, estimateMessage, estimate);
+		const effective = edit ? { ...message, content: projectContent(message, edit.replacement) } : message;
+		const tokens = safeEstimate(effective, estimateMessage, estimate);
 		const role = message.role === "custom" ? `custom:${message.customType ?? "?"}` : message.role;
 		add(byRole, role, tokens);
 		if (message.role === "toolResult" && message.toolName) add(byTool, message.toolName, tokens);
@@ -249,7 +272,7 @@ export function analyzeEntries(
 			role,
 			toolName: message.role === "toolResult" ? message.toolName : undefined,
 			tokens,
-			preview: preview(messageText(message)),
+			preview: preview(messageText(effective)),
 		});
 	}
 
@@ -370,8 +393,31 @@ function stringify(value: unknown): string {
 	return typeof value === "string" ? value : (JSON.stringify(value) ?? "");
 }
 
-function preview(text: string, max = 80): string {
-	const flat = text.replace(/\s+/g, " ").trim();
+/** Повторяет подмену контента из projectContextEntry() в pi 1.0 (dist/core/session-manager.js):
+ * роли user/assistant/toolResult/custom получают replacement.content (для assistant/toolResult
+ * строка оборачивается в один text-блок); остальные роли (например system) не трогаются.
+ */
+function projectContent(
+	message: { role?: string; content?: unknown },
+	replacement: ContextEditEntry["replacement"],
+): unknown {
+	if (replacement === null) return message.content;
+	if (
+		message.role !== "user" &&
+		message.role !== "assistant" &&
+		message.role !== "toolResult" &&
+		message.role !== "custom"
+	) {
+		return message.content;
+	}
+	if ((message.role === "assistant" || message.role === "toolResult") && typeof replacement.content === "string") {
+		return [{ type: "text", text: replacement.content }];
+	}
+	return replacement.content;
+}
+
+function preview(text: string | null | undefined, max = 80): string {
+	const flat = (text ?? "").replace(/\s+/g, " ").trim();
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 

@@ -123,7 +123,8 @@ interface RawEntry {
 	timestamp?: string | number;
 	cwd?: string;
 	name?: string;
-	summary?: string;
+	/** pi 1.0.0 retain-none компакция (extension draft) сериализует summary: null. */
+	summary?: string | null;
 	message?: {
 		role?: string;
 		content?: unknown;
@@ -300,7 +301,19 @@ export function parseSessionCombined(
 			continue;
 		}
 
+		// pi 1.0.0 `context_edit` — append-only правка более ранней записи
+		// ({targetId, replacement: null | {content}}): null исключает цель из будущего
+		// контекста модели, content подменяет только содержимое. По контракту формата
+		// (docs/session-format.md) правка НЕ меняет raw history/UI/exports и session
+		// accounting — цель остаётся в raw-файле и уже проиндексирована как отдельная
+		// запись. В recall/ledger индексируем raw history как есть: саму правку молча
+		// пропускаем (юнита и счётчиков она не порождает); endedAt уже учтён выше.
+		if (entry.type === "context_edit") continue;
+
 		if (entry.type === "compaction" || entry.type === "branch_summary") {
+			// retain-none компакция (pi 1.0.0): summary может быть null (extension draft,
+			// в сериализации хоста firstKeptEntryId = собственный id записи) — счётчик
+			// compactions и usage учитываются как обычно, summary-юнита просто нет.
 			// Расход суммаризации относим к текущей модели сессии, иначе строки
 			// разреза по моделям не сходятся с итогом.
 			const lastModel = Object.keys(summary.byModel).at(-1);

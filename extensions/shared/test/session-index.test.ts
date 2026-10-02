@@ -280,3 +280,112 @@ test("refreshSharedIndex: headerless file is skipped and unit text is capped", (
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+// pi 1.0.0: сессия с context_edit (без replacement и с replacement) и retain-none
+// компакцией (summary: null). Форма context_edit сверена с реальными JSONL
+// ~/.pi/agent/sessions и docs/session-format.md пакета 1.0.0.
+function pi100SessionText(): string {
+	const lines: unknown[] = [
+		{ type: "session", version: 3, id: "s10", timestamp: "2026-09-06T10:00:00.000Z", cwd: "/work/alpha" },
+		{
+			type: "message",
+			id: "u1",
+			timestamp: "2026-09-06T10:00:01.000Z",
+			message: { role: "user", content: [{ type: "text", text: "secret prompt about wezterm" }] },
+		},
+		{
+			type: "message",
+			id: "a1",
+			timestamp: "2026-09-06T10:00:02.000Z",
+			message: {
+				role: "assistant",
+				provider: "zai",
+				model: "glm-5.3",
+				usage: { input: 10, output: 5, cost: { total: 0.001 } },
+				stopReason: "end",
+				content: [{ type: "text", text: "answer one" }],
+			},
+		},
+		// context_edit без replacement: цель (u1) исключается из будущего контекста,
+		// raw history не меняется — индекс продолжает видеть u1, правка юнита не даёт.
+		{ type: "context_edit", id: "e1", timestamp: "2026-09-06T10:00:03.000Z", targetId: "u1", replacement: null },
+		// context_edit с replacement: подменяется только content цели; тоже не индексируется.
+		{
+			type: "context_edit",
+			id: "e2",
+			timestamp: "2026-09-06T10:00:04.000Z",
+			targetId: "a1",
+			replacement: { content: [{ type: "text", text: "edited answer" }] },
+		},
+		// retain-none компакция (extension draft): summary и firstKeptEntryId null —
+		// счётчики/usage считаются, summary-юнита нет.
+		{
+			type: "compaction",
+			id: "z2",
+			timestamp: "2026-09-06T10:00:05.000Z",
+			summary: null,
+			firstKeptEntryId: null,
+			usage: { input: 7, output: 3, cost: { total: 0.002 } },
+		},
+		// Сериализованная форма хоста для retain-none: firstKeptEntryId = собственный id.
+		{
+			type: "compaction",
+			id: "z3",
+			timestamp: "2026-09-06T10:00:06.000Z",
+			summary: "self retained checkpoint",
+			firstKeptEntryId: "z3",
+		},
+	];
+	return `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
+}
+
+test("pi 1.0.0: context_edit пропускается, retain-none компакция не крэшит, агрегаты сходятся", () => {
+	const text = pi100SessionText();
+	const combined = parseSessionCombined(text, "/x/s10.jsonl");
+	assert.ok(combined, "файл с context_edit/retain-none остаётся валидным");
+	const { summary, units } = combined;
+
+	// context_edit: ни одна правка не стала юнитом; исходные записи на месте.
+	assert.ok(units.some((u) => u.entryId === "u1" && u.role === "user"));
+	assert.ok(units.some((u) => u.entryId === "a1" && u.role === "assistant"));
+	assert.ok(units.every((u) => u.entryId !== "e1" && u.entryId !== "e2"));
+
+	// Summary-юниты: только от z3 (у z2 summary null, у e1/e2 их нет вовсе).
+	const summaryUnits = units.filter((u) => u.role === "summary");
+	assert.equal(summaryUnits.length, 1);
+	assert.equal(summaryUnits[0].entryId, "z3");
+
+	// Обе компакции посчитаны (включая retain-none), usage z2 сложился в итог.
+	assert.equal(summary.stats.compactions, 2);
+	assert.equal(summary.stats.input, 17); // 10 (a1) + 7 (z2)
+	assert.equal(summary.stats.cost, 0.003);
+	assert.equal(summary.byDay["2026-09-06"].input, 17);
+	// Расход компакции относится к последней модели сессии — разрез сходится с итогом.
+	assert.equal(summary.byModel["zai/glm-5.3"].input, 17);
+	assert.equal(summary.byModel["zai/glm-5.3"].compactions, 2);
+
+	// endedAt дотягивается до последней записи (context_edit/compaction не мешают).
+	assert.equal(summary.endedAt, Date.parse("2026-09-06T10:00:06.000Z"));
+
+	// Единый парсер согласован с legacy-обёртками на новых типах записей.
+	assert.deepEqual(parseSessionText(text, "/x/s10.jsonl"), summary);
+	assert.deepEqual(extractUnits(text, "/x/s10.jsonl"), units);
+});
+
+test("pi 1.0.0: refreshSharedIndex индексирует файл с context_edit/retain-none без пометки невалидным", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-shared-pi100-"));
+	const file = join(root, "cache", "session-index.json");
+	try {
+		const target = join(root, "s10.jsonl");
+		writeFileSync(target, pi100SessionText());
+		const data = loadIndex(file);
+		const result = refreshSharedIndex(root, data);
+		assert.equal(result.files, 1);
+		assert.equal(result.changed, 1);
+		const record = data.files[target];
+		assert.ok(record?.summary, "файл проиндексирован (не discarded)");
+		assert.equal(record.summary.stats.compactions, 2);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
