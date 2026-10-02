@@ -17,9 +17,16 @@
 | [subagents](extensions/subagents/) | `subagent`, `task_batch`, `/subagent`, `/workers` | Субагенты: интерактивные в терминальных панелях — WezTerm или herdr (спавн/steer+interrupt/resume/cancel, живой статус) + headless-батчи single/parallel/chain (Windows + pwsh); глобальный индекс живых воркеров |
 | [web](extensions/web/) | `web_search`, `web_fetch`, `/bridge` | Веб-поиск DuckDuckGo без API-ключей: структурированные запросы (точные фразы/исключения/сайт), таймаут и ретрай; плюс fetch страницы → markdown (Readability/Turndown, PDF, текст, браузерный мост pi-web-companion для JS-rendered, SSRF-гард). На основе расширения Eero Alvar (amosblomqvist) |
 
+## Совместимость
+
+- pi >= 1.0.0, Node >= 22.19.0 (peerDependencies `@earendil-works/pi-coding-agent` и
+  `@earendil-works/pi-tui` закреплены на `^1.0.0`).
+- pi 1.0.0 по умолчанию использует fullscreen TUI и тему «system» — расширения пакета
+  проверены в этом режиме (ручной чеклист — финальный гейт релиза).
+
 ## Запуск
 
-Требуется Node >= 22.18.
+Требования к pi и Node — в разделе «Совместимость».
 
 ```bash
 npm run check    # гейт: lint + format-check + type + test (то же гоняет CI)

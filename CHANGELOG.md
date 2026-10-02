@@ -3,6 +3,30 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [0.7.0] — Unreleased
+
+### Fixed
+
+- **shared/session-index, context-inspector, session-trace**: парсеры сессий переживают
+  формат pi 1.0.0 — `context_edit` записи и retain-none компакция.
+- **context-inspector**: `/context` больше не падает на compaction-записи с
+  `summary: null`.
+- **context-inspector**: проекция контекста применяет `context_edit` (зеркало
+  `buildSessionProjection` хоста — `buildContextEntries` их НЕ применяет).
+- **session-trace**: replay-лента показывает маркер «✎» для `context_edit`-записей.
+- **session-trace**: footer `/trace` больше не обрезается в fullscreen — `TraceView`
+  учитывает editor-dock хоста (новая опция `reserveRows`).
+
+### Changed
+
+- **package**: peerDependencies `@earendil-works/pi-coding-agent` и
+  `@earendil-works/pi-tui` подняты до `^1.0.0`, engines node `>=22.19.0` — след
+  за pi 1.0.0.
+- **session-trace**: raw ANSI в fallbackTheme CLI задокументирован как осознанное
+  решение — SGR 90–97 следуют палитре терминала.
+- **ui**: аудит цветов под дефолтную тему pi 1.0.0 «system» — off-palette токенов
+  не найдено.
+
 ## [0.6.0] — 2026-10-01
 
 ### Added
