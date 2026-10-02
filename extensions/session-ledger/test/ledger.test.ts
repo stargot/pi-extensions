@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { TUI } from "@earendil-works/pi-tui";
+import { ScrollReport } from "../../shared/scroll-report.ts";
+import { loadAuditThemes } from "../../shared/theme-contrast.ts";
 import {
 	buildLedger,
 	cachePercent,
@@ -428,3 +431,42 @@ test("totals-чипы (B8): с bg-стилером — ANSI-подложки н�
 	assert.ok(plainTotals?.includes("$"));
 	assert.ok(plainTotals?.includes("errors"));
 });
+
+/** Матрица «малый терминал × тема» (автоматизация R9): ledger-отчёт через
+ * ScrollReport (как /stats в оверлее) — totals-строка доживает в первом
+ * вьюпорте, help с позицией n-m/total присутствует, крэшей и сырых JSON нет. */
+for (const [rows, cols] of [
+	[40, 100],
+	[20, 60],
+	[10, 25],
+] as const) {
+	test(`ledger через ScrollReport ${cols}x${rows} × 4 темы: Totals в первом вьюпорте, help с позицией`, () => {
+		const now = Date.parse("2026-09-06T10:00:00.000Z");
+		// 20 сессий: отчёт заведомо длиннее вьюпорта даже на 40 строках — иначе
+		// ScrollReport честно не рисует позицию (всё и так видно).
+		const sessions = Array.from(
+			{ length: 20 },
+			(_, i) => parseSessionText(sessionText({ cwd: `/home/u/proj-${i}` }), `/p${i}`)!,
+		);
+		const ledger = buildLedger(sessions, "7d", { now });
+		for (const audit of loadAuditThemes()) {
+			const tui = { requestRender() {}, terminal: { rows, columns: cols } } as unknown as TUI;
+			const view = new ScrollReport({
+				tui,
+				theme: audit.theme,
+				render: (width, th) => renderLedger(ledger, "project", width, th),
+				onClose: () => {},
+			});
+			const out = view.render(cols);
+			const viewport = out.slice(0, -1).join("\n");
+			assert.ok(viewport.includes("Session ledger"), `${audit.name}/${audit.appearance}: заголовок отчёта`);
+			assert.ok(
+				viewport.includes("Totals"),
+				`${audit.name}/${audit.appearance} @${cols}x${rows}: totals-строка дожила в первом вьюпорте`,
+			);
+			const help = out.at(-1) as string;
+			assert.match(help, /\d+-\d+\/\d+/, `${audit.name}/${audit.appearance}: help с позицией`);
+			assert.ok(!out.join("\n").includes('{"error"'), "сырой JSON в рендере");
+		}
+	});
+}

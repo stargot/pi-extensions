@@ -25,6 +25,7 @@ import {
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
+	visibleWidth,
 	VStack,
 } from "@earendil-works/pi-tui";
 import { actionHint, getExtKeybindings, matchAction } from "./keybindings.ts";
@@ -145,11 +146,14 @@ export class ScrollReport implements Component {
 		this.scrollView.updateLayout(all.length, rows, () => this.tui.requestRender());
 		const top = this.scrollView.scrollTop;
 		const position = all.length > rows ? ` ${top + 1}-${Math.min(all.length, top + rows)}/${all.length}` : "";
-		const help = this.theme.fg(
-			"dim",
-			`↑↓ PgUp PgDn Home End scroll · ${actionHint(this.kb, "ext.report.refresh", "refresh")} · ${actionHint(this.kb, "ext.report.close", "close")}${position}${this.helpSuffix}`,
-		);
-		this.help.setText(truncateToWidth(help, width));
+		// R9-контраст: dim на светлой system-теме 2.83:1 (<3, гейт аудита) — muted.
+		const hints = `↑↓ PgUp PgDn Home End scroll · ${actionHint(this.kb, "ext.report.refresh", "refresh")} · ${actionHint(this.kb, "ext.report.close", "close")}`;
+		const tail = `${position}${this.helpSuffix}`;
+		// Узкий терминал: подсказки режем, но позиция n-m/total и helpSuffix обязаны
+		// дожить до рендера (регресс-тест R9: help на 25 колонках без позиции).
+		const hintsWidth = Math.max(0, width - visibleWidth(tail));
+		const help = this.theme.fg("muted", truncateToWidth(`${truncateToWidth(hints, hintsWidth)}${tail}`, width));
+		this.help.setText(help);
 		return this.root.render(width);
 	}
 

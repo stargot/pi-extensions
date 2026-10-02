@@ -11,6 +11,7 @@ import { test } from "node:test";
 import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { ScrollReport } from "../scroll-report.ts";
+import { loadAuditThemes } from "../theme-contrast.ts";
 
 interface TuiLike {
 	requestRender(): void;
@@ -275,4 +276,53 @@ test("компонент удовлетворяет интерфейсу Compone
 	assert.equal(typeof view.render, "function");
 	assert.equal(typeof view.invalidate, "function");
 	assert.equal(typeof view.handleInput, "function");
+});
+
+/** Матрица «малый терминал × тема» (автоматизация R9): help-строка с позицией
+ * n-m/total обязана дожить даже на 25 колонках (регресс-тест фикса R9: раньше
+ * позиция срезалась подсказками), крэшей и сырых JSON нет. Темы — реальные
+ * Theme pi (dark, light и system в обоих обликax). */
+const SIZES = [
+	[40, 100],
+	[20, 60],
+	[10, 25],
+] as const;
+
+for (const [rows, cols] of SIZES) {
+	test(`render ${cols}x${rows} × 4 темы: позиция n-m/total в help, без крэша и сырого JSON`, () => {
+		for (const audit of loadAuditThemes()) {
+			const { tui } = mockTui(rows, cols);
+			const view = new ScrollReport({
+				tui,
+				theme: audit.theme,
+				render: () => reportLines(130),
+				onClose: () => {},
+				helpSuffix: " · args: today|7d",
+			});
+			const out = view.render(cols);
+			const help = out.at(-1) as string;
+			assert.match(help, /\d+-\d+\/130/, `${audit.name}/${audit.appearance}: позиция обязана дожить: ${help}`);
+			assert.ok(help.includes("today|7d"), `${audit.name}/${audit.appearance}: helpSuffix обязан дожить: ${help}`);
+			assert.ok(!out.join("\n").includes('{"error"'), "сырой JSON в рендере");
+			for (const line of out) {
+				assert.ok(visibleWidth(line) <= cols, `строка шире терминала: ${line}`);
+			}
+		}
+	});
+}
+
+test("help-строка в широкой теме не изменила порядок: подсказки, потом позиция и суффикс", () => {
+	const { tui } = mockTui(13, 200);
+	const view = new ScrollReport({
+		tui,
+		theme: mockTheme(),
+		render: () => reportLines(130),
+		onClose: () => {},
+		helpSuffix: " · args: today|7d",
+	});
+	const help = view.render(200).at(-1) as string;
+	const hintsAt = help.indexOf("↑↓ PgUp");
+	const posAt = help.indexOf(" 1-10/130");
+	const suffixAt = help.indexOf("today|7d");
+	assert.ok(hintsAt >= 0 && posAt > hintsAt && suffixAt > posAt, `порядок нарушен: ${help}`);
 });

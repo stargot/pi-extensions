@@ -55,7 +55,9 @@ const MAP_COLOR: Record<string, string> = {
 	U: "userMessageText",
 	C: "toolTitle",
 	B: "muted",
-	t: "dim",
+	// R9-контраст: dim на светлой system-теме 2.83:1 (<3, гейт аудита силуэта) — muted
+	// (совпадает с B: оба «тихие» виды строк, различие весов выборки сохраняется).
+	t: "muted",
 };
 
 interface UiTheme {
@@ -614,7 +616,11 @@ export class TraceView {
 		}
 		const right = `${hints}${pos} `;
 		const pad = width - visibleWidth(right);
-		return pad > 0 ? `${" ".repeat(pad)}${right}` : truncateToWidth(right, width);
+		if (pad > 0) return `${" ".repeat(pad)}${right}`;
+		// Узкий терминал: подсказки режем, но позиция n/total обязана дожить до
+		// рендера (регресс-тест R9: footer на 25 колонках без позиции).
+		const hintsWidth = Math.max(0, width - visibleWidth(pos) - 1);
+		return `${truncateToWidth(hints, hintsWidth)} ${pos}`;
 	}
 
 	private spin(): string {

@@ -483,7 +483,10 @@ async function askMultiChoice(
 
 				if (item.isSubmit) {
 					const label = selected.size > 0 ? `✓ ${item.label} (${selected.size} selected)` : `○ ${item.label}`;
-					const styled = isFocused ? theme.fg("accent", label) : theme.fg(selected.size > 0 ? "success" : "dim", label);
+					// R9-контраст: dim на светлой system-теме 2.83:1 (<3, гейт аудита) — muted.
+					const styled = isFocused
+						? theme.fg("accent", label)
+						: theme.fg(selected.size > 0 ? "success" : "muted", label);
 					add(`${prefix}${styled}`);
 					continue;
 				}

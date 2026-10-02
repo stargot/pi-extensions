@@ -9,8 +9,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import type { TuiMouseEvent } from "@earendil-works/pi-tui";
+import { type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
 import { TraceView } from "../graph.ts";
+import { loadAuditThemes } from "../../shared/theme-contrast.ts";
 
 interface TuiLike {
 	requestRender(): void;
@@ -165,3 +166,62 @@ test("handleMouse: колесо крутит ленту и возвращает 
 		rmSync(dirname(file), { recursive: true, force: true });
 	}
 });
+
+/** Пауза для тиков replay-таймера (interval 150ms, speed ускоряет игровое время). */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Матрица «малый терминал × тема» (автоматизация R9): рендер обязан влезть в
+ * rows-reserve, footer с позицией n/total — дожить до вывода (регресс-тест
+ * фикса R6 + фикс R9: на 25 колонках позиция больше не срезается подсказками),
+ * крэшей и сырых JSON-конвертов быть не должно. Темы — реальные Theme pi
+ * (dark, light и system в обоих обликax, см. shared/theme-contrast.ts). */
+const SIZES = [
+	[40, 100],
+	[20, 60],
+	[10, 25],
+] as const;
+
+for (const mode of ["live", "replay"] as const) {
+	test(`trace ${mode}: матрица 100x40 / 60x20 / 25x10 × 4 темы — footer n/total в выводе`, async () => {
+		const file = writeSession(40); // 80 строк ленты
+		try {
+			for (const audit of loadAuditThemes()) {
+				for (const [rows, cols] of SIZES) {
+					const view = new TraceView({
+						tui: mockTui(rows, cols) as any,
+						theme: audit.theme as any,
+						file,
+						mode,
+						speed: 256, // replay: 40с сессии проигрываются за ~0.2с реального времени
+						reserveRows: 1, // fullscreen-хост держит строку transcript'а
+						onClose: () => {},
+					});
+					try {
+						if (mode === "replay") await sleep(400); // 2-3 тика: вся лента сыграна
+						const out = view.render(cols);
+						assert.equal(
+							out.length,
+							rows - 1,
+							`${audit.name}/${audit.appearance} @${rows}x${cols}: высота = rows - reserveRows`,
+						);
+						const joined = out.join("\n");
+						assert.ok(!joined.includes('{"error"'), "сырой JSON-конверт в рендере");
+						const footer = out.at(-1) as string;
+						assert.match(
+							footer,
+							/\d+\/80/,
+							`${audit.name}/${audit.appearance} @${rows}x${cols}: позиция n/total обязана дожить в footer: ${footer}`,
+						);
+						for (const line of out) {
+							assert.ok(visibleWidth(line) <= cols, `строка шире терминала: ${line}`);
+						}
+					} finally {
+						view.dispose();
+					}
+				}
+			}
+		} finally {
+			rmSync(dirname(file), { recursive: true, force: true });
+		}
+	});
+}
