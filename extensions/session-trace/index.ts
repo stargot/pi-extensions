@@ -89,6 +89,12 @@ export default function (pi: ExtensionAPI) {
 					theme,
 					file,
 					mode,
+					// fullscreen (дефолт pi 1.0.0): оверлей живёт в editor-dock чат-вьюпорта,
+					// над которым хост держит минимум 1 строку транскрипта (chat-viewport,
+					// transcript minSize 1) — без резерва footer вью (позиция + подсказки)
+					// обрезается. В regular-режиме вью рендерится во всю высоту, резерв
+					// не нужен; cli.ts (свой alt-screen) использует дефолт 0.
+					reserveRows: tui.mode === "fullscreen" ? 1 : 0,
 					onClose: () => done(undefined),
 				});
 				active = view;

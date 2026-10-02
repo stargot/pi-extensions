@@ -10,9 +10,10 @@
  * Состояние скролла (scrollTop, клампы) принадлежит ScrollView; follow-режим
  * («держать хвост») остаётся флагом TraceView и каждый рендер пинокает
  * scrollToEnd() — так бейдж LIVE/PAUSED/▶ не зависит от внутреннего
- * followingEnd у ScrollView. В оверлее ctx.ui.custom колесо мыши приходит в
- * handleMouse самого компонента (routeWheel идёт мимо оверлея), в alt-screen
- * (cli.ts) — через dispatchMouseToLayout в тот же handleMouse.
+ * followingEnd у ScrollView. Колесо мыши приходит в handleMouse компонента через
+ * dispatchMouseToLayout (и в editor-dock fullscreen-хоста, и в cli-alt-screen);
+ * { handled: true } не пускает routeWheel до transcript'а хоста.
+ * Высоту вью берёт из terminal.rows минус reserveRows (резерв хоста — см. поле).
  */
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { basename } from "node:path";
@@ -79,6 +80,12 @@ export class TraceView {
 	private file: string;
 	private mode: "live" | "replay";
 	private onClose: () => void;
+	/** Строк терминала, зарезервированных хостом под своё окружение (не для вьюпорта).
+	 * fullscreen-хост pi рендерит оверлей в editor-dock чат-вьюпорта и держит над ним
+	 * минимум 1 строку транскрипта (chat-viewport: transcript minSize 1) — без резерва
+	 * footer оверлея (позиция + подсказки) всегда обрезается на одну строку. cli.ts
+	 * ставит view корнем собственного alt-screen — там резерв не нужен (0). */
+	private readonly reserveRows: number;
 
 	private entries: { ms: number; e: any }[] = [];
 	private model: GraphModel = new GraphModel();
@@ -169,6 +176,7 @@ export class TraceView {
 		file: string;
 		mode: "live" | "replay";
 		speed?: number;
+		reserveRows?: number;
 		onClose: () => void;
 	}) {
 		this.tui = opts.tui;
@@ -176,6 +184,7 @@ export class TraceView {
 		this.file = opts.file;
 		this.mode = opts.mode;
 		this.speed = opts.speed ?? 8;
+		this.reserveRows = Math.max(0, Math.floor(opts.reserveRows ?? 0));
 		this.onClose = opts.onClose;
 		this.follow = opts.mode === "live";
 		this.poll();
@@ -288,7 +297,7 @@ export class TraceView {
 	// ---------- ввод ----------
 
 	handleInput(data: string): void {
-		const rows = Math.max(6, this.tui.terminal.rows - 2);
+		const rows = this.availRows() - 2;
 
 		// режим ввода фильтра: печатаем подстроку, enter — применить, esc — сбросить
 		if (this.editing) {
@@ -403,8 +412,9 @@ export class TraceView {
 		this.tui.requestRender();
 	}
 
-	/** Колесо мыши: в оверлее routeWheel идёт мимо, в alt-screen событие приходит
-	 * сюда через dispatchMouseToLayout — в обоих случаях крутим наш ScrollView. */
+	/** Колесо мыши: событие приходит сюда через dispatchMouseToLayout (и в editor-dock
+	 * fullscreen-хоста, и в cli-alt-screen); { handled: true } не пускает routeWheel
+	 * хоста до transcript'а — крутим только наш ScrollView. */
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
 		this.scrollView.scrollBy(event.wheelDelta);
@@ -440,10 +450,17 @@ export class TraceView {
 		}
 	}
 
+	/** Строки терминала, доступные оверлею, с учётом резерва хоста. Единая точка расчёта
+	 * высоты: render (тело ленты), atTail (порог follow) и PgUp/PgDn должны считать
+	 * одинаково, иначе follow включается на строку раньше/позже хвоста. */
+	private availRows(): number {
+		return Math.max(6, this.tui.terminal.rows - this.reserveRows);
+	}
+
 	/** Вьюпорт сидит на хвосте ленты (последняя строка контента видна). */
 	private atTail(): boolean {
 		const total = (this.diffMode ? this.diffCache?.lines.length : this.cache?.lines.length) ?? 0;
-		const body = Math.max(6, this.tui.terminal.rows) - 2;
+		const body = this.availRows() - 2;
 		return this.scrollView.scrollTop >= Math.max(0, total - body);
 	}
 
@@ -494,7 +511,7 @@ export class TraceView {
 	}
 
 	render(width: number): string[] {
-		const rows = Math.max(6, this.tui.terminal.rows);
+		const rows = this.availRows();
 		const body = rows - 2;
 		const contentW = Math.max(20, width - MAP);
 		if (this.diffMode) {

@@ -127,7 +127,13 @@ function openViewer(file: string, mode: "live" | "replay"): void {
 	terminal.setTitle?.("session-trace");
 }
 
-/** Минимальная тема в терминах pi-tui: реальные цвета дают theme.fg-имена из tui.md. */
+/** Минимальная тема в терминах pi-tui: реальные цвета дают theme.fg-имена из tui.md.
+ *
+ *  Осознанный raw ANSI: CLI живёт вне TUI/Theme — это standalone-вьюер, у которого нет
+ *  объекта Theme из pi-coding-agent (и system-темы 1.0.0). Базовые bright-коды SGR
+ *  (90–97) резолвит сам терминал, так что цвета следуют пользовательской палитре;
+ *  перевод на pi-tui styleText/mixColors потребовал бы фикс. RGB-цветов (Color-объектов)
+ *  и убил бы это свойство при большем диффе. */
 function fallbackTheme() {
 	const wrap =
 		(code: string) =>
