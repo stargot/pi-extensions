@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { addRunningWorker, removeRunningWorker, runningIndexPath } from "./running-index.ts";
-import { killProcessTree } from "./proctree.ts";
+import { killProcessTree } from "../shared/proctree.ts";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 
 export const MAX_PARALLEL_TASKS = 8;

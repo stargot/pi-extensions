@@ -38,7 +38,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.ts";
-import { killProcessTree } from "./proctree.ts";
+import { killProcessTree } from "../shared/proctree.ts";
 import { activityLabel, readActivityState, type SubagentActivityState } from "./activity.ts";
 import {
 	displayItems,
