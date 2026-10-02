@@ -92,7 +92,9 @@ export function resolveInterrupt(interrupt: boolean | undefined, stalled: boolea
  * wait window elapsed with the pane still alive, but the submission itself
  * went through, so the message may have already landed (no blind resend);
  * not_found — the pane no longer runs
- * an agent, the subagent is gone; error — anything unmapped.
+ * an agent, the subagent is gone (R10: subagent_message reports this case as
+ * a normal "already finished" result instead of an error, so this branch is
+ * defensive — kept for exhaustiveness); error — anything unmapped.
  */
 export function describePromptFailure(outcome: AgentPromptOutcome, name: string): string {
 	const head = `Could not deliver the message to subagent "${name}"`;

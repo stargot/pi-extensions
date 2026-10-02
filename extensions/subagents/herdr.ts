@@ -138,6 +138,20 @@ const PROMPT_ERROR_OUTCOMES: Record<string, AgentPromptOutcome> = {
 };
 
 /**
+ * Extract `error.code` from a failed herdr CLI response (the JSON envelope
+ * printed on STDERR of a non-zero exit), "" when absent. Defensive like every
+ * parser here: garbage, empty output and shape drift all return "".
+ */
+export function parseHerdrErrorCode(out: string): string {
+	try {
+		const code = (JSON.parse(out) as { error?: { code?: unknown } } | null)?.error?.code;
+		return typeof code === "string" ? code : "";
+	} catch {
+		return "";
+	}
+}
+
+/**
  * Classify a `herdr agent prompt` response. Defensive like parsePaneListIds:
  * garbage or empty output never throws and never counts as "delivered".
  * An explicit error.code maps through PROMPT_ERROR_OUTCOMES; a clean body
@@ -148,6 +162,7 @@ export function parseAgentPromptOutput(out: string, exitCode: number): AgentProm
 	try {
 		parsed = JSON.parse(out);
 	} catch {
+		// An unparseable body never counts as delivered, whatever the exit code.
 		return "error";
 	}
 	const code = (parsed as { error?: { code?: unknown } } | null)?.error?.code;
@@ -392,16 +407,40 @@ export function herdrAgentName(raw: string): string {
 }
 
 /**
- * Label a pane's agent (`agent rename`) — best-effort per ADR-3: renaming
- * is cosmetics (all addressing goes through pane ids), so any failure —
- * herdr gone, target unknown, name rejected — just reports false.
+ * Verdict of one `herdr agent rename` label attempt (ADR-3): "ok" — the
+ * label landed; "not_found" — herdr refused with agent_not_found, the pane
+ * runs no agent record (child not registered yet, or already gone — the
+ * close-race documented on spawnDoneWaiter); "error" — anything else
+ * (collision, refusal, herdr gone).
  */
-export function renameAgent(paneId: string, name: string): boolean {
+export type AgentRenameStatus = "ok" | "not_found" | "error";
+
+/**
+ * Classify a `herdr agent rename` response. Same envelope family as the
+ * prompt parser: success exits 0; failures exit 1 with an error envelope on
+ * STDERR, `agent_not_found` named explicitly because it decides the retry
+ * policy (see applyPaneLabel) — R10: it is the code behind the raw-JSON
+ * double-line leak, so it must never be conflated with the catch-all.
+ */
+export function parseAgentRenameOutput(out: string, exitCode: number): AgentRenameStatus {
+	if (exitCode === 0) return "ok";
+	return parseHerdrErrorCode(out) === "agent_not_found" ? "not_found" : "error";
+}
+
+/**
+ * Label a pane's agent (`agent rename`) — best-effort per ADR-3: renaming
+ * is cosmetics (all addressing goes through pane ids). Returns the
+ * structured status so applyPaneLabel can tell "no agent record" apart from
+ * everything else without a second probe.
+ */
+export function renameAgent(paneId: string, name: string): AgentRenameStatus {
 	try {
-		runHerdr(["agent", "rename", paneId, name]);
-		return true;
-	} catch {
-		return false;
+		const out = runHerdr(["agent", "rename", paneId, name]);
+		return parseAgentRenameOutput(out, 0);
+	} catch (err) {
+		const failure = err as { stdout?: unknown; stderr?: unknown; status?: unknown };
+		const exitCode = typeof failure.status === "number" ? failure.status : 1;
+		return parseAgentRenameOutput(pickFailureOutput(failure.stdout, failure.stderr), exitCode);
 	}
 }
 
@@ -423,11 +462,21 @@ export function labelWithIdSuffix(base: string, paneId: string): string {
  * suffix, then a silent give-up — renaming is cosmetics, all addressing
  * goes through pane ids. Never throws. Returns whether either attempt
  * stuck, so deferred re-label callers know to stop retrying.
+ *
+ * R10: an agent_not_found first attempt skips the suffix retry entirely.
+ * The record is absent (child not registered yet, or the pane already
+ * closed) — a renamed label cannot land either, and every failed rename
+ * makes herdr print another raw error envelope at the calling pane. That
+ * unconditioned second attempt is what produced the two identical
+ * `agent_not_found` JSON lines seen in the parent's input field during the
+ * R9 acceptance (the close-race double emission).
  */
 export function applyPaneLabel(paneId: string, label: string): boolean {
 	const base = herdrAgentName(label);
-	if (renameAgent(paneId, base)) return true;
-	return renameAgent(paneId, labelWithIdSuffix(base, paneId));
+	const first = renameAgent(paneId, base);
+	if (first === "ok") return true;
+	if (first === "not_found") return false;
+	return renameAgent(paneId, labelWithIdSuffix(base, paneId)) === "ok";
 }
 
 // ── Agent wait / status parsing (shapes captured from 0.9.1-preview) ──

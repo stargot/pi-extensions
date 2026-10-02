@@ -143,6 +143,15 @@ export function renderSubagentMessageResult(
 	if (details.status === "not-running") {
 		return new Text(theme.fg("dim", `○ ${details.name ?? "?"} not running — result already delivered`), 0, 0);
 	}
+	// Close-race (R10): the steer hit a subagent that finished in flight —
+	// reported as a normal result, not an error.
+	if (details.status === "finished") {
+		return new Text(
+			theme.fg("dim", `○ ${details.name ?? "?"} already finished — resume with subagent_message to continue`),
+			0,
+			0,
+		);
+	}
 	// steered (default): the message went to a live pane.
 	let text = verdictChip(theme, "running", "STEERED") + ` ${theme.fg("accent", details.name ?? "?")}`;
 	if (details.interrupted) text += theme.fg("warning", " · interrupted");

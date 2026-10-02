@@ -16,6 +16,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 - **session-trace**: replay-лента показывает маркер «✎» для `context_edit`-записей.
 - **session-trace**: footer `/trace` больше не обрезается в fullscreen — `TraceView`
   учитывает editor-dock хоста (новая опция `reserveRows`).
+- **subagents**: сырые herdr error-конверты больше не появляются у поля ввода —
+  убран двойной re-label ретрай при `agent_not_found` + ограничение частоты
+  re-label (10 c); steer к завершившемуся субагенту — обычный результат
+  «already finished» вместо исключения.
 
 ### Changed
 

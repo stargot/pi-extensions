@@ -94,6 +94,23 @@ test("describePromptFailure: not_found — the pane runs no agent anymore", () =
 	assert.match(text, /already gone/);
 });
 
+test("R10 leak regression: the screenshot envelope normalizes to readable text, never raw JSON", () => {
+	// The R9 acceptance saw the RAW herdr envelope
+	// {"error":{"code":"agent_not_found",…}} rendered in the parent's input
+	// field (the applyPaneLabel close-race double emission). Whatever path a
+	// failed agent-surface call takes, the text that reaches the model/UI must
+	// be the human-readable verdict — parsed envelope fields stay internal.
+	const envelope =
+		'{"error":{"code":"agent_not_found","message":"agent target w1W:pE not found"},"id":"cli:agent:rename"}';
+	const text = describePromptFailure("not_found", "reviewer-070");
+	assert.match(text, /reviewer-070/);
+	assert.match(text, /already gone/);
+	// No raw JSON anywhere in the surfaced text.
+	assert.doesNotMatch(text, /\{"error"/);
+	assert.ok(!text.includes(envelope));
+	assert.ok(!text.includes("w1W:pE"));
+});
+
 test("describePromptFailure: error — unrecognized herdr failure", () => {
 	const text = describePromptFailure("error", "scout");
 	assert.ok(text.startsWith("Could not deliver the message"));

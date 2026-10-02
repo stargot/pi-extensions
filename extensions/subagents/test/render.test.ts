@@ -206,6 +206,30 @@ test("subagent_message result: isError → error banner", () => {
 	assert.match(out, /Error: pane gone/);
 });
 
+test("subagent_message result: close-race finished (R10) — plain verdict, no raw JSON", () => {
+	// The steer hit a subagent that finished mid-flight: a normal result, not
+	// an error — and no herdr envelope may leak into the rendered card.
+	const out = flat(
+		renderSubagentMessageResult(
+			result('Subagent "reviewer-070" has already finished — no live agent to steer.', {
+				name: "reviewer-070",
+				status: "finished",
+			}),
+			renderOpts(),
+			fakeTheme,
+			ctx(false),
+		),
+	);
+	assert.match(out, /reviewer-070/);
+	assert.match(out, /already finished/);
+	assert.match(out, /resume/);
+	assert.doesNotMatch(out, /STEERED/);
+	// Raw envelope text must never appear in the render path.
+	assert.ok(!out.includes("{"));
+	assert.ok(!out.includes("agent_not_found"));
+	assert.ok(!out.includes("w1W:pE"));
+});
+
 // ── subagent_cancel ──
 
 test("subagent_cancel result: cancelling", () => {

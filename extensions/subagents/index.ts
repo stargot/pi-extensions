@@ -126,10 +126,17 @@ const INTERRUPT_SETTLE_MS = 1200;
 // only has to cover a slow boot: 10s does, with margin.
 const NATIVE_WAITER_DELAY_MS = 10_000;
 // Deferred re-label ceiling (ADR-3): the +10s re-label can still miss (slow
-// boot), so pollTick retries the rename every tick while labelPending — then
+// boot), so pollTick retries the rename while labelPending — then
 // surrenders for good here. Renaming stays cosmetics (all addressing goes
 // through pane ids); the ceiling just bounds how long the cosmetics retry.
 const LABEL_PENDING_MAX_MS = 60_000;
+// R10: pollTick re-label retry cadence. Every failed rename makes herdr
+// print a raw error envelope at the calling pane (agent_not_found while the
+// record is not up — the R9 leak), so the safety net retries at a 10s
+// cadence, not once per 1s tick: 6 attempts inside the 60s ceiling are
+// plenty for a slow boot, and a record that never appears stops being
+// hammered.
+const LABEL_RETRY_INTERVAL_MS = 10_000;
 // A native done flag older than this means the launcher sidecars are truly
 // lost, not "pi just exited, .done is mid-write" — the grace re-opens that
 // race so the sidecar path (step 1) still wins whenever it can.
@@ -205,6 +212,8 @@ interface RunningSubagent {
 	 * LABEL_PENDING_MAX_MS — still has to apply it.
 	 */
 	labelPending?: boolean;
+	/** Last deferred re-label attempt (any outcome) — paces pollTick retries (R10). */
+	labelLastAttemptAt?: number;
 }
 
 interface SpawnParams {
@@ -445,9 +454,13 @@ function armDoneWaiter(running: RunningSubagent): void {
 				// the child registers), and this delay — the same one that
 				// makes the waiter safe — now covers registration, so the
 				// label can land for real. A miss leaves the flag up for the
-				// pollTick safety net.
-				if (running.labelPending && herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
-					running.labelPending = false;
+				// pollTick safety net. The attempt is stamped so the safety
+				// net's own pacing (R10) starts from here, not from boot.
+				if (running.labelPending) {
+					running.labelLastAttemptAt = Date.now();
+					if (herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
+						running.labelPending = false;
+					}
 				}
 				const waiter = herdr.spawnDoneWaiter(running.paneId, NATIVE_DONE_UNTIL);
 				if (!waiter) return;
@@ -480,6 +493,8 @@ function armDeferredRelabel(running: RunningSubagent): void {
 		void loadHerdr()
 			.then((herdr) => {
 				if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
+				// Stamp before the attempt: paces the pollTick safety net (R10).
+				running.labelLastAttemptAt = Date.now();
 				if (herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
 					running.labelPending = false;
 				}
@@ -750,17 +765,21 @@ function pollTick(): void {
 		}
 
 		// 7. Deferred label safety net (ADR-3): the +10s re-label timer can
-		// still miss (slow boot); while labelPending, retry the rename every
-		// tick — one cheap CLI call, failing fast with agent_not_found —
-		// until it sticks or the 60s ceiling surrenders for good (renaming
-		// stays cosmetics: addressing always goes through pane ids).
-		if (running.labelPending) {
+		// still miss (slow boot); while labelPending, retry the rename on a
+		// 10s cadence (R10: every failed rename makes herdr print a raw
+		// error envelope at the calling pane — agent_not_found while the
+		// record is not up — so the safety net paces itself instead of
+		// firing every 1s tick) until it sticks or the 60s ceiling
+		// surrenders for good (renaming stays cosmetics: addressing always
+		// goes through pane ids).
+		if (running.labelPending && now - (running.labelLastAttemptAt ?? running.startTime) >= LABEL_RETRY_INTERVAL_MS) {
+			running.labelLastAttemptAt = now;
 			void loadHerdr()
 				.then((herdr) => {
 					if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
 					if (
 						herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name)) ||
-						now - running.startTime >= LABEL_PENDING_MAX_MS
+						Date.now() - running.startTime >= LABEL_PENDING_MAX_MS
 					) {
 						running.labelPending = false;
 					}
@@ -1287,8 +1306,29 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					);
 				}
 				if (!delivery.ok) {
+					// Close-race (R10): herdr refused with agent_not_found — the
+					// subagent finished while the steer was in flight. "Pane
+					// closed" is a normal final, not a failure: report it as a
+					// plain tool result (no error), pointing at the completion
+					// report and the resume path, so the model neither retries
+					// the steer nor treats the subagent as lost.
+					if (delivery.outcome === "not_found") {
+						return {
+							content: [
+								{
+									type: "text",
+									text:
+										`Subagent "${name}" has already finished — no live agent to steer. ` +
+										`Its completion result still arrives as a steer message if it just finished; ` +
+										`call subagent_message again with the same name to resume it from its saved session.`,
+								},
+							],
+							details: { name, status: "finished" },
+						};
+					}
 					// herdr refused or lost the delivery (ADR-1): the structured
-					// outcome names the story — surface it verbatim as a tool error.
+					// outcome names the story — surface it as a readable tool error,
+					// never as a raw herdr JSON envelope.
 					throw new Error(describePromptFailure(delivery.outcome ?? "error", name));
 				}
 				running.activity.lastChangeAt = Date.now();

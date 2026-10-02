@@ -4,7 +4,9 @@ import {
 	herdrAgentName,
 	labelWithIdSuffix,
 	parseAgentPromptOutput,
+	parseAgentRenameOutput,
 	parseAgentStatus,
+	parseHerdrErrorCode,
 	parsePaneListIds,
 	parseSplitPaneId,
 	pickFailureOutput,
@@ -144,6 +146,14 @@ const PROMPT_OK =
 const PROMPT_NOT_FOUND =
 	'{"error":{"code":"agent_not_found","message":"agent target w1P:p7 not found"},"id":"cli:agent:prompt"}';
 
+// The exact envelope pair from the R9 acceptance screenshot (R10): TWO
+// identical `agent rename` refusals for the closing pane w1W:pE — the
+// base-label attempt and (before the fix) the unconditioned id-suffix retry
+// of one applyPaneLabel call. The id prefix "c…" in the screenshot is
+// "cli:agent:rename" cut off by the viewport width.
+const RENAME_NOT_FOUND_R9_LEAK =
+	'{"error":{"code":"agent_not_found","message":"agent target w1W:pE not found"},"id":"cli:agent:rename"}';
+
 // `herdr agent rename w1P:p7 t1-probe` (exit 0): the label lands at
 // .result.agent.name; envelope is the same agent_info as agent get.
 const RENAME_OK =
@@ -228,6 +238,43 @@ test("pickFailureOutput + parseAgentPromptOutput: stderr path classifies as not_
 	const failure = { stdout: "", stderr: PROMPT_NOT_FOUND, status: 1 } as const;
 	assert.equal(parseAgentPromptOutput(pickFailureOutput(failure.stdout, failure.stderr), failure.status), "not_found");
 	assert.equal(parseAgentPromptOutput(pickFailureOutput("", PROMPT_BLOCKED), 1), "refused_blocked");
+});
+
+// ── parseHerdrErrorCode + parseAgentRenameOutput (R10) ──
+
+test("parseHerdrErrorCode: extracts error.code from the envelope family", () => {
+	assert.equal(parseHerdrErrorCode(RENAME_NOT_FOUND_R9_LEAK), "agent_not_found");
+	assert.equal(parseHerdrErrorCode(PROMPT_BLOCKED), "agent_blocked");
+	assert.equal(parseHerdrErrorCode(WAIT_TIMEOUT), "timeout");
+});
+
+test("parseHerdrErrorCode: defensive — garbage, empty, non-string code → empty", () => {
+	assert.equal(parseHerdrErrorCode(""), "");
+	assert.equal(parseHerdrErrorCode("garbage"), "");
+	assert.equal(parseHerdrErrorCode("{}"), "");
+	assert.equal(parseHerdrErrorCode('{"error":{"code":42}}'), "");
+	// A success envelope carries no error at all.
+	assert.equal(parseHerdrErrorCode(RENAME_OK), "");
+});
+
+test("parseAgentRenameOutput: exit 0 is ok — the label landed", () => {
+	assert.equal(parseAgentRenameOutput(RENAME_OK, 0), "ok");
+	// The exit code is the truth for success; the body is not re-parsed.
+	assert.equal(parseAgentRenameOutput("", 0), "ok");
+});
+
+test("parseAgentRenameOutput: the R9 leak envelope (agent_not_found) maps to not_found", () => {
+	// Regression pin for the raw-JSON leak: the exact refusal from the
+	// screenshot must classify as not_found — never as the catch-all error —
+	// so applyPaneLabel can skip the suffix retry (the second identical
+	// envelope) and give up silently.
+	assert.equal(parseAgentRenameOutput(RENAME_NOT_FOUND_R9_LEAK, 1), "not_found");
+});
+
+test("parseAgentRenameOutput: everything else on a non-zero exit is the catch-all", () => {
+	assert.equal(parseAgentRenameOutput("garbage", 1), "error");
+	assert.equal(parseAgentRenameOutput("", 1), "error");
+	assert.equal(parseAgentRenameOutput('{"error":{"code":"agent_label_taken"}}', 1), "error");
 });
 
 // ── Fixture shape pins (live get / prompt / rename envelopes) ──
