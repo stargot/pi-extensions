@@ -91,7 +91,7 @@ test("parseAgentMarkdown: unknown frontmatter keys produce warnings", () => {
 
 test("parseAgentMarkdown: known keys produce no warnings", () => {
 	const raw =
-		"---\nname: worker\ndescription: d\nmodel: m\ntools: read, bash\nsubagents: scout\nauto-exit: false\n---\nBody.";
+		"---\nname: worker\ndescription: d\nmodel: m\ntools: read, bash\nsubagents: scout\nauto-exit: false\ndispatch: true\n---\nBody.";
 	const def = parseAgentMarkdown(raw, "fallback");
 	assert.deepEqual(def.warnings, []);
 });

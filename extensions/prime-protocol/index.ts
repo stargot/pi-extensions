@@ -5,16 +5,15 @@
  * sessions only, so every pi session runs as "prime" — an orchestrator that
  * works through the subagent swarm instead of doing everything itself.
  * The inject is assembled from a single source of truth — the agent pool:
- *   1. ~/.pi/agent/PRIME.md — short manifest: role, model economics,
- *      pointer to the protocol below;
- *   2. the body of ~/.pi/agent/agents/prime.md (frontmatter stripped) —
- *      prime directive, hard rules, delegation contract, result handling,
- *      stop conditions, report format;
- *   3. a dispatch table generated at inject time from the `subagents`
- *      frontmatter list of agents/prime.md, each row filled with the role
- *      file's own `description` and `model` frontmatter. Adding, removing
- *      or retargeting a role updates the protocol on the next session —
- *      no hand-maintained role list can drift.
+ *   1. the body of ~/.pi/agent/agents/prime.md (frontmatter stripped) —
+ *      intro (first lines), prime directive, hard rules, delegation
+ *      contract, result handling, stop conditions, report format;
+ *   2. a dispatch table generated at inject time by scanning agents/*.md —
+ *      every role file except prime itself, each row filled with the
+ *      file's own `description` and `model` frontmatter; a role opts out
+ *      with `dispatch: false`. Adding, removing or retargeting a role
+ *      updates the protocol on the next session — no hand-maintained role
+ *      list (frontmatter or otherwise) can drift.
  *
  * Part 2 — dashboard (TUI only). Makes the orchestrator's decisions visible:
  *   - when the first user message of a session arrives, a notification
@@ -49,17 +48,25 @@
  *      append" silently disarmed every main session with APPEND_SYSTEM.md;
  *   3. tool-allowlisted children have no `subagent` tool at all → selectedTools.
  * The same guards arm parts 1 and 3 — an un-armed session is neither
- * injected nor blocked. Missing or empty PRIME.md makes part 1 a no-op;
- * missing pieces degrade stepwise (no agent file → intro only, no role
- * file → "definition missing" row).
+ * injected nor blocked. A missing or empty prime.md body makes part 1 a
+ * no-op; an empty pool (no eligible agents) drops the dispatch table.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import {
+	asInput,
+	buildDispatchTable,
+	dispatchTargets,
+	knownAgentBodies,
+	readIfExists,
+	shellLooksLikeLookup,
+	splitFrontmatter,
+	spawnAgents,
+} from "./protocol.ts";
 
-const PROTOCOL_PATH = join(getAgentDir(), "PRIME.md");
-const PRIME_DEF_PATH = join(getAgentDir(), "agents", "prime.md");
+const PRIME_NAME = "prime";
+const PRIME_DEF_PATH = join(getAgentDir(), "agents", `${PRIME_NAME}.md`);
 const AGENTS_DIR = join(getAgentDir(), "agents");
 const SETTINGS_PATH = join(getAgentDir(), "settings.json");
 
@@ -67,89 +74,10 @@ const WIDGET_KEY = "prime-status";
 
 const LOOKUP_TOOLS = new Set(["read", "grep", "find", "ls", "glob"]);
 const EDIT_TOOLS = new Set(["edit", "write"]);
-const SPAWN_TOOLS = new Set(["subagent", "task_batch"]);
 
 const BASE_LOOKUP_ALLOWANCE = 3;
 const PER_DISPATCH_ALLOWANCE = 3;
 const FILE_TURN_LIMIT = 3;
-
-const SHELL_READERS =
-	/(^|[\s;|&])(cat|head|tail|less|more|type|rg|grep|find|ls|dir|file|wc|stat|tree|du|df|where|which|gc|gci|cat|Get-Content|Get-ChildItem|Get-Item|Select-String)(\s|$)/;
-
-function readIfExists(path: string): string {
-	if (!existsSync(path)) return "";
-	try {
-		return readFileSync(path, "utf8").trim();
-	} catch {
-		return "";
-	}
-}
-
-function splitFrontmatter(raw: string): { attrs: Record<string, string>; body: string } {
-	const normalized = raw.replace(/\r\n/g, "\n");
-	if (!normalized.startsWith("---\n")) return { attrs: {}, body: normalized };
-	const end = normalized.indexOf("\n---", 4);
-	if (end === -1) return { attrs: {}, body: normalized };
-	const header = normalized.slice(4, end);
-	const body = normalized.slice(end + 4).trim();
-	const attrs: Record<string, string> = {};
-	for (const line of header.split("\n")) {
-		const match = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line);
-		if (!match) continue;
-		const key = (match[1] ?? "").toLowerCase();
-		let value = (match[2] ?? "").trim();
-		if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
-			value = value.slice(1, -1);
-		}
-		if (key) attrs[key] = value;
-	}
-	return { attrs, body };
-}
-
-function cell(text: string): string {
-	return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
-}
-
-function buildDispatchTable(primeAttrs: Record<string, string>): string {
-	const names = (primeAttrs["subagents"] ?? "")
-		.split(",")
-		.map((name) => name.trim())
-		.filter(Boolean);
-	if (names.length === 0) return "";
-
-	const rows = names.map((name) => {
-		const raw = readIfExists(join(AGENTS_DIR, `${name}.md`));
-		if (!raw) return `| ${cell(name)} | ⚠ definition missing — nobody provides this capability | — |`;
-		const { attrs } = splitFrontmatter(raw);
-		const purpose = attrs["description"]?.trim() || "—";
-		const model = attrs["model"]?.trim() || "—";
-		return `| ${cell(name)} | ${cell(purpose)} | ${cell(model)} |`;
-	});
-
-	return [
-		"## Dispatch table",
-		"",
-		"Generated from the live agent pool (`~/.pi/agent/agents/`).",
-		"",
-		"| Role | Purpose | Model |",
-		"|---|---|---|",
-		...rows,
-	].join("\n");
-}
-
-function knownAgentBodies(): Set<string> {
-	const bodies = new Set<string>();
-	try {
-		for (const entry of readdirSync(AGENTS_DIR)) {
-			if (!entry.endsWith(".md")) continue;
-			const body = splitFrontmatter(readIfExists(join(AGENTS_DIR, entry))).body;
-			if (body) bodies.add(body.trim());
-		}
-	} catch {
-		/* fail-open: treat as no known identities */
-	}
-	return bodies;
-}
 
 function readSessionModel(): string {
 	const raw = readIfExists(SETTINGS_PATH);
@@ -161,37 +89,6 @@ function readSessionModel(): string {
 	} catch {
 		return "";
 	}
-}
-
-function asInput(event: unknown): Record<string, unknown> {
-	const input = (event as { input?: unknown }).input;
-	return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-}
-
-function spawnAgents(toolName: string, input: Record<string, unknown> | undefined): string[] {
-	if (!input || !SPAWN_TOOLS.has(toolName)) return [];
-	if (toolName === "subagent") {
-		const agent = typeof input.agent === "string" ? input.agent.trim() : "";
-		return agent ? [agent] : [];
-	}
-	const tasks = Array.isArray(input.tasks) ? input.tasks : [];
-	const names = tasks
-		.map((task) =>
-			task && typeof task === "object" && typeof (task as { agent?: unknown }).agent === "string"
-				? (task as { agent: string }).agent.trim()
-				: "",
-		)
-		.filter(Boolean);
-	if (names.length > 0) return names;
-	const single = typeof input.agent === "string" ? input.agent.trim() : "";
-	return single ? [single] : [];
-}
-
-function shellLooksLikeLookup(input: Record<string, unknown>): boolean {
-	const command = typeof input.command === "string" ? input.command : "";
-	const segments = command.split(/(?:&&|\|\||;|\|)/);
-	const first = segments.find((segment) => !/^\s*(cd|pushd)\s/.test(segment)) ?? segments[0] ?? "";
-	return SHELL_READERS.test(first.trim().slice(0, 120));
 }
 
 type Stats = { lookups: number; edits: number; spawned: number; agentUse: Map<string, number> };
@@ -218,12 +115,8 @@ let poolSize = 0;
 export default function primeProtocol(pi: ExtensionAPI) {
 	const isChild = () => Boolean(process.env.PI_SUBAGENT_SESSION);
 
-	const poolNames = (splitFrontmatter(readIfExists(PRIME_DEF_PATH)).attrs["subagents"] ?? "")
-		.split(",")
-		.map((name) => name.trim())
-		.filter(Boolean);
 	modelShort = readSessionModel();
-	poolSize = poolNames.length;
+	poolSize = dispatchTargets(AGENTS_DIR, PRIME_NAME).length;
 
 	let armed = false;
 	let greeted = false;
@@ -393,7 +286,7 @@ export default function primeProtocol(pi: ExtensionAPI) {
 		}
 
 		const append = event.systemPromptOptions?.appendSystemPrompt;
-		if (append && append.trim().length > 0 && knownAgentBodies().has(append.trim())) {
+		if (append && append.trim().length > 0 && knownAgentBodies(AGENTS_DIR).has(append.trim())) {
 			armed = false;
 			return;
 		}
@@ -406,18 +299,14 @@ export default function primeProtocol(pi: ExtensionAPI) {
 
 		armed = true;
 
-		const intro = readIfExists(PROTOCOL_PATH);
-		if (!intro) return;
-
 		const primeRaw = readIfExists(PRIME_DEF_PATH);
-		if (!primeRaw) {
-			return { systemPrompt: `${event.systemPrompt}\n\n${intro}` };
-		}
+		if (!primeRaw) return;
 
-		const { attrs, body } = splitFrontmatter(primeRaw);
-		const table = buildDispatchTable(attrs);
+		const { body } = splitFrontmatter(primeRaw);
+		const table = buildDispatchTable(AGENTS_DIR, PRIME_NAME);
 
-		const protocol = [intro, body, table].filter(Boolean).join("\n\n");
+		const protocol = [body, table].filter(Boolean).join("\n\n");
+		if (!protocol) return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${protocol}` };
 	});
 }

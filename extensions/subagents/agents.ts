@@ -11,7 +11,8 @@
  *
  * Frontmatter keys understood by this extension:
  *   name, description, model, thinking, tools (comma list),
- *   subagents (comma list — agents this agent may spawn), auto-exit (bool)
+ *   subagents (comma list — agents this agent may spawn), auto-exit (bool),
+ *   dispatch (bool — prime-protocol: opt out of the generated dispatch table)
  *
  * Anything after the frontmatter is the agent identity and is appended to the
  * child's system prompt via --append-system-prompt.
@@ -44,7 +45,7 @@ export interface AgentDef {
  * comma-separated values become lists. `\r\n` normalized to `\n` first.
  */
 /** Frontmatter keys this extension understands; anything else is a warning. */
-const KNOWN_KEYS = new Set(["name", "description", "model", "thinking", "tools", "subagents", "auto-exit"]);
+const KNOWN_KEYS = new Set(["name", "description", "model", "thinking", "tools", "subagents", "auto-exit", "dispatch"]);
 
 export function parseAgentMarkdown(raw: string, fallbackName: string): AgentDef {
 	const normalized = raw.replace(/\r\n/g, "\n");
