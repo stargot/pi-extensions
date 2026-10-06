@@ -205,7 +205,9 @@ heartbeat, поэтому здоровая долгая генерация мо�
   (панель живёт до закрытия человеком).
 - Субагент может сам спавнить детей: перечислите разрешённых агентов в
   frontmatter (`subagents: scout, researcher`) — ему загрузится тот же
-  оркестратор, ограниченный `PI_SUBAGENT_ALLOWED`. Пока дети не отчитались,
+  оркестратор, ограниченный `PI_SUBAGENT_ALLOWED`. Значение `subagents: *`
+  разрешает всех известных агентов (allowlist в ребёнке не сужается —
+  ребенок резолвит против собственной discovery); пока дети не отчитались,
   auto-exit родителя-агента подавлен (`runningChildrenCount`).
 - Frontmatter агентов: `name`, `description`, `model`, `thinking`, `tools`
   (allowlist → `--tools` + `-ne` в ребёнке), `subagents`, `auto-exit`;

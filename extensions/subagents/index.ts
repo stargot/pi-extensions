@@ -94,6 +94,7 @@ import {
 	classifyExitSidecar,
 	describePromptFailure,
 	fmtElapsed,
+	parseSpawnAllowlist,
 	resolveInterrupt,
 } from "./shared.ts";
 import {
@@ -242,13 +243,7 @@ function publishRunningChildrenCount(): void {
 publishRunningChildrenCount();
 
 function allowedAgentsInChild(): Set<string> | null {
-	const raw = process.env.PI_SUBAGENT_ALLOWED;
-	if (!raw) return null;
-	const names = raw
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean);
-	return new Set(names);
+	return parseSpawnAllowlist(process.env.PI_SUBAGENT_ALLOWED);
 }
 
 // ── Small helpers ──

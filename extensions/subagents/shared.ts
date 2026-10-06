@@ -35,6 +35,26 @@ export function computeStackPercent(runningCount: number): number {
 	return Math.round((runningCount * 100) / (runningCount + 1));
 }
 
+// ── Spawn allowlist ──
+
+/**
+ * Child-side spawn allowlist from PI_SUBAGENT_ALLOWED (a comma list of
+ * agent names set by the parent from the agent's `subagents` frontmatter).
+ * `*` — alone or in a list — means "every known definition": null = no
+ * restriction, the child resolves against its own discovery. No env / empty
+ * / blank list is also null (parents simply don't set it when unrestricted).
+ */
+export function parseSpawnAllowlist(raw: string | undefined): Set<string> | null {
+	if (!raw) return null;
+	const names = raw
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	if (names.length === 0) return null;
+	if (names.includes("*")) return null;
+	return new Set(names);
+}
+
 // ── Cancel / interrupt ──
 
 /** Sidecar file whose presence tells the child its run was cancelled. */

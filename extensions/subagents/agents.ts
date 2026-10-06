@@ -11,7 +11,8 @@
  *
  * Frontmatter keys understood by this extension:
  *   name, description, model, thinking, tools (comma list),
- *   subagents (comma list — agents this agent may spawn), auto-exit (bool),
+ *   subagents (comma list — agents this agent may spawn; `*` = every
+ *   known definition), auto-exit (bool),
  *   dispatch (bool — prime-protocol: opt out of the generated dispatch table)
  *
  * Anything after the frontmatter is the agent identity and is appended to the

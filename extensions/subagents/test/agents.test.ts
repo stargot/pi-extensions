@@ -79,6 +79,12 @@ test("discoverAgents: missing dirs → empty map", () => {
 	assert.equal(defs.size, 0);
 });
 
+test("parseAgentMarkdown: subagents wildcard parses through as a list entry", () => {
+	const def = parseAgentMarkdown("---\nname: prime\nsubagents: *\n---\nBody.", "prime");
+	assert.deepEqual(def.subagents, ["*"]);
+	assert.deepEqual(def.warnings, []);
+});
+
 test("parseAgentMarkdown: unknown frontmatter keys produce warnings", () => {
 	const raw =
 		"---\nname: researcher\ndescription: d\ntools: web_search, safe_bash\nsystem-prompt: append\nunknown-thing: x\n---\nBody.";

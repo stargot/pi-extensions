@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cancelSidecarPath, classifyExitSidecar, describePromptFailure, resolveInterrupt } from "../shared.ts";
+import {
+	cancelSidecarPath,
+	classifyExitSidecar,
+	describePromptFailure,
+	parseSpawnAllowlist,
+	resolveInterrupt,
+} from "../shared.ts";
 
 test("cancelSidecarPath: appends .cancel to the session file", () => {
 	assert.equal(
@@ -121,4 +127,23 @@ test("describePromptFailure: error — unrecognized herdr failure", () => {
 test("describePromptFailure: delivered fallback stays readable for exhaustiveness", () => {
 	// Unreachable through the ok:false path, but must still return text.
 	assert.match(describePromptFailure("delivered", "scout"), /Could not deliver the message/);
+});
+
+test("parseSpawnAllowlist: comma list → name set", () => {
+	assert.deepEqual(parseSpawnAllowlist("worker, scout"), new Set(["worker", "scout"]));
+	assert.deepEqual(parseSpawnAllowlist(" worker ,scout "), new Set(["worker", "scout"]));
+});
+
+test("parseSpawnAllowlist: no env, empty or blank → unrestricted (null)", () => {
+	assert.equal(parseSpawnAllowlist(undefined), null);
+	assert.equal(parseSpawnAllowlist(""), null);
+	assert.equal(parseSpawnAllowlist("  "), null);
+	assert.equal(parseSpawnAllowlist(" , "), null);
+});
+
+test("parseSpawnAllowlist: wildcard '*' means every known definition (null)", () => {
+	assert.equal(parseSpawnAllowlist("*"), null);
+	assert.equal(parseSpawnAllowlist(" * "), null);
+	// Mixed lists: the wildcard dominates — narrowing it back would surprise.
+	assert.equal(parseSpawnAllowlist("worker, *"), null);
 });
