@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	buildBudgetRule,
 	buildDispatchTable,
 	dispatchTargets,
 	knownAgentBodies,
@@ -111,6 +112,23 @@ test("buildDispatchTable: empty pool → no table", () => {
 	withAgentsDir({ "prime.md": "---\nname: prime\n---\nBody." }, (dir) => {
 		assert.equal(buildDispatchTable(dir, "prime"), "");
 	});
+});
+
+test("buildBudgetRule: numbers come from the enforcement constants, not hardcoded text", () => {
+	const rule = buildBudgetRule({ base: 3, perDispatch: 3, files: 3 });
+	assert.ok(rule.startsWith("## Solo budget — enforced in code"));
+	assert.ok(rule.includes("3 solo lookup calls per user turn"));
+	assert.ok(rule.includes("+3 more for each dispatched agent"));
+	assert.ok(rule.includes("capped at 3 distinct files"));
+	assert.ok(rule.includes("/solo <N>"));
+	assert.ok(rule.includes("/solo off"));
+
+	// Different constants → different numbers: the string tracks the code.
+	const tuned = buildBudgetRule({ base: 5, perDispatch: 2, files: 7 });
+	assert.ok(tuned.includes("5 solo lookup calls"));
+	assert.ok(tuned.includes("+2 more for each dispatched agent"));
+	assert.ok(tuned.includes("capped at 7 distinct files"));
+	assert.ok(!tuned.includes("3 solo lookup calls"));
 });
 
 test("knownAgentBodies: frontmatter stripped, prime body included (child-detect match source)", () => {

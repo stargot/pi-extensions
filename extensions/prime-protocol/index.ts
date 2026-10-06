@@ -13,7 +13,9 @@
  *      file's own `description` and `model` frontmatter; a role opts out
  *      with `dispatch: false`. Adding, removing or retargeting a role
  *      updates the protocol on the next session — no hand-maintained role
- *      list (frontmatter or otherwise) can drift.
+ *      list (frontmatter or otherwise) can drift;
+ *   3. the solo budget rule, rendered from the enforcement constants —
+ *      the injected numbers always match what the tools actually block.
  *
  * Part 2 — dashboard (TUI only). Makes the orchestrator's decisions visible:
  *   - when the first user message of a session arrives, a notification
@@ -56,6 +58,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import {
 	asInput,
+	buildBudgetRule,
 	buildDispatchTable,
 	dispatchTargets,
 	knownAgentBodies,
@@ -303,9 +306,14 @@ export default function primeProtocol(pi: ExtensionAPI) {
 		if (!primeRaw) return;
 
 		const { body } = splitFrontmatter(primeRaw);
+		const budget = buildBudgetRule({
+			base: BASE_LOOKUP_ALLOWANCE,
+			perDispatch: PER_DISPATCH_ALLOWANCE,
+			files: FILE_TURN_LIMIT,
+		});
 		const table = buildDispatchTable(AGENTS_DIR, PRIME_NAME);
 
-		const protocol = [body, table].filter(Boolean).join("\n\n");
+		const protocol = [body, budget, table].filter(Boolean).join("\n\n");
 		if (!protocol) return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${protocol}` };
 	});

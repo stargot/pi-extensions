@@ -92,6 +92,20 @@ export function buildDispatchTable(agentsDir: string, selfName: string): string 
 	].join("\n");
 }
 
+/**
+ * The solo budget rule as the tools actually enforce it — rendered from
+ * the enforcement constants so the injected prompt can never drift from
+ * what the code blocks. The prompt-only "at most 3 lookups" wording in
+ * the agent body is advisory; this section is the contract.
+ */
+export function buildBudgetRule(allowance: { base: number; perDispatch: number; files: number }): string {
+	return [
+		"## Solo budget — enforced in code",
+		"",
+		`The extension blocks, it does not remind: ${allowance.base} solo lookup calls per user turn (read/grep/find/ls/glob and file-reading shell commands), +${allowance.perDispatch} more for each dispatched agent (verifying its report is covered). Re-reading an already-read file never spends the budget. Edits are capped at ${allowance.files} distinct files per user turn — bulk file work belongs to a worker. /solo <N> raises the lookup cap for the turn; /solo off disables enforcement until the next user message.`,
+	].join("\n");
+}
+
 export function knownAgentBodies(agentsDir: string): Set<string> {
 	const bodies = new Set<string>();
 	try {
