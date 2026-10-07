@@ -50,8 +50,8 @@
  *      append" silently disarmed every main session with APPEND_SYSTEM.md;
  *   3. tool-allowlisted children have no `subagent` tool at all → selectedTools.
  * The same guards arm parts 1 and 3 — an un-armed session is neither
- * injected nor blocked. A missing or empty prime.md body makes part 1 a
- * no-op; an empty pool (no eligible agents) drops the dispatch table.
+ * injected nor blocked. A missing prime.md file makes part 1 a no-op; an
+ * empty pool (no eligible agents) drops the dispatch table.
  */
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";

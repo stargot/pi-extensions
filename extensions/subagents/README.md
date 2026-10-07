@@ -206,9 +206,11 @@ heartbeat, поэтому здоровая долгая генерация мо�
 - Субагент может сам спавнить детей: перечислите разрешённых агентов в
   frontmatter (`subagents: scout, researcher`) — ему загрузится тот же
   оркестратор, ограниченный `PI_SUBAGENT_ALLOWED`. Значение `subagents: *`
-  разрешает всех известных агентов (allowlist в ребёнке не сужается —
-  ребенок резолвит против собственной discovery); пока дети не отчитались,
-  auto-exit родителя-агента подавлен (`runningChildrenCount`).
+  разрешает всех известных агентов, включая prime и агентов с
+  `dispatch: false` — флаг сужает только dispatch-таблицу prime-protocol,
+  а wildcard и есть явный opt-in на их спавн (allowlist в ребёнке не
+  сужается — ребенок резолвит против собственной discovery); пока дети не
+  отчитались, auto-exit родителя-агента подавлен (`runningChildrenCount`).
 - Frontmatter агентов: `name`, `description`, `model`, `thinking`, `tools`
   (allowlist → `--tools` + `-ne` в ребёнке), `subagents`, `auto-exit`;
   тело файла — identity, добавляется через `--append-system-prompt`.
