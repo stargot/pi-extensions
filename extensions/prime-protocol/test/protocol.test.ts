@@ -82,6 +82,38 @@ test("dispatchTargets: self excluded by frontmatter name even when the file is n
 	);
 });
 
+test("dispatchTargets: self excluded by file name even when frontmatter names it differently", () => {
+	withAgentsDir(
+		{
+			"prime.md":
+				"---\nname: retired-orchestrator\ndescription: renamed role keeps the canonical file name\n---\nBody.",
+			"scout.md": "---\nname: scout\ndescription: recon\n---\nBody.",
+		},
+		(dir) => {
+			assert.deepEqual(
+				dispatchTargets(dir, "prime").map((t) => t.name),
+				["scout"],
+			);
+		},
+	);
+});
+
+test("dispatchTargets: md without frontmatter keeps the file name", () => {
+	withAgentsDir(
+		{
+			"plain.md": "Body only, no frontmatter block.",
+			"prime.md": "---\nname: prime\n---\nBody.",
+		},
+		(dir) => {
+			assert.deepEqual(
+				dispatchTargets(dir, "prime").map((t) => t.name),
+				["plain"],
+			);
+			assert.equal(dispatchTargets(dir, "prime")[0]?.description, "—");
+		},
+	);
+});
+
 test("dispatchTargets: non-md files ignored, missing dir → empty", () => {
 	withAgentsDir({ "notes.txt": "not an agent" }, (dir) => {
 		assert.deepEqual(dispatchTargets(dir, "prime"), []);

@@ -60,9 +60,11 @@ export function dispatchTargets(agentsDir: string, selfName: string): DispatchTa
 	const targets: DispatchTarget[] = [];
 	for (const entry of entries) {
 		if (!entry.endsWith(".md")) continue;
-		const { attrs } = splitFrontmatter(readIfExists(join(agentsDir, entry)));
+		const raw = readIfExists(join(agentsDir, entry));
+		if (!raw) continue;
+		const { attrs } = splitFrontmatter(raw);
 		const name = attrs["name"]?.trim() || entry.slice(0, -".md".length);
-		if (name === selfName) continue;
+		if (name === selfName || entry === `${selfName}.md`) continue;
 		if ((attrs["dispatch"] ?? "").trim().toLowerCase() === "false") continue;
 		targets.push({
 			name,
