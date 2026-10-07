@@ -110,6 +110,40 @@ test("readLogTail: missing log → exists=false, empty tail", () => {
 	}
 });
 
+test("spawnJob: failed spawn (async error) closes the log fd — no leak per failed launch", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-bgjobs-run-"));
+	try {
+		const logFile = join(dir, ".pi", "jobs", "66666666", "output.log");
+		// Несуществующий cwd — спавн падает асинхронно событием "error"; без
+		// закрытия fd там файл остаётся залоченным (Windows).
+		const child = spawnJob({ id: "66666666", command: `Write-Output hi`, cwd: join(dir, "no-such-cwd"), logFile });
+		const err = await new Promise<Error>((resolve) => child.once("error", resolve));
+		assert.equal((err as NodeJS.ErrnoException).code, "ENOENT");
+		if (process.platform === "win32") {
+			rmSync(logFile); // бросил бы EBUSY/EPERM, будь fd всё ещё открыт
+		} else {
+			// POSIX: файл с открытым fd удаляется — проверяем отсутствие дескриптора.
+			const fds = readFileSync("/proc/self/fd").toString().split("\n").filter(Boolean);
+			assert.ok(!fds.some((f) => readFileSync(join("/proc/self/fd", f)).toString().includes("output.log")));
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("spawnJob: synchronous spawn throw (null byte in command) closes the log fd", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-bgjobs-run-"));
+	try {
+		const logFile = join(dir, ".pi", "jobs", "77777777", "output.log");
+		assert.throws(() => spawnJob({ id: "77777777", command: `echo \u0000 bad`, cwd: dir, logFile }), /null/);
+		if (process.platform === "win32") {
+			rmSync(logFile); // бросил бы EBUSY/EPERM, будь fd всё ещё открыт
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("spawnJob fixture echo: durable log receives stdout, exit code 0", pwshOnly, async () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-bgjobs-run-"));
 	try {

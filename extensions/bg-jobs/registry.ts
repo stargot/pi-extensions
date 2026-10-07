@@ -94,14 +94,17 @@ export function isTerminal(status: JobStatus): boolean {
 	return status !== "running";
 }
 
-/** Read the registry; missing or corrupt file → a fresh empty registry. */
+/**
+ * Read the registry; a missing or corrupt file → a fresh empty registry.
+ * Any other read error (EACCES/EBUSY/…) propagates: an unreadable registry
+ * must never look empty, or the next write would clobber the real one.
+ */
 export function readRegistry(cwd: string): RegistryFile {
 	let parsed: RegistryFile;
 	try {
 		parsed = JSON.parse(readFileSync(registryFile(cwd), "utf8")) as RegistryFile;
-	} catch {
-		// Missing or corrupt — start clean (a corrupt file is overwritten by
-		// the next write; that was always the deal).
+	} catch (err) {
+		if (!isAbsentOrCorruptRegistry(err)) throw err;
 		foreignRegistry = null;
 		return { version: REGISTRY_VERSION, jobs: {} };
 	}
@@ -119,6 +122,12 @@ export function readRegistry(cwd: string): RegistryFile {
 	}
 	foreignRegistry = null;
 	return { version: REGISTRY_VERSION, jobs: {} };
+}
+
+/** ENOENT (no file yet) or JSON SyntaxError → tolerable as a fresh registry; transient I/O errors are not. */
+export function isAbsentOrCorruptRegistry(err: unknown): boolean {
+	if (err instanceof SyntaxError) return true;
+	return (err as NodeJS.ErrnoException | null)?.code === "ENOENT";
 }
 
 /** Last foreign registry version seen on disk; null = writable ours. */

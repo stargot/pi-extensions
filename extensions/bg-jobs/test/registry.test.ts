@@ -8,6 +8,7 @@ import {
 	ensureGitExcluded,
 	foreignRegistryVersion,
 	insertJob,
+	isAbsentOrCorruptRegistry,
 	jobsDir,
 	mutateJob,
 	newJobId,
@@ -54,6 +55,41 @@ test("readRegistry: missing/corrupt file → fresh registry, correct version", (
 		mkdirSync(join(dir, ".pi", "jobs"), { recursive: true });
 		writeFileSync(registryFile(dir), "{ not json", "utf8");
 		assert.deepEqual(readRegistry(dir), { version: 1, jobs: {} }, "corrupt file tolerated");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+function errnoError(code: string): Error {
+	return Object.assign(new Error(`${code}: trouble`), { code });
+}
+
+test("isAbsentOrCorruptRegistry: ENOENT/JSON SyntaxError yes, transient I/O errors no", () => {
+	assert.equal(isAbsentOrCorruptRegistry(errnoError("ENOENT")), true, "no file");
+	assert.equal(isAbsentOrCorruptRegistry(new SyntaxError("Unexpected token 'n'")), true, "corrupt JSON");
+	assert.equal(isAbsentOrCorruptRegistry(errnoError("EACCES")), false, "antivirus/ACL lock");
+	assert.equal(isAbsentOrCorruptRegistry(errnoError("EBUSY")), false, "file held by another process");
+	assert.equal(isAbsentOrCorruptRegistry(errnoError("EPERM")), false);
+	assert.equal(isAbsentOrCorruptRegistry("junk"), false, "non-error junk is not tolerable");
+});
+
+test("readRegistry: non-ENOENT I/O error propagates — and mutations refuse, so data survives", async () => {
+	const dir = tmpProject();
+	try {
+		writeRegistry(dir, { version: 1, jobs: { b12ab34c: record() } });
+		// jobs.json подменён каталогом: чтение падает не-ENOENT ошибкой
+		// (EISDIR/EPERM/EBUSY — не «нет файла» и не «битый JSON»).
+		rmSync(registryFile(dir));
+		mkdirSync(registryFile(dir));
+		assert.throws(
+			() => readRegistry(dir),
+			(err: NodeJS.ErrnoException) => err.code !== "ENOENT",
+		);
+		assert.equal(foreignRegistryVersion(), null, "failed read does not flip foreign/read-only mode");
+		// Мутации идут через readRegistry → отказывают целиком; пустой реестр
+		// не возвращён, перезаписи файла не будет.
+		await assert.rejects(() => insertJob(dir, record({ id: "ffffffff" })));
+		await assert.rejects(() => mutateJob(dir, "b12ab34c", { pid: 1 }));
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

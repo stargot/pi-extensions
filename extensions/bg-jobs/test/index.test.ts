@@ -585,3 +585,135 @@ test("orphaned survivor: resurrects to running on session_start, killable via bg
 		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
+
+test("session_shutdown(quit): settles only this session's jobs; foreign session jobs untouched", {
+	skip: !havePwsh,
+}, async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-bgjobs-quit-scope-"));
+	const pids: number[] = [];
+	try {
+		const { insertJob } = await import("../registry.ts");
+		const { spawnJob, isPidAlive } = await import("../runner.ts");
+		const mk = async (id: string, name: string, jobSession: string, surviveExit: boolean) => {
+			const child = spawnJob({
+				id,
+				command: `Start-Sleep -Seconds 60`,
+				cwd: dir,
+				logFile: join(dir, ".pi", "jobs", id, "output.log"),
+			});
+			if (child.pid != null) pids.push(child.pid);
+			await insertJob(dir, {
+				id,
+				name,
+				command: "Start-Sleep -Seconds 60",
+				cwd: dir,
+				shell: "pwsh",
+				pid: child.pid ?? null,
+				status: "running",
+				exitCode: null,
+				startedAt: new Date().toISOString(),
+				endedAt: null,
+				outputPath: `.pi/jobs/${id}/output.log`,
+				origin: "user",
+				wake: false,
+				timeoutSeconds: null,
+				sessionId: jobSession,
+				surviveExit,
+			});
+		};
+		await mk("aaaaaaaa", "own survivor", "sess-1", true);
+		await mk("bbbbbbbb", "own killable", "sess-1", false);
+		await mk("cccccccc", "foreign killable", "sess-2", false);
+		await mk("dddddddd", "foreign survivor", "sess-2", true);
+
+		const fake = fakePi(dir, { sessionId: "sess-1" });
+		bgJobs(fake.pi);
+		await fake.fireStart();
+		await fake.fireShutdown("quit");
+
+		const reg = readRegistry(dir);
+		assert.equal(reg.jobs["aaaaaaaa"]?.status, "orphaned", "own surviveExit job → orphaned");
+		assert.equal(reg.jobs["bbbbbbbb"]?.status, "killed", "own running job → killed at quit");
+		assert.equal(reg.jobs["cccccccc"]?.status, "running", "foreign running job NOT killed");
+		assert.equal(reg.jobs["cccccccc"]?.endedAt, null, "foreign job has no terminal bookkeeping");
+		assert.equal(reg.jobs["dddddddd"]?.status, "running", "foreign surviveExit job NOT orphaned");
+		assert.equal(reg.jobs["dddddddd"]?.endedAt, null);
+		await until(() => !isPidAlive(reg.jobs["bbbbbbbb"]?.pid), 5000);
+		assert.ok(!isPidAlive(reg.jobs["bbbbbbbb"]?.pid), "own process is dead");
+		assert.ok(isPidAlive(reg.jobs["cccccccc"]?.pid), "foreign process still alive after our quit");
+	} finally {
+		const { killProcessTree } = await import("../../shared/proctree.ts");
+		const { isPidAlive } = await import("../runner.ts");
+		for (const pid of pids) {
+			if (pid != null && isPidAlive(pid)) killProcessTree(pid);
+		}
+		await until(() => pids.every((p) => !isPidAlive(p)), 5000);
+		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	}
+});
+
+test("bg_run: soft limit on running jobs — refuses with count/ids/hint, admits after a slot frees", {
+	skip: !havePwsh,
+}, async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-bgjobs-limit-"));
+	try {
+		const { insertJob, transitionJob } = await import("../registry.ts");
+		for (let i = 0; i < 8; i++) {
+			const id = `f000000${i}`;
+			await insertJob(dir, {
+				id,
+				name: `filler ${i}`,
+				command: "sleep",
+				cwd: dir,
+				shell: "pwsh",
+				// Живой PID (свой процесс) — watcher не пометит филлер orphaned.
+				pid: process.pid,
+				status: "running",
+				exitCode: null,
+				startedAt: new Date().toISOString(),
+				endedAt: null,
+				outputPath: `.pi/jobs/${id}/output.log`,
+				origin: "user",
+				wake: false,
+				timeoutSeconds: null,
+				sessionId: "sess-1",
+				surviveExit: false,
+			});
+		}
+		const fake = fakePi(dir, { sessionId: "sess-1" });
+		bgJobs(fake.pi);
+		await fake.fireStart();
+
+		await assert.rejects(
+			() =>
+				getTool(fake, "bg_run").execute(
+					"t",
+					{ name: "one too many", command: `Write-Output hi` },
+					undefined,
+					undefined,
+					fake.ctx,
+				),
+			(err: Error) => {
+				assert.match(err.message, /8 jobs already running \(soft limit 8\)/);
+				assert.match(err.message, /f0000000 "filler 0"/, "ids and names of the running jobs listed");
+				assert.match(err.message, /bg_status/);
+				assert.match(err.message, /bg_kill/);
+				return true;
+			},
+		);
+		assert.equal(Object.keys(readRegistry(dir).jobs).length, 8, "refused launch wrote nothing to the registry");
+
+		await transitionJob(dir, "f0000003", "completed", 0);
+		const ok = await getTool(fake, "bg_run").execute(
+			"t",
+			{ name: "fits now", command: `Write-Output hi` },
+			undefined,
+			undefined,
+			fake.ctx,
+		);
+		assert.match(ok.content[0]?.text ?? "", /Background job started\./);
+		await until(() => readRegistry(dir).jobs[ok.details.id]?.status === "completed");
+	} finally {
+		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	}
+});

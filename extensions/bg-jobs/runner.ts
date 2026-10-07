@@ -141,13 +141,31 @@ export function spawnJob(spec: SpawnSpec): ChildProcess {
 	// Append mode: a job id is never reused, "a" only guards odd recreates.
 	const fd = openSync(spec.logFile, "a");
 	const { file, args } = buildShellInvocation(spec.command);
-	const child = spawn(file, args, {
-		cwd: spec.cwd,
-		windowsHide: true, // hidden console, no window flash per job
-		stdio: ["ignore", fd, fd], // stdout and stderr share the durable log
-	});
-	// The child got a dup of the fd; drop the parent's copy.
+	let child: ChildProcess;
+	try {
+		child = spawn(file, args, {
+			cwd: spec.cwd,
+			windowsHide: true, // hidden console, no window flash per job
+			stdio: ["ignore", fd, fd], // stdout and stderr share the durable log
+		});
+	} catch (err) {
+		try {
+			closeSync(fd);
+		} catch {
+			// Already closed.
+		}
+		throw err;
+	}
+	// The child got a dup of the fd; drop the parent's copy — on "spawn" and,
+	// when the spawn itself failed (e.g. pwsh not found), on "error".
 	child.once("spawn", () => {
+		try {
+			closeSync(fd);
+		} catch {
+			// Already closed.
+		}
+	});
+	child.once("error", () => {
 		try {
 			closeSync(fd);
 		} catch {

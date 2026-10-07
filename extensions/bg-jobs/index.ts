@@ -15,8 +15,9 @@
  * реестре на диске
  * (.pi/jobs/jobs.json в проекте), watcher тикает раз в секунду и восстанавливает
  * картину из реестра + PID-проверок — после /reload, после краша watcher'а,
- * после рестарта pi. Выход pi по умолчанию убивает живые джобы (kill дерева
- * через shared/proctree), при surviveExit — оставляет сирот с записью PID.
+ * после рестарта pi. Выход pi по умолчанию убивает живые джобы своей сессии
+ * (kill дерева через shared/proctree), при surviveExit — оставляет сирот с
+ * записью PID.
  *
  * БЕЗ песочницы: команда исполняется как локальный процесс с правами
  * пользователя и его доступами — тот же уровень доверия, что обычный bash-тул.
@@ -50,6 +51,8 @@ import { isPidAlive, readLogTail, shouldTimeout, spawnJob, verifyKillTarget, typ
 const WATCHER_TICK_MS = 1000;
 const DEFAULT_TAIL_CHARS = 4096;
 const MAX_TAIL_CHARS = 65536;
+/** Soft cap on concurrently running jobs; bg_run refuses above it. */
+const MAX_RUNNING_JOBS = 8;
 // Хвост в follow-up ходе модели: exit code + хвост ≤ 2К + путь к полному логу.
 const WAKE_TAIL_CHARS = 2048;
 const WIDGET_KEY = "bg-jobs";
@@ -113,7 +116,11 @@ export default function bgJobsExtension(pi: ExtensionAPI) {
 		ensureGitExcluded(projectCwd);
 		// Подчистить *.tmp от краша между write и rename (мусор по именованию).
 		cleanTempFiles(projectCwd);
-		adoptRegistry();
+		try {
+			adoptRegistry();
+		} catch (err) {
+			reportRuntime(`bg-jobs: registry read failed at startup — adoption skipped: ${msg(err)}`, "warning");
+		}
 		// Чужая версия реестра: предупреждение и read-only сессия (файл
 		// сохранён, архивная копия в jobs.json.bak).
 		const foreignVersion = foreignRegistryVersion();
@@ -133,30 +140,39 @@ export default function bgJobsExtension(pi: ExtensionAPI) {
 			latestCtx.ui.setWidget(WIDGET_KEY, undefined);
 		}
 		if (event.reason === "quit" && projectCwd) {
-			// Выход pi: идемпотентный kill всех running, кроме surviveExit.
-			// /reload, /new, resume и fork НЕ убивают — новый session_start
-			// подхватывает реестр по PID (спека §4.6, §8).
-			for (const job of Object.values(readRegistry(projectCwd).jobs)) {
-				if (job.status !== "running") continue;
-				if (job.surviveExit) {
-					transitionJobSync(projectCwd, job.id, "orphaned", null);
-					continue;
-				}
-				if (job.pid != null) {
-					// Guard переиспользованного PID: tree-kill только по своему
-					// pwsh; живой чужой процесс не трогаем, джоб — orphaned.
-					const check = verifyKillTarget(job.pid);
-					if (check === "reused") {
+			// Выход pi: идемпотентный kill running-джобов СВОЕЙ сессии, кроме
+			// surviveExit; чужие сессии не трогаются вовсе. /reload, /new, resume
+			// и fork НЕ убивают — новый session_start подхватывает реестр по PID
+			// (спека §4.6, §8).
+			try {
+				for (const job of Object.values(readRegistry(projectCwd).jobs)) {
+					if (job.status !== "running") continue;
+					if (job.sessionId !== sessionId) continue;
+					if (job.surviveExit) {
 						transitionJobSync(projectCwd, job.id, "orphaned", null);
-						reportRuntime(
-							`bg "${job.name}" (${job.id}): pid ${job.pid} now belongs to another process (not pwsh) — kill refused at shutdown, job marked orphaned.`,
-							"warning",
-						);
 						continue;
 					}
-					if (check === "safe") killProcessTree(job.pid);
+					if (job.pid != null) {
+						// Guard переиспользованного PID: tree-kill только по своему
+						// pwsh; живой чужой процесс не трогаем, джоб — orphaned.
+						const check = verifyKillTarget(job.pid);
+						if (check === "reused") {
+							transitionJobSync(projectCwd, job.id, "orphaned", null);
+							reportRuntime(
+								`bg "${job.name}" (${job.id}): pid ${job.pid} now belongs to another process (not pwsh) — kill refused at shutdown, job marked orphaned.`,
+								"warning",
+							);
+							continue;
+						}
+						if (check === "safe") killProcessTree(job.pid);
+					}
+					transitionJobSync(projectCwd, job.id, "killed", null);
 				}
-				transitionJobSync(projectCwd, job.id, "killed", null);
+			} catch (err) {
+				reportRuntime(
+					`bg-jobs: registry read failed at shutdown — running jobs left untouched: ${msg(err)}`,
+					"warning",
+				);
 			}
 		}
 		children = new Map();
@@ -628,6 +644,13 @@ export default function bgJobsExtension(pi: ExtensionAPI) {
 		ctx: ExtensionContext,
 	): Promise<JobRecord> {
 		ensureSession(ctx);
+		const running = Object.values(readRegistry(projectCwd).jobs).filter((j) => j.status === "running");
+		if (running.length >= MAX_RUNNING_JOBS) {
+			throw new Error(
+				`bg_run refused: ${running.length} jobs already running (soft limit ${MAX_RUNNING_JOBS}): ` +
+					`${running.map((j) => `${j.id} "${j.name}"`).join(", ")}. Review with bg_status, free slots with bg_kill.`,
+			);
+		}
 		const spawnCwd = opts.cwd ? (isAbsolute(opts.cwd) ? opts.cwd : resolve(projectCwd, opts.cwd)) : projectCwd;
 		if (!existsSync(spawnCwd)) throw new Error(`cwd does not exist: ${spawnCwd}`);
 		// Таймаут 0/отрицательный убил бы джоб мгновенно после спавна — clamp.
@@ -852,7 +875,12 @@ export default function bgJobsExtension(pi: ExtensionAPI) {
 	function updateWidget(): void {
 		const ctx = latestCtx;
 		if (!ctx || ctx.mode !== "tui" || !projectCwd) return;
-		const jobs = Object.values(readRegistry(projectCwd).jobs);
+		let jobs: JobRecord[];
+		try {
+			jobs = Object.values(readRegistry(projectCwd).jobs);
+		} catch {
+			return;
+		}
 		const running = jobs.filter((j) => j.status === "running");
 		const fresh = jobs.filter((j) => unseen.has(j.id));
 		if (running.length === 0 && fresh.length === 0) {
