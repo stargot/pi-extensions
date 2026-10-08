@@ -101,7 +101,7 @@ export interface BatchResult {
 }
 
 export function emptyResult(agent: string, task: string): BatchResult {
-	return { agent, task, exitCode: 0, messages: [], stderr: "", usage: emptyUsage() };
+	return { agent, task, exitCode: -1, messages: [], stderr: "", usage: emptyUsage() };
 }
 
 /** Exit code -1 marks a placeholder; `queued` distinguishes not-yet-started. */
@@ -115,6 +115,7 @@ export function isQueued(r: BatchResult): boolean {
 }
 
 export function isFailedResult(r: BatchResult): boolean {
+	if (r.exitCode === -1) return false;
 	return r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted" || r.stopReason === "timeout";
 }
 

@@ -73,8 +73,24 @@ test("ingestBatchEvent: captures errors and failure detection", () => {
 	ingestBatchEvent(r, assistantEvent({ stopReason: "error", errorMessage: "boom" }));
 	assert.equal(r.stopReason, "error");
 	assert.equal(r.errorMessage, "boom");
-	assert.equal(isFailedResult(r), true);
+	assert.equal(isFailedResult(r), false, "exitCode -1 is in flight — no verdict yet");
+	r.exitCode = 0;
+	assert.equal(isFailedResult(r), true, "closed run with stopReason=error is a failure");
 	assert.equal(resultOutput(r), "boom");
+});
+
+test("emptyResult starts in flight: running, not queued, no verdict", () => {
+	const r = emptyResult("a", "t");
+	assert.equal(r.exitCode, -1);
+	assert.equal(isRunning(r), true);
+	assert.equal(isQueued(r), false);
+	assert.equal(isFailedResult(r), false, "no exit code yet — live cards must not render done/failed");
+	assert.equal(resultOutput(r), "(no output)");
+	r.exitCode = 0;
+	assert.equal(isRunning(r), false);
+	assert.equal(isFailedResult(r), false);
+	r.exitCode = 3;
+	assert.equal(isFailedResult(r), true);
 });
 
 test("resultOutput fallbacks: stderr, then no-output", () => {
@@ -273,6 +289,49 @@ test("runHeadlessChild: spawns fixture, parses events, pre-creates session, clea
 		// The --append-system-prompt temp file must be cleaned up.
 		const leftovers = readdirSync(sessionsRoot).filter((f) => f.startsWith(".identity-"));
 		assert.equal(leftovers.length, 0, "identity temp file removed after run");
+	} finally {
+		process.argv[1] = original;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("runHeadlessChild: live events stay running until close, then real exit code", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-batch-live-"));
+	const fixture = join(dir, "slow.js");
+	writeFileSync(
+		fixture,
+		[
+			`console.log(JSON.stringify({type:"message_end", message:{role:"assistant", content:[{type:"text",text:"step"}], usage:{input:1,output:1,cost:{total:0.001}}}}));`,
+			`setTimeout(() => {`,
+			`\tconsole.log(JSON.stringify({type:"message_end", message:{role:"assistant", content:[{type:"text",text:"FINAL"}], stopReason:"end", usage:{input:1,output:1,cost:{total:0.001}}}}));`,
+			`\tprocess.exit(0);`,
+			`}, 400);`,
+		].join("\n"),
+		"utf8",
+	);
+	const original = process.argv[1];
+	try {
+		process.argv[1] = fixture;
+		const snapshots: Array<{ running: boolean; queued: boolean; failed: boolean }> = [];
+		const result = await runHeadlessChild({
+			agentName: "live",
+			agentLabel: "live",
+			task: "t",
+			cwd: dir,
+			defaultCwd: dir,
+			sessionsRoot: join(dir, "sessions"),
+			onEvent: (r) => snapshots.push({ running: isRunning(r), queued: isQueued(r), failed: isFailedResult(r) }),
+		});
+		assert.ok(snapshots.length >= 2, `mid-run events captured (${snapshots.length})`);
+		for (const s of snapshots) {
+			assert.equal(s.running, true, "live card must render as running, not done");
+			assert.equal(s.queued, false);
+			assert.equal(s.failed, false, "live card must not render a failure verdict");
+		}
+		assert.equal(result.exitCode, 0, "close still writes the real exit code");
+		assert.equal(isRunning(result), false);
+		assert.equal(isFailedResult(result), false);
+		assert.equal(finalOutput(result.messages), "FINAL");
 	} finally {
 		process.argv[1] = original;
 		rmSync(dir, { recursive: true, force: true });

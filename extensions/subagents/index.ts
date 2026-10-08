@@ -429,7 +429,9 @@ function loadHerdr(): Promise<typeof import("./herdr.ts")> {
  * sidecar watcher remains the source of truth.
  */
 function armDoneWaiter(running: RunningSubagent): void {
-	if (activeBackend() !== "herdr" || !running.autoExit) {
+	const def = running.agentDef;
+	const canSpawnChildren = !!(def?.subagents && def.subagents.length > 0);
+	if (activeBackend() !== "herdr" || !running.autoExit || canSpawnChildren) {
 		// No done-waiter timer to piggyback on (interactive child without
 		// auto-exit — herdr backend is guaranteed here, labelPending is never
 		// set elsewhere): the deferred re-label gets a standalone one-shot
@@ -687,40 +689,45 @@ function observeActivity(running: RunningSubagent, now: number): void {
 	}
 }
 
+function completeFromSidecars(running: RunningSubagent): boolean {
+	if (runningSubagents.get(running.id) !== running) return false;
+	if (existsSync(running.exitSidecarFile)) {
+		const verdict = classifyExitSidecar(readDoneFile(running.exitSidecarFile));
+		if (verdict.kind === "cancelled") {
+			// The child honored the cancel flag and exited — not an error.
+			completeSubagent(running, { exitCode: 1, cancelled: true });
+			return true;
+		}
+		const errorMessage =
+			verdict.kind === "error" && verdict.errorMessage
+				? verdict.errorMessage
+				: "Subagent exited with stopReason=error.";
+		completeSubagent(running, { exitCode: 1, errorMessage });
+		return true;
+	}
+	if (existsSync(running.doneFile)) {
+		let exitCode = 0;
+		try {
+			exitCode = Number.parseInt(readDoneFile(running.doneFile), 10);
+			if (!Number.isFinite(exitCode)) exitCode = 0;
+		} catch {
+			exitCode = 0;
+		}
+		completeSubagent(running, { exitCode });
+		return true;
+	}
+	return false;
+}
+
 function pollTick(): void {
 	if (runningSubagents.size === 0) return;
 	const now = Date.now();
 	const alive = listPaneIds();
+	if (alive.size === 0) return;
 
 	for (const running of Array.from(runningSubagents.values())) {
 		// 1. Fast path: launcher-written sidecar with the exit code.
-		if (existsSync(running.doneFile)) {
-			let exitCode = 0;
-			try {
-				exitCode = Number.parseInt(readDoneFile(running.doneFile), 10);
-				if (!Number.isFinite(exitCode)) exitCode = 0;
-			} catch {
-				exitCode = 0;
-			}
-			completeSubagent(running, { exitCode });
-			continue;
-		}
-
-		// 2. Error/cancel sidecar written by the child extension.
-		if (existsSync(running.exitSidecarFile)) {
-			const verdict = classifyExitSidecar(readDoneFile(running.exitSidecarFile));
-			if (verdict.kind === "cancelled") {
-				// The child honored the cancel flag and exited — not an error.
-				completeSubagent(running, { exitCode: 1, cancelled: true });
-				continue;
-			}
-			const errorMessage =
-				verdict.kind === "error" && verdict.errorMessage
-					? verdict.errorMessage
-					: "Subagent exited with stopReason=error.";
-			completeSubagent(running, { exitCode: 1, errorMessage });
-			continue;
-		}
+		if (completeFromSidecars(running)) continue;
 
 		// 3. Native done signal (ADR-2): the background `herdr agent wait` saw
 		// a terminal settled state, but no sidecar landed — the launcher's
@@ -1289,57 +1296,59 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					}
 					await sleep(INTERRUPT_SETTLE_MS);
 				}
-				let delivery: DeliveryResult;
-				try {
-					delivery = deliverMessage(running.paneId, message);
-				} catch {
-					// Pane died during the settle sleep — the next pollTick
-					// completes the entry; a steer into a dead pane surfaces as
-					// this readable error, not a raw CLI failure.
-					throw new Error(
-						`Could not deliver the message: pane of subagent "${name}" is already gone (it finished or crashed).`,
-					);
-				}
-				if (!delivery.ok) {
-					// Close-race (R10): herdr refused with agent_not_found — the
-					// subagent finished while the steer was in flight. "Pane
-					// closed" is a normal final, not a failure: report it as a
-					// plain tool result (no error), pointing at the completion
-					// report and the resume path, so the model neither retries
-					// the steer nor treats the subagent as lost.
-					if (delivery.outcome === "not_found") {
-						return {
-							content: [
-								{
-									type: "text",
-									text:
-										`Subagent "${name}" has already finished — no live agent to steer. ` +
-										`Its completion result still arrives as a steer message if it just finished; ` +
-										`call subagent_message again with the same name to resume it from its saved session.`,
-								},
-							],
-							details: { name, status: "finished" },
-						};
+				if (!completeFromSidecars(running)) {
+					let delivery: DeliveryResult;
+					try {
+						delivery = deliverMessage(running.paneId, message);
+					} catch {
+						// Pane died during the settle sleep — the next pollTick
+						// completes the entry; a steer into a dead pane surfaces as
+						// this readable error, not a raw CLI failure.
+						throw new Error(
+							`Could not deliver the message: pane of subagent "${name}" is already gone (it finished or crashed).`,
+						);
 					}
-					// herdr refused or lost the delivery (ADR-1): the structured
-					// outcome names the story — surface it as a readable tool error,
-					// never as a raw herdr JSON envelope.
-					throw new Error(describePromptFailure(delivery.outcome ?? "error", name));
+					if (!delivery.ok) {
+						// Close-race (R10): herdr refused with agent_not_found — the
+						// subagent finished while the steer was in flight. "Pane
+						// closed" is a normal final, not a failure: report it as a
+						// plain tool result (no error), pointing at the completion
+						// report and the resume path, so the model neither retries
+						// the steer nor treats the subagent as lost.
+						if (delivery.outcome === "not_found") {
+							return {
+								content: [
+									{
+										type: "text",
+										text:
+											`Subagent "${name}" has already finished — no live agent to steer. ` +
+											`Its completion result still arrives as a steer message if it just finished; ` +
+											`call subagent_message again with the same name to resume it from its saved session.`,
+									},
+								],
+								details: { name, status: "finished" },
+							};
+						}
+						// herdr refused or lost the delivery (ADR-1): the structured
+						// outcome names the story — surface it as a readable tool error,
+						// never as a raw herdr JSON envelope.
+						throw new Error(describePromptFailure(delivery.outcome ?? "error", name));
+					}
+					running.activity.lastChangeAt = Date.now();
+					running.activity.stalled = false;
+					updateWidget();
+					return {
+						content: [
+							{
+								type: "text",
+								text: doInterrupt
+									? `Interrupted "${name}"'s current turn and delivered the message; it starts working on it now.`
+									: `Message delivered to running subagent "${name}". It picks this up at its next turn boundary. If it exits, its result still arrives as a steer message.`,
+							},
+						],
+						details: { name, status: "steered", ...(doInterrupt ? { interrupted: true } : {}) },
+					};
 				}
-				running.activity.lastChangeAt = Date.now();
-				running.activity.stalled = false;
-				updateWidget();
-				return {
-					content: [
-						{
-							type: "text",
-							text: doInterrupt
-								? `Interrupted "${name}"'s current turn and delivered the message; it starts working on it now.`
-								: `Message delivered to running subagent "${name}". It picks this up at its next turn boundary. If it exits, its result still arrives as a steer message.`,
-						},
-					],
-					details: { name, status: "steered", ...(doInterrupt ? { interrupted: true } : {}) },
-				};
 			}
 
 			const registry = readNameRegistry(sctx.registryFile) as Record<string, RegistryEntry & { paneId?: string }>;
@@ -1427,6 +1436,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				writeFileSync(cancelSidecarPath(running.sessionFile), JSON.stringify({ requestedAt: Date.now() }), "utf8");
 			} catch {
 				// Best effort — Esc/Ctrl+C plus the grace-period kill still stop it.
+			}
+			if (existsSync(running.doneFile) || existsSync(running.exitSidecarFile)) {
+				try {
+					rmSync(cancelSidecarPath(running.sessionFile), { force: true });
+				} catch {}
 			}
 			// The pane can die between the two key sends (cancel sidecar honored
 			// mid-grace-period) — a send into a dead pane must not surface the
