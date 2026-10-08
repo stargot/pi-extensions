@@ -32,14 +32,22 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { execFileSync, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.ts";
+import {
+	buildIdentityFile,
+	buildLaunchPlan,
+	buildTaskFile,
+	dispatchParentModel,
+	resolveAgentDef,
+	safeFilePart,
+	subagentId,
+} from "./launch-plan.ts";
 import { killProcessTree } from "../shared/proctree.ts";
-import { activityLabel, readActivityState, type SubagentActivityState } from "./activity.ts";
+import { activityLabel, readActivityState } from "./activity.ts";
 import {
 	displayItems,
 	elapsedOf,
@@ -72,7 +80,7 @@ import {
 	type BatchResult,
 } from "./batch.ts";
 import { renderLauncherPs1, type LauncherSpec } from "./launcher.ts";
-import { formatUsage, summarizeSessionFile } from "./session-read.ts";
+import { summarizeSessionFile } from "./session-read.ts";
 import { readNameRegistry, registryPath, uniqueName, upsertName, type RegistryEntry } from "./registry.ts";
 import {
 	activeBackend,
@@ -84,14 +92,12 @@ import {
 	labelPane,
 	listPaneIds,
 	paneExists,
-	parseSentinel,
 	readScreenTail,
 	runScriptInPane,
 	sendInterrupt,
 } from "./mux.ts";
 import {
 	cancelSidecarPath,
-	classifyExitSidecar,
 	describePromptFailure,
 	fmtElapsed,
 	parseSpawnAllowlist,
@@ -108,46 +114,11 @@ import {
 	verdictChip,
 } from "./render.ts";
 import { readRunningWorkers, runningIndexPath } from "./running-index.ts";
+import { createSubagentWatcher, type RunningSubagent } from "./watcher.ts";
 
-const POLL_INTERVAL_MS = 1000;
-// Five minutes of ZERO events — streaming deltas and tool output count as
-// events (activity heartbeats), so a healthy long model stream no longer
-// trips this. Only a truly silent pane does.
-const STALLED_AFTER_MS = 5 * 60_000;
-// After subagent_cancel, the child should honor the flag within ~1s; if the
-// pane is still there after this grace period, force-close it.
-const CANCEL_KILL_AFTER_MS = 10_000;
 // Esc → pi aborts its turn; give it a moment to settle before typing the
 // steer message into the fresh prompt.
 const INTERRUPT_SETTLE_MS = 1200;
-// ADR-2: one background `herdr agent wait` per auto-exit subagent, armed with
-// a delay from the pane spawn. Pi registers with herdr within ~2–5s of boot
-// (probe: visible at +3s); a waiter aimed at a not-yet-registered pane fails
-// fast with agent_not_found (exit 1 — harmless, no false done), so the delay
-// only has to cover a slow boot: 10s does, with margin.
-const NATIVE_WAITER_DELAY_MS = 10_000;
-// Deferred re-label ceiling (ADR-3): the +10s re-label can still miss (slow
-// boot), so pollTick retries the rename while labelPending — then
-// surrenders for good here. Renaming stays cosmetics (all addressing goes
-// through pane ids); the ceiling just bounds how long the cosmetics retry.
-const LABEL_PENDING_MAX_MS = 60_000;
-// R10: pollTick re-label retry cadence. Every failed rename makes herdr
-// print a raw error envelope at the calling pane (agent_not_found while the
-// record is not up — the R9 leak), so the safety net retries at a 10s
-// cadence, not once per 1s tick: 6 attempts inside the 60s ceiling are
-// plenty for a slow boot, and a record that never appears stops being
-// hammered.
-const LABEL_RETRY_INTERVAL_MS = 10_000;
-// A native done flag older than this means the launcher sidecars are truly
-// lost, not "pi just exited, .done is mid-write" — the grace re-opens that
-// race so the sidecar path (step 1) still wins whenever it can.
-const NATIVE_DONE_GRACE_MS = 5000;
-// Settled states the done-waiter fires on (probe, herdr 0.9.1-preview): pi
-// never reported "unknown", but a wedged/unclassifiable agent should still
-// end the wait; "done" (turn finished) is the only state pi reaches before
-// its record is removed on exit. --until is repeatable, one flag per state.
-const NATIVE_DONE_UNTIL = ["done", "unknown"];
-const MAX_SUMMARY_CHARS = 2000;
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DONE_EXTENSION_PATH = join(MODULE_DIR, "subagent-done.ts");
 
@@ -178,45 +149,6 @@ function extensionPathsForTools(tools: string[] | undefined): string[] {
 
 // ── Types ──
 
-interface ActivityObservation {
-	state: SubagentActivityState | null;
-	lastChangeAt: number;
-	stalled: boolean;
-}
-
-interface RunningSubagent {
-	id: string;
-	name: string;
-	agentName: string;
-	task: string;
-	paneId: string;
-	startTime: number;
-	sessionFile: string;
-	activityFile: string;
-	doneFile: string;
-	exitSidecarFile: string;
-	autoExit: boolean;
-	agentDef: AgentDef | null;
-	activity: ActivityObservation;
-	/** Set by subagent_cancel — armed the pane force-close grace period. */
-	cancelRequested: boolean;
-	cancelStartedAt?: number;
-	/** Set when the herdr done-waiter observed a terminal agent state (ADR-2). */
-	nativeDoneAt?: number;
-	/** Background `herdr agent wait` child and its pending arming timer (herdr backend, auto-exit only). */
-	doneWaiter?: ChildProcess;
-	doneWaiterTimer?: ReturnType<typeof setTimeout>;
-	/**
-	 * Herdr only: the split-time label inside createSubagentPane reliably
-	 * misses (the agent record appears only when the child registers), so a
-	 * deferred re-label — the +10s timer, with pollTick retrying to
-	 * LABEL_PENDING_MAX_MS — still has to apply it.
-	 */
-	labelPending?: boolean;
-	/** Last deferred re-label attempt (any outcome) — paces pollTick retries (R10). */
-	labelLastAttemptAt?: number;
-}
-
 interface SpawnParams {
 	agent: string;
 	task: string;
@@ -229,18 +161,28 @@ interface SpawnParams {
 
 let latestPi: ExtensionAPI | null = null;
 let latestCtx: ExtensionContext | null = null;
-let runningSubagents = new Map<string, RunningSubagent>();
 let columnPanes: string[] = [];
-let tickTimer: ReturnType<typeof setInterval> | null = null;
-let pollAbort: AbortController | null = null;
 let cachedPiPath: string | null = null;
 
-/** Spawn/rename state shared with subagent-done.ts via a process-global. */
-function publishRunningChildrenCount(): void {
-	(globalThis as Record<symbol, unknown>)[Symbol.for("pi-subagents/running-children-count")] = () =>
-		runningSubagents.size;
-}
-publishRunningChildrenCount();
+const watcher = createSubagentWatcher({
+	now: () => Date.now(),
+	existsSync,
+	readFileSync: (path, options) => readFileSync(path, options),
+	rmSync,
+	readActivityState,
+	listPaneIds,
+	closePane,
+	readScreenTail,
+	activeBackend,
+	loadHerdr,
+	sendMessage: (message, opts) => latestPi?.sendMessage(message, opts),
+	appendTraceCard: (entry) => appendTraceCard(latestPi, entry),
+	summarizeSessionFile,
+	forgetPane: (paneId) => {
+		columnPanes = columnPanes.filter((id) => id !== paneId);
+	},
+	updateWidget: () => updateWidget(),
+});
 
 function allowedAgentsInChild(): Set<string> | null {
 	return parseSpawnAllowlist(process.env.PI_SUBAGENT_ALLOWED);
@@ -266,16 +208,6 @@ function appendTraceCard(
 	} catch {
 		// Optional integration.
 	}
-}
-
-function safeFilePart(s: string): string {
-	const cleaned = s
-		.toLowerCase()
-		.replace(/[^a-z0-9\s-]/g, "")
-		.replace(/\s+/g, "-")
-		.replace(/-+/g, "-")
-		.replace(/^-|-$/g, "");
-	return cleaned || "subagent";
 }
 
 /** Resolve the pi CLI shim (prefer pi.cmd) for launcher scripts. */
@@ -304,22 +236,6 @@ function getArtifactDir(ctx: ExtensionContext): string {
 
 function subagentSessionsRoot(): string {
 	return join(getAgentDir(), "sessions", "subagents");
-}
-
-function newTextTaskFile(artifactDir: string, name: string, content: string): string {
-	const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-	const path = join(artifactDir, "context", `${safeFilePart(name)}-${timestamp}.md`);
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, content, "utf8");
-	return path;
-}
-
-/** Identity is deterministic per agent name — respawn/resume overwrite, no file spam. */
-function newIdentityFile(artifactDir: string, name: string, body: string): string {
-	const path = join(artifactDir, "context", `${safeFilePart(name)}-identity.md`);
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, body, "utf8");
-	return path;
 }
 
 function taskWrapper(def: AgentDef | null, task: string): string {
@@ -357,13 +273,13 @@ interface WidgetRow {
 
 function updateWidget(): void {
 	if (!latestCtx?.hasUI) return;
-	if (runningSubagents.size === 0) {
+	if (watcher.running.size === 0) {
 		latestCtx.ui.setWidget("subagents", undefined);
 		return;
 	}
 	const now = Date.now();
 	const rows: WidgetRow[] = [];
-	for (const r of runningSubagents.values()) {
+	for (const r of watcher.running.values()) {
 		let phase = "starting";
 		let detail = "";
 		if (r.cancelRequested) {
@@ -383,7 +299,7 @@ function updateWidget(): void {
 		const box = new Box(1, 0, (text) => text);
 		const header =
 			theme.fg("muted", "Subagents — ") +
-			theme.fg("accent", String(runningSubagents.size)) +
+			theme.fg("accent", String(watcher.running.size)) +
 			theme.fg("muted", " running");
 		const lines = rows.map((row) => {
 			// Bullet carries the phase: active/cancelling spin, stalled warns.
@@ -412,406 +328,6 @@ let herdrModule: Promise<typeof import("./herdr.ts")> | null = null;
 function loadHerdr(): Promise<typeof import("./herdr.ts")> {
 	herdrModule ??= import("./herdr.ts");
 	return herdrModule;
-}
-
-/**
- * Arm the native done-waiter for a subagent (ADR-2): one background `herdr
- * agent wait` process, spawned NATIVE_WAITER_DELAY_MS after the pane spawn;
- * its exit(0) stamps running.nativeDoneAt for pollTick — and the same timer
- * carries the deferred re-label (ADR-3), since one delay covers both "pi has
- * registered" and "safe to wait". Backend check goes through mux's
- * activeBackend — index.ts stays herdr-agnostic (no direct herdr imports;
- * the delayed import is of a module already in the ESM graph via mux, so it
- * resolves without I/O). Auto-exit children only: herdr's
- * "done" means "turn finished", which for an interactive child (one that
- * waits for the next steering message at its prompt) is not completion.
- * Best-effort by design: a failed/late/missing waiter changes nothing — the
- * sidecar watcher remains the source of truth.
- */
-function armDoneWaiter(running: RunningSubagent): void {
-	const def = running.agentDef;
-	const canSpawnChildren = !!(def?.subagents && def.subagents.length > 0);
-	if (activeBackend() !== "herdr" || !running.autoExit || canSpawnChildren) {
-		// No done-waiter timer to piggyback on (interactive child without
-		// auto-exit — herdr backend is guaranteed here, labelPending is never
-		// set elsewhere): the deferred re-label gets a standalone one-shot
-		// with the same delay and orphan guard.
-		if (running.labelPending) armDeferredRelabel(running);
-		return;
-	}
-	const timer = setTimeout(() => {
-		running.doneWaiterTimer = undefined;
-		void loadHerdr()
-			.then((herdr) => {
-				// Completed (or session reset) while the module promise settled:
-				// never spawn a waiter for a dead entry — it would orphan.
-				if (runningSubagents.get(running.id) !== running) return;
-				// Deferred re-label (ADR-3): the split-time rename inside
-				// createSubagentPane reliably missed (no agent record before
-				// the child registers), and this delay — the same one that
-				// makes the waiter safe — now covers registration, so the
-				// label can land for real. A miss leaves the flag up for the
-				// pollTick safety net. The attempt is stamped so the safety
-				// net's own pacing (R10) starts from here, not from boot.
-				if (running.labelPending) {
-					running.labelLastAttemptAt = Date.now();
-					if (herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
-						running.labelPending = false;
-					}
-				}
-				const waiter = herdr.spawnDoneWaiter(running.paneId, NATIVE_DONE_UNTIL);
-				if (!waiter) return;
-				waiter.on("exit", (code) => {
-					if (code === 0) running.nativeDoneAt = Date.now();
-				});
-				running.doneWaiter = waiter;
-			})
-			.catch(() => {
-				// No waiter, no flag — the watcher alone finishes the entry.
-			});
-	}, NATIVE_WAITER_DELAY_MS);
-	// A pending arm must never keep the parent alive (session_shutdown drops
-	// the map without completing entries).
-	timer.unref();
-	running.doneWaiterTimer = timer;
-}
-
-/**
- * Standalone deferred re-label for entries without a done-waiter timer to
- * piggyback on (see armDoneWaiter). Same delay and orphan guard: at +10s the
- * agent record is reliably up (pi registers within ~2–5s of boot), so one
- * best-effort applyPaneLabel closes the split-time gap; a miss leaves
- * labelPending up for the pollTick retry until LABEL_PENDING_MAX_MS. Never
- * throws; the one-shot timer is never stored — completeSubagent need not
- * clean it up, the orphan guard disposes of late fires.
- */
-function armDeferredRelabel(running: RunningSubagent): void {
-	const timer = setTimeout(() => {
-		void loadHerdr()
-			.then((herdr) => {
-				if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
-				// Stamp before the attempt: paces the pollTick safety net (R10).
-				running.labelLastAttemptAt = Date.now();
-				if (herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
-					running.labelPending = false;
-				}
-			})
-			.catch(() => {
-				// Miss — pollTick keeps retrying until the ceiling.
-			});
-	}, NATIVE_WAITER_DELAY_MS);
-	// Same discipline as the done-waiter arm: never keep the parent alive.
-	timer.unref();
-}
-
-function completeSubagent(
-	running: RunningSubagent,
-	result: { exitCode: number; errorMessage?: string; crashed?: boolean; cancelled?: boolean; note?: string },
-): void {
-	// ADR-2 teardown: the done-waiter (or its pending arming timer) must not
-	// outlive the entry — every completion path goes through this function.
-	if (running.doneWaiterTimer) {
-		clearTimeout(running.doneWaiterTimer);
-		running.doneWaiterTimer = undefined;
-	}
-	if (running.doneWaiter) {
-		try {
-			running.doneWaiter.kill();
-		} catch {
-			// Already gone.
-		}
-		running.doneWaiter = undefined;
-	}
-
-	runningSubagents.delete(running.id);
-	publishRunningChildrenCount();
-
-	if (tickTimer && runningSubagents.size === 0) {
-		clearInterval(tickTimer);
-		tickTimer = null;
-	}
-
-	// Cancel verdict: either we decided it, or a late cancel sidecar exists.
-	// The sidecar is then removed so a resume of the same session file does
-	// not instantly trip the new child's cancel poller.
-	const cancelFile = cancelSidecarPath(running.sessionFile);
-	const cancelled = result.cancelled === true || existsSync(cancelFile);
-	if (cancelled) {
-		try {
-			rmSync(cancelFile, { force: true });
-		} catch {
-			// Best effort.
-		}
-	}
-
-	const fallback = result.errorMessage
-		? `Subagent error: ${result.errorMessage}`
-		: result.crashed
-			? "Subagent pane was closed before it finished."
-			: result.exitCode !== 0
-				? `Sub-agent exited with code ${result.exitCode}`
-				: "Sub-agent exited without output";
-	const { summary, usage, model } = summarizeSessionFile(running.sessionFile, fallback);
-	const elapsedSec = Math.floor((Date.now() - running.startTime) / 1000);
-	// session-trace integration: child card in /trace (TUI) and web viewer.
-	appendTraceCard(latestPi, {
-		agent: running.agentName || running.name,
-		task: running.task,
-		session: running.sessionFile,
-		usage: usage ?? undefined,
-		model: model ?? undefined,
-	});
-
-	const usageText = usage && (usage.input > 0 || usage.output > 0) ? formatUsage(usage) : undefined;
-	const elapsedText = fmtElapsed(elapsedSec);
-	// Same truncated form the LLM sees — the subagent_result card renders this exact text.
-	const summaryText =
-		summary.length > MAX_SUMMARY_CHARS
-			? `${summary.slice(0, MAX_SUMMARY_CHARS)}\n… [truncated — full transcript: ${running.sessionFile}]`
-			: summary;
-	const statusLine = cancelled
-		? `cancelled by user after ${elapsedText}`
-		: result.errorMessage
-			? `failed after ${elapsedText}`
-			: `finished in ${elapsedText}`;
-
-	const content = [
-		...(cancelled
-			? [
-					`⚠ Sub-agent "${running.name}" was CANCELLED before finishing — treat everything below as partial work, do not assume the task completed.`,
-				]
-			: []),
-		`Sub-agent "${running.name}" (${running.agentName || "adhoc"}) ${statusLine}.`,
-		usageText ? `Usage: ${usageText}.` : "",
-		"",
-		summaryText,
-		"",
-		`Follow up with subagent_message({ name: "${running.name}", message: "…" }) — the same name works whether the pane is still open or has since been closed.`,
-	]
-		.filter((s) => s !== "")
-		.join("\n");
-
-	latestPi?.sendMessage(
-		{
-			customType: "subagent_result",
-			content,
-			display: true,
-			details: {
-				name: running.name,
-				agent: running.agentName,
-				task: running.task,
-				session: running.sessionFile,
-				exitCode: result.exitCode,
-				elapsedSec,
-				// Display-only extras for the subagent_result card renderer.
-				status: cancelled ? "cancelled" : result.errorMessage ? "failed" : "finished",
-				...(usageText ? { usageText } : {}),
-				...(summary ? { summary: summaryText } : {}),
-				...(cancelled ? { cancelled: true } : {}),
-				...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-				...(usage ? { usage } : {}),
-				...(model ? { model } : {}),
-				...(result.note ? { note: result.note } : {}),
-			},
-		} as Parameters<ExtensionAPI["sendMessage"]>[0],
-		{ triggerTurn: true, deliverAs: "steer" },
-	);
-
-	// Collapse the pane once the result is delivered — one policy for both
-	// surfaces (herdr and WezTerm): an exited auto-exit subagent leaves a
-	// dead shell pane that only clutters the workspace, and nobody wants to
-	// type `exit` into it by hand. This is safe: the transcript lives in the
-	// session file (/trace links to it) and resume recreates the pane on
-	// demand. Failed runs keep the pane open for on-screen debugging;
-	// cancelled runs close like successes (a cancelled pane has nothing left
-	// to inspect). Interactive (auto-exit: false) agents never collapse —
-	// their pane lives until the user closes it.
-	const paneShouldCollapse = cancelled || (running.autoExit && !result.errorMessage && result.exitCode === 0);
-	if (paneShouldCollapse) {
-		closePane(running.paneId);
-		columnPanes = columnPanes.filter((id) => id !== running.paneId);
-	}
-
-	updateWidget();
-}
-
-/** What the subagent was last seen doing — feeds the stall notices. */
-function describeActivity(state: SubagentActivityState | null): string {
-	if (state?.toolActive && state.toolName) return `tool ${state.toolName}`;
-	return state?.phase ?? "unknown";
-}
-
-function notifyStalled(running: RunningSubagent, stalled: boolean): void {
-	const now = Date.now();
-	const elapsed = fmtElapsed(Math.floor((now - running.startTime) / 1000));
-	const silentSec = Math.floor((now - running.activity.lastChangeAt) / 1000);
-	const text = stalled
-		? `Sub-agent "${running.name}" (${running.agentName}) looks stalled: no events for ${fmtElapsed(silentSec)} (total ${elapsed}); last seen: ${describeActivity(running.activity.state)}. ` +
-			`Steer with subagent_message (it auto-interrupts stalled agents), or cancel with subagent_cancel({ name: "${running.name}" }), or ignore.`
-		: `Sub-agent "${running.name}" is active again (${describeActivity(running.activity.state)}) after ${fmtElapsed(silentSec)} of silence.`;
-	latestPi?.sendMessage(
-		{
-			customType: "subagent_status",
-			content: text,
-			display: true,
-			details: {
-				name: running.name,
-				agent: running.agentName,
-				stalled,
-				silentMs: now - running.activity.lastChangeAt,
-				phase: running.activity.state?.phase,
-				toolName: running.activity.state?.toolName,
-			},
-		} as Parameters<ExtensionAPI["sendMessage"]>[0],
-		{ triggerTurn: true, deliverAs: "steer" },
-	);
-}
-
-function observeActivity(running: RunningSubagent, now: number): void {
-	const read = readActivityState(running.activityFile, running.id);
-	if (read.ok) {
-		const obs = running.activity;
-		const changed = !obs.state || read.state.sequence !== obs.state.sequence;
-		if (changed) obs.lastChangeAt = now;
-		// Refresh state before the notice so "active again" names the NEW
-		// activity, not the one that preceded the silence.
-		obs.state = read.state;
-		if (changed && obs.stalled) {
-			obs.stalled = false;
-			if (running.autoExit) notifyStalled(running, false);
-		}
-	}
-	const stalledCandidate =
-		running.autoExit && running.activity.state !== null && now - running.activity.lastChangeAt > STALLED_AFTER_MS;
-	if (stalledCandidate && !running.activity.stalled) {
-		running.activity.stalled = true;
-		notifyStalled(running, true);
-	}
-}
-
-function completeFromSidecars(running: RunningSubagent): boolean {
-	if (runningSubagents.get(running.id) !== running) return false;
-	if (existsSync(running.exitSidecarFile)) {
-		const verdict = classifyExitSidecar(readDoneFile(running.exitSidecarFile));
-		if (verdict.kind === "cancelled") {
-			// The child honored the cancel flag and exited — not an error.
-			completeSubagent(running, { exitCode: 1, cancelled: true });
-			return true;
-		}
-		const errorMessage =
-			verdict.kind === "error" && verdict.errorMessage
-				? verdict.errorMessage
-				: "Subagent exited with stopReason=error.";
-		completeSubagent(running, { exitCode: 1, errorMessage });
-		return true;
-	}
-	if (existsSync(running.doneFile)) {
-		let exitCode = 0;
-		try {
-			exitCode = Number.parseInt(readDoneFile(running.doneFile), 10);
-			if (!Number.isFinite(exitCode)) exitCode = 0;
-		} catch {
-			exitCode = 0;
-		}
-		completeSubagent(running, { exitCode });
-		return true;
-	}
-	return false;
-}
-
-function pollTick(): void {
-	if (runningSubagents.size === 0) return;
-	const now = Date.now();
-	const alive = listPaneIds();
-	if (alive.size === 0) return;
-
-	for (const running of Array.from(runningSubagents.values())) {
-		// 1. Fast path: launcher-written sidecar with the exit code.
-		if (completeFromSidecars(running)) continue;
-
-		// 3. Native done signal (ADR-2): the background `herdr agent wait` saw
-		// a terminal settled state, but no sidecar landed — the launcher's
-		// writes are lost. The grace re-opens the common race where pi just
-		// exited and the launcher has not written .done yet; if .done appears
-		// in that window, step 1 above still wins with the real exit code.
-		if (running.nativeDoneAt !== undefined && now - running.nativeDoneAt >= NATIVE_DONE_GRACE_MS) {
-			completeSubagent(running, { exitCode: 0, note: "native done, sidecar lost" });
-			continue;
-		}
-
-		// 4. Pane vanished without finishing → crashed or closed by the user.
-		if (!alive.has(running.paneId)) {
-			columnPanes = columnPanes.filter((id) => id !== running.paneId);
-			completeSubagent(running, { exitCode: 1, crashed: true, errorMessage: "pane closed" });
-			continue;
-		}
-
-		// 5. Screen sentinel fallback (sidecars failed to write).
-		const sentinel = parseSentinel(readScreenTail(running.paneId, 4));
-		if (sentinel !== null) {
-			completeSubagent(running, { exitCode: sentinel });
-			continue;
-		}
-
-		// 6. Cancel grace period: the child honors the flag within ~1s; a
-		// pane still alive this long later is wedged — force-close it.
-		if (running.cancelRequested && now - (running.cancelStartedAt ?? now) > CANCEL_KILL_AFTER_MS) {
-			closePane(running.paneId);
-			columnPanes = columnPanes.filter((id) => id !== running.paneId);
-			completeSubagent(running, {
-				exitCode: 1,
-				cancelled: true,
-				errorMessage: "cancelled — pane force-closed after grace period",
-			});
-			continue;
-		}
-
-		// 7. Deferred label safety net (ADR-3): the +10s re-label timer can
-		// still miss (slow boot); while labelPending, retry the rename on a
-		// 10s cadence (R10: every failed rename makes herdr print a raw
-		// error envelope at the calling pane — agent_not_found while the
-		// record is not up — so the safety net paces itself instead of
-		// firing every 1s tick) until it sticks or the 60s ceiling
-		// surrenders for good (renaming stays cosmetics: addressing always
-		// goes through pane ids).
-		if (running.labelPending && now - (running.labelLastAttemptAt ?? running.startTime) >= LABEL_RETRY_INTERVAL_MS) {
-			running.labelLastAttemptAt = now;
-			void loadHerdr()
-				.then((herdr) => {
-					if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
-					if (
-						herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name)) ||
-						Date.now() - running.startTime >= LABEL_PENDING_MAX_MS
-					) {
-						running.labelPending = false;
-					}
-				})
-				.catch(() => {
-					// herdr hiccup this tick — the ceiling surrenders eventually.
-				});
-		}
-
-		observeActivity(running, now);
-	}
-
-	updateWidget();
-}
-
-function readDoneFile(path: string): string {
-	// Small sync reads once per second per subagent — fine with node:fs.
-	return readFileSync(path, "utf8").trim();
-}
-
-function ensureTicker(): void {
-	if (tickTimer) return;
-	pollAbort = new AbortController();
-	tickTimer = setInterval(() => {
-		try {
-			pollTick();
-		} catch {
-			// A broken tick must never take the session down.
-		}
-	}, POLL_INTERVAL_MS);
 }
 
 // ── Spawning ──
@@ -904,32 +420,33 @@ function doSpawn(
 			`Agent "${params.agent}" is not in this session's spawn allowlist (${Array.from(allowed).join(", ")}).`,
 		);
 	}
-	const def = sctx.defs.get(params.agent);
-	if (!def) {
-		const names = Array.from(sctx.defs.keys());
-		throw new Error(
-			names.length > 0
-				? `Unknown agent "${params.agent}". Available: ${names.join(", ")}.`
-				: `Unknown agent "${params.agent}". No agent definitions found in .pi/agents/ or ~/.pi/agent/agents/.`,
-		);
-	}
+	const def = resolveAgentDef(sctx.defs, params.agent);
 
-	const reserved = new Set<string>([...runningSubagents.keys(), ...Object.keys(readNameRegistry(sctx.registryFile))]);
+	const reserved = new Set<string>([...watcher.running.keys(), ...Object.keys(readNameRegistry(sctx.registryFile))]);
 	const name = uniqueName(params.name?.trim() || def.name, reserved);
-	const id = `${safeFilePart(name)}-${randomUUID().slice(0, 8)}`;
 
 	const startTime = Date.now();
-	const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23) + "Z";
 	mkdirSync(subagentSessionsRoot(), { recursive: true });
-	const sessionFile = join(subagentSessionsRoot(), `${timestamp}_${id}.jsonl`);
+	const contextDir = join(sctx.artifactDir, "context");
+	const plan = buildLaunchPlan({
+		def,
+		name,
+		modelOverride: params.model,
+		parentModel: dispatchParentModel(ctx.model),
+		sessionsRoot: subagentSessionsRoot(),
+		identityPolicy: { kind: "artifact", dir: contextDir },
+		task: { content: taskWrapper(def, params.task), policy: { kind: "artifact", dir: contextDir } },
+	});
+	const id = plan.id;
+	const sessionFile = plan.sessionFile;
 	const doneFile = `${sessionFile}.done`;
 	const activityFile = join(sctx.artifactDir, "activity", `${id}.json`);
 	const cwd = params.cwd?.trim() || ctx.cwd;
-	const model = params.model?.trim() || def.model;
+	const model = plan.model;
 	const grantSpawning = !!(def.subagents && def.subagents.length > 0);
 
-	const taskFile = newTextTaskFile(sctx.artifactDir, name, taskWrapper(def, params.task));
-	const identityFile = def?.body ? newIdentityFile(sctx.artifactDir, name, def.body) : undefined;
+	const taskFile = plan.taskFile!;
+	const identityFile = plan.identityFile;
 	const scriptPath = join(sctx.artifactDir, "subagent-scripts", `${safeFilePart(name)}-${id}.ps1`);
 	mkdirSync(dirname(scriptPath), { recursive: true });
 	const spec = buildLauncherSpec({
@@ -983,10 +500,8 @@ function doSpawn(
 		// The split-time label missed (herdr only) — deferred re-label pending.
 		labelPending: activeBackend() === "herdr",
 	};
-	runningSubagents.set(id, running);
-	publishRunningChildrenCount();
 	// Native done-waiter (ADR-2) — herdr backend, auto-exit children only.
-	armDoneWaiter(running);
+	watcher.track(running);
 
 	const registryEntry: RegistryEntry & { paneId?: string } = {
 		name,
@@ -1004,7 +519,7 @@ function doSpawn(
 	};
 	upsertName(sctx.registryFile, registryEntry);
 
-	ensureTicker();
+	watcher.ensureTicker();
 	updateWidget();
 
 	return {
@@ -1031,12 +546,13 @@ function doResume(
 	message: string,
 ): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
 	const name = entry.name;
-	const id = `${safeFilePart(name)}-${randomUUID().slice(0, 8)}`;
+	const id = subagentId(name);
 	const startTime = Date.now();
 	const def = sctx.defs.get(entry.agent) ?? null;
 
-	const taskFile = newTextTaskFile(sctx.artifactDir, name, taskWrapper(def, message));
-	const identityFile = def?.body ? newIdentityFile(sctx.artifactDir, name, def.body) : undefined;
+	const contextDir = join(sctx.artifactDir, "context");
+	const taskFile = buildTaskFile({ kind: "artifact", dir: contextDir }, name, taskWrapper(def, message));
+	const identityFile = def?.body ? buildIdentityFile({ kind: "artifact", dir: contextDir }, name, def.body) : undefined;
 	const scriptPath = join(sctx.artifactDir, "subagent-scripts", `${safeFilePart(name)}-${id}.ps1`);
 	mkdirSync(dirname(scriptPath), { recursive: true });
 	const activityFile = join(sctx.artifactDir, "activity", `${id}.json`);
@@ -1115,16 +631,14 @@ function doResume(
 		// so the deferred re-label has to close the gap (herdr only).
 		labelPending: activeBackend() === "herdr",
 	};
-	runningSubagents.set(id, running);
-	publishRunningChildrenCount();
 	// Resume is a fresh run of the child — it gets its own waiter (ADR-2:
 	// one waiter per subagent run, armed at spawn).
-	armDoneWaiter(running);
+	watcher.track(running);
 
 	const registryEntry: RegistryEntry & { paneId?: string } = { ...entry, paneId, registeredAt: startTime };
 	upsertName(sctx.registryFile, registryEntry);
 
-	ensureTicker();
+	watcher.ensureTicker();
 	updateWidget();
 
 	return {
@@ -1159,38 +673,17 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		latestCtx = ctx;
-		runningSubagents = new Map();
+		watcher.reset();
 		columnPanes = [];
-		if (tickTimer) {
-			clearInterval(tickTimer);
-			tickTimer = null;
-		}
-		pollAbort = new AbortController();
 		updateWidget();
 	});
 
 	pi.on("session_shutdown", () => {
-		pollAbort?.abort();
-		pollAbort = null;
-		if (tickTimer) {
-			clearInterval(tickTimer);
-			tickTimer = null;
-		}
-		// Drop pending done-waiters: nobody reads nativeDoneAt after shutdown,
-		// and an unref'd waiter would otherwise linger for its full timeout.
-		for (const stale of runningSubagents.values()) {
-			if (stale.doneWaiterTimer) clearTimeout(stale.doneWaiterTimer);
-			try {
-				stale.doneWaiter?.kill();
-			} catch {
-				// Already gone.
-			}
-		}
+		watcher.shutdown();
 		// Running panes keep living on purpose: autonomous children finish and
 		// leave their transcripts behind; their results are simply not delivered
 		// to a dead parent. Nothing to clean up in the terminal itself.
 		if (latestCtx?.hasUI) latestCtx.ui.setWidget("subagents", undefined);
-		runningSubagents = new Map();
 		columnPanes = [];
 		latestCtx = null;
 	});
@@ -1280,7 +773,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const message = params.message.trim();
 			if (!message) throw new Error("`message` is required.");
 
-			const running = Array.from(runningSubagents.values()).find((r) => r.name === name);
+			const running = Array.from(watcher.running.values()).find((r) => r.name === name);
 			if (running) {
 				// Explicit choice wins; omitted → auto-interrupt stalled agents,
 				// which would otherwise never reach the turn boundary.
@@ -1296,7 +789,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					}
 					await sleep(INTERRUPT_SETTLE_MS);
 				}
-				if (!completeFromSidecars(running)) {
+				if (!watcher.completeFromSidecars(running)) {
 					let delivery: DeliveryResult;
 					try {
 						delivery = deliverMessage(running.paneId, message);
@@ -1354,7 +847,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			const registry = readNameRegistry(sctx.registryFile) as Record<string, RegistryEntry & { paneId?: string }>;
 			const entry = registry[name];
 			if (!entry) {
-				const known = [...new Set([...Object.keys(registry), ...runningSubagents.keys()])];
+				const known = [...new Set([...Object.keys(registry), ...watcher.running.keys()])];
 				throw new Error(
 					known.length > 0
 						? `No subagent named "${name}". Known names: ${known.join(", ")}.`
@@ -1389,7 +882,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const sctx = spawnContext(ctx, knownToolNames);
 			const name = params.name.trim();
-			const running = Array.from(runningSubagents.values()).find((r) => r.name === name);
+			const running = Array.from(watcher.running.values()).find((r) => r.name === name);
 			if (!running) {
 				const registry = readNameRegistry(sctx.registryFile) as Record<string, RegistryEntry>;
 				if (registry[name]) {
@@ -1403,7 +896,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						details: { name, status: "not-running" },
 					};
 				}
-				const known = [...new Set([...Object.keys(registry), ...runningSubagents.keys()])];
+				const known = [...new Set([...Object.keys(registry), ...watcher.running.keys()])];
 				throw new Error(
 					known.length > 0
 						? `No subagent named "${name}". Known names: ${known.join(", ")}.`
@@ -1612,7 +1105,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const defs = discoverAgents(ctx.cwd, getAgentDir());
 			const dispatchDefaults = {
-				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				model: dispatchParentModel(ctx.model),
 				thinking: ctx.thinkingLevel,
 			};
 			const sessionsRoot = subagentSessionsRoot();
@@ -1633,26 +1126,36 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				step: number | undefined,
 				onChildEvent: ((r: BatchResult) => void) | undefined,
 			): Promise<BatchResult> => {
-				const def = defs.get(agentName);
-				if (!def) {
-					const available =
-						Array.from(defs.keys())
-							.map((n) => `"${n}"`)
-							.join(", ") || "none";
+				let def: AgentDef;
+				try {
+					def = resolveAgentDef(defs, agentName);
+				} catch (err) {
 					const r = emptyResult(agentName, task);
 					r.exitCode = 1;
-					r.stderr = `Unknown agent: "${agentName}". Available agents: ${available}.`;
+					r.stderr = err instanceof Error ? err.message : String(err);
 					return r;
 				}
+				// Identity via a temp file: system prompts can be long, and Windows
+				// command lines are not.
+				const plan = buildLaunchPlan({
+					def,
+					name: agentName,
+					parentModel: dispatchDefaults.model,
+					sessionsRoot,
+					identityPolicy: { kind: "temp", dir: sessionsRoot },
+					task: { content: `Task: ${task}`, policy: { kind: "temp", dir: sessionsRoot } },
+				});
 				const result = await runHeadlessChild({
 					agentName: def.name,
 					agentLabel: def.name,
 					task,
+					sessionFile: plan.sessionFile,
+					taskFile: plan.taskFile!,
+					promptFile: plan.identityFile,
 					cwd: cwd ?? ctx.cwd,
-					model: def.model ?? dispatchDefaults.model,
+					model: plan.model,
 					thinking: def.model ? undefined : dispatchDefaults.thinking,
 					tools: def.tools,
-					appendSystemPrompt: def.body || undefined,
 					denyTools: PANE_TOOLS_DENYLIST,
 					defaultCwd: ctx.cwd,
 					sessionsRoot,

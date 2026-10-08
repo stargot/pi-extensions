@@ -17,7 +17,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname } from "node:path";
 import { addRunningWorker, removeRunningWorker, runningIndexPath } from "./running-index.ts";
 import { killProcessTree } from "../shared/proctree.ts";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
@@ -510,11 +510,13 @@ export interface HeadlessChildOptions {
 	agentName: string;
 	agentLabel: string;
 	task: string;
+	sessionFile: string;
+	taskFile: string;
+	promptFile?: string;
 	cwd: string;
 	model?: string;
 	thinking?: string;
 	tools?: string[];
-	appendSystemPrompt?: string;
 	denyTools?: string[];
 	defaultCwd: string;
 	sessionsRoot: string;
@@ -542,10 +544,7 @@ export interface HeadlessChildOptions {
  */
 export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<BatchResult> {
 	mkdirSync(opts.sessionsRoot, { recursive: true });
-	const childSession = join(
-		opts.sessionsRoot,
-		`${new Date().toISOString().replace(/[:.]/g, "-")}_${opts.agentName.replace(/[^\w-]/g, "")}_${randomUUID().slice(0, 8)}.jsonl`,
-	);
+	const childSession = opts.sessionFile;
 	writeFileSync(
 		childSession,
 		JSON.stringify({
@@ -567,15 +566,10 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 		// never honored by pi). Keeps task_batch itself available for nesting.
 		args.push("-xt", opts.denyTools.join(","));
 	}
-	let promptFile: string | null = null;
-	if (opts.appendSystemPrompt) {
-		// Identity via a temp file: system prompts can be long, and Windows
-		// command lines are not.
-		promptFile = join(opts.sessionsRoot, `.identity-${randomUUID().slice(0, 8)}.md`);
-		writeFileSync(promptFile, opts.appendSystemPrompt, "utf8");
-		args.push("--append-system-prompt", promptFile);
+	if (opts.promptFile) {
+		args.push("--append-system-prompt", opts.promptFile);
 	}
-	args.push(`Task: ${opts.task}`);
+	args.push(`@${opts.taskFile}`);
 
 	const result = emptyResult(opts.agentLabel, opts.task);
 	result.step = opts.step;
@@ -756,9 +750,10 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 		});
 	} finally {
 		unregister();
-		if (promptFile) {
+		for (const temp of [opts.promptFile, opts.taskFile]) {
+			if (!temp) continue;
 			try {
-				unlinkSync(promptFile);
+				unlinkSync(temp);
 			} catch {
 				// Best effort.
 			}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -32,6 +32,7 @@ import {
 	truncateOutput,
 	type BatchResult,
 } from "../batch.ts";
+import { buildIdentityFile, buildTaskFile } from "../launch-plan.ts";
 const assistantEvent = (overrides: Record<string, unknown> = {}) => ({
 	type: "message_end",
 	message: {
@@ -247,10 +248,12 @@ test("getPiInvocation: prefers node+script for existing .js argv, else pi shim",
 test("runHeadlessChild: spawns fixture, parses events, pre-creates session, cleans prompt file", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-batch-run-"));
 	const sessionsRoot = join(dir, "sessions");
+	const argvFile = join(dir, "argv.json");
 	const fixture = join(dir, "fixture.js");
 	writeFileSync(
 		fixture,
 		[
+			`require("node:fs").writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv));`,
 			`console.log(JSON.stringify({type:"message_end", message:{role:"assistant", content:[{type:"text",text:"partial"}], usage:{input:10,output:2,cost:{total:0.001}}}}));`,
 			`console.log(JSON.stringify({type:"tool_result_end", message:{role:"toolResult"}}));`,
 			`console.log(JSON.stringify({type:"message_end", message:{role:"assistant", content:[{type:"text",text:"FINAL OUTPUT"}], model:"fixture-model", stopReason:"end", usage:{input:5,output:1,cost:{total:0.002}}}}));`,
@@ -260,6 +263,10 @@ test("runHeadlessChild: spawns fixture, parses events, pre-creates session, clea
 		"utf8",
 	);
 
+	const sessionFile = join(sessionsRoot, "pre-created.jsonl");
+	const taskFile = buildTaskFile({ kind: "temp", dir: sessionsRoot }, "fixture", "Task: do things");
+	const promptFile = buildIdentityFile({ kind: "temp", dir: sessionsRoot }, "fixture", "identity body");
+
 	const original = process.argv[1];
 	try {
 		process.argv[1] = fixture;
@@ -268,10 +275,12 @@ test("runHeadlessChild: spawns fixture, parses events, pre-creates session, clea
 			agentName: "fix",
 			agentLabel: "fix",
 			task: "do things",
+			sessionFile,
+			taskFile,
+			promptFile,
 			cwd: dir,
 			defaultCwd: dir,
 			sessionsRoot,
-			appendSystemPrompt: "identity body",
 			denyTools: ["subagent"],
 			onEvent: (r) => events.push({ ...r, messages: [...r.messages], usage: { ...r.usage } }),
 		});
@@ -282,13 +291,21 @@ test("runHeadlessChild: spawns fixture, parses events, pre-creates session, clea
 		assert.ok(result.stderr.includes("some stderr"));
 		assert.ok(result.usage.cost > 0);
 		assert.ok(result.sessionFile && existsSync(result.sessionFile), "session file pre-created");
+		assert.equal(result.sessionFile, sessionFile);
 		assert.ok(events.length >= 2, "onEvent fired during streaming");
 		assert.ok(typeof result.startedAt === "number" && result.startedAt > 0, "startedAt recorded");
 		assert.ok(typeof result.elapsedMs === "number" && result.elapsedMs >= 0, "elapsedMs recorded on exit");
 
-		// The --append-system-prompt temp file must be cleaned up.
-		const leftovers = readdirSync(sessionsRoot).filter((f) => f.startsWith(".identity-"));
-		assert.equal(leftovers.length, 0, "identity temp file removed after run");
+		const argv = JSON.parse(readFileSync(argvFile, "utf8")) as string[];
+		const prompt = argv.at(-1) ?? "";
+		assert.equal(prompt, `@${taskFile}`, "task delivered via @file reference");
+		assert.ok(!argv.some((a) => a.includes("do things")), "task text never rides argv");
+		assert.equal(argv[argv.indexOf("--append-system-prompt") + 1], promptFile);
+
+		assert.equal(existsSync(promptFile), false, "identity temp file removed after run");
+		assert.equal(existsSync(taskFile), false, "task temp file removed after run");
+		const leftovers = readdirSync(sessionsRoot).filter((f) => f.startsWith(".identity-") || f.startsWith(".task-"));
+		assert.equal(leftovers.length, 0, "no temp prompt/task files left behind");
 	} finally {
 		process.argv[1] = original;
 		rmSync(dir, { recursive: true, force: true });
@@ -317,6 +334,8 @@ test("runHeadlessChild: live events stay running until close, then real exit cod
 			agentName: "live",
 			agentLabel: "live",
 			task: "t",
+			sessionFile: join(dir, "sessions", "live.jsonl"),
+			taskFile: join(dir, "task.md"),
 			cwd: dir,
 			defaultCwd: dir,
 			sessionsRoot: join(dir, "sessions"),
@@ -349,6 +368,8 @@ test("runHeadlessChild: non-zero exit code propagates", async () => {
 			agentName: "x",
 			agentLabel: "x",
 			task: "t",
+			sessionFile: join(dir, "sessions", "exit.jsonl"),
+			taskFile: join(dir, "task.md"),
 			cwd: dir,
 			defaultCwd: dir,
 			sessionsRoot: join(dir, "sessions"),
@@ -442,6 +463,8 @@ test("runHeadlessChild: abort marks the result aborted/failed, not success", asy
 			agentName: "x",
 			agentLabel: "x",
 			task: "t",
+			sessionFile: join(dir, "sessions", "abort.jsonl"),
+			taskFile: join(dir, "task.md"),
 			cwd: dir,
 			defaultCwd: dir,
 			sessionsRoot: join(dir, "sessions"),
@@ -472,6 +495,8 @@ test("runHeadlessChild: timeout kills a hung child and reports timeout", async (
 			agentName: "x",
 			agentLabel: "x",
 			task: "t",
+			sessionFile: join(dir, "sessions", "timeout.jsonl"),
+			taskFile: join(dir, "task.md"),
 			cwd: dir,
 			defaultCwd: dir,
 			sessionsRoot: join(dir, "sessions"),
@@ -502,6 +527,8 @@ test("runHeadlessChild: SIGTERM-ignoring child is SIGKILLed after escalation (po
 			agentName: "x",
 			agentLabel: "x",
 			task: "t",
+			sessionFile: join(dir, "sessions", "escalate.jsonl"),
+			taskFile: join(dir, "task.md"),
 			cwd: dir,
 			defaultCwd: dir,
 			sessionsRoot: join(dir, "sessions"),
@@ -536,6 +563,8 @@ test("runHeadlessChild: stderr is capped to a tail with a truncation marker", as
 			agentName: "x",
 			agentLabel: "x",
 			task: "t",
+			sessionFile: join(dir, "sessions", "stderr.jsonl"),
+			taskFile: join(dir, "task.md"),
 			cwd: dir,
 			defaultCwd: dir,
 			sessionsRoot: join(dir, "sessions"),

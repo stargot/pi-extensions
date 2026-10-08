@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { finalOutput, runHeadlessChild } from "../batch.ts";
+import { buildIdentityFile, buildTaskFile, sessionFilePath, subagentId } from "../launch-plan.ts";
 
 const where = execFileSync("where.exe", ["pi"], { encoding: "utf8" });
 const piPath =
@@ -19,14 +20,22 @@ if (!piPath) {
 
 const dir = mkdtempSync(join(tmpdir(), "pi-batch-e2e-"));
 const t0 = Date.now();
+const taskText = "Reply with exactly one line: HEADLESS_OK_7. Then stop.";
+const sessionsRoot = join(dir, "sessions");
 const result = await runHeadlessChild({
 	agentName: "e2e",
 	agentLabel: "e2e-headless",
-	task: "Reply with exactly one line: HEADLESS_OK_7. Then stop.",
+	task: taskText,
+	sessionFile: sessionFilePath(sessionsRoot, subagentId("e2e")),
+	taskFile: buildTaskFile({ kind: "temp", dir: sessionsRoot }, "e2e", `Task: ${taskText}`),
+	promptFile: buildIdentityFile(
+		{ kind: "temp", dir: sessionsRoot },
+		"e2e",
+		"You are a test subagent. Follow the task literally.",
+	),
 	cwd: dir,
 	defaultCwd: dir,
-	sessionsRoot: join(dir, "sessions"),
-	appendSystemPrompt: "You are a test subagent. Follow the task literally.",
+	sessionsRoot,
 	denyTools: ["subagent", "subagent_message", "subagents_list"],
 	piPath,
 });
