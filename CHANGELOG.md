@@ -3,6 +3,35 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [Unreleased]
+
+### Changed
+
+- **subagents**: спавн детей унифицирован в `ChildLaunchPlan` — одна схема
+  приоритета модели для панельных и headless-детей, задача передаётся ребёнку
+  через `@file`.
+- **subagents**: работа с терминальными панелями сведена к интерфейсу
+  `MuxBackend` (wezterm/herdr за одной абстракцией), CLI I/O асинхронный;
+  список панелей кэшируется; после доставки сообщения адресат проходит
+  re-check.
+- **subagents**: resume завершившихся детей переведён на асинхронный путь,
+  re-label панелей не блокирует ход, у pane-cache — явный жизненный цикл.
+- **subagents**: робастность `task_batch` — кап глубины вложенности спавна,
+  валидация `cwd` при спавне, контракт артефактов батча, парсинг auto-exit
+  агентов.
+
+### Fixed
+
+- **subagents**: hotfix гонок вотчера — done-waiter пропускает ещё спавнящихся
+  агентов, guard на пустой список панелей, приоритет `.exit`-маркера над
+  сайдкарами, повторные проверки сайдкаров при steer/cancel, живой статус
+  в `task_batch`.
+
+### Removed
+
+- **quiz**: веб-режим — расширение снова TUI-only (−2502 строки); грейдинг
+  и TUI не тронуты, `web: true` молча игнорируется.
+
 ## [0.7.0] — 2026-10-02
 
 ### Fixed
