@@ -45,13 +45,11 @@ export interface MuxBackend {
 	activatePane(paneId: string): void;
 	promptAgent?(paneId: string, text: string): Promise<AgentPromptOutcome>;
 	applyPaneLabel?(paneId: string, label: string): boolean;
+	applyPaneLabelAsync?(paneId: string, label: string): Promise<boolean>;
 	spawnDoneWaiter?(paneId: string, untilStatuses: string[]): ChildProcess | null;
 }
 
-export interface NativeAgentOps {
-	applyPaneLabel(paneId: string, label: string): boolean;
-	spawnDoneWaiter(paneId: string, untilStatuses: string[]): ChildProcess | null;
-}
+export type NativeAgentOps = Required<Pick<MuxBackend, "applyPaneLabelAsync" | "spawnDoneWaiter">>;
 
 const backends: Record<MuxBackendName, MuxBackend> = { herdr: herdrBackend, wezterm: weztermBackend };
 
@@ -222,9 +220,9 @@ function loadHerdr(): Promise<typeof import("./herdr.ts")> {
 export function loadNativeAgentOps(): Promise<NativeAgentOps> | null {
 	const backend = activeImpl();
 	if (!backend) return null;
-	const { applyPaneLabel, spawnDoneWaiter } = backend;
-	if (!applyPaneLabel || !spawnDoneWaiter) return null;
-	const ops: NativeAgentOps = { applyPaneLabel, spawnDoneWaiter };
+	const { applyPaneLabelAsync, spawnDoneWaiter } = backend;
+	if (!applyPaneLabelAsync || !spawnDoneWaiter) return null;
+	const ops: NativeAgentOps = { applyPaneLabelAsync, spawnDoneWaiter };
 	return loadHerdr().then(() => ops);
 }
 

@@ -133,6 +133,7 @@ export interface SubagentWatcher {
 export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 	const runningSubagents = new Map<string, RunningSubagent>();
 	let tickTimer: ReturnType<typeof setInterval> | null = null;
+	let relabelInFlight = false;
 	const {
 		existsSync,
 		readFileSync,
@@ -186,7 +187,7 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 			const ops = loadNativeAgentOps();
 			if (!ops) return;
 			void ops
-				.then((native) => {
+				.then(async (native) => {
 					// Completed (or session reset) while the module promise settled:
 					// never spawn a waiter for a dead entry — it would orphan.
 					if (runningSubagents.get(running.id) !== running) return;
@@ -199,9 +200,10 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 					// net's own pacing (R10) starts from here, not from boot.
 					if (running.labelPending) {
 						running.labelLastAttemptAt = deps.now();
-						if (native.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
+						if (await native.applyPaneLabelAsync(running.paneId, herdrAgentName(running.name))) {
 							running.labelPending = false;
 						}
+						if (runningSubagents.get(running.id) !== running) return;
 					}
 					const waiter = native.spawnDoneWaiter(running.paneId, NATIVE_DONE_UNTIL);
 					if (!waiter) return;
@@ -234,11 +236,11 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 			const ops = loadNativeAgentOps();
 			if (!ops) return;
 			void ops
-				.then((native) => {
+				.then(async (native) => {
 					if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
 					// Stamp before the attempt: paces the pollTick safety net (R10).
 					running.labelLastAttemptAt = deps.now();
-					if (native.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
+					if (await native.applyPaneLabelAsync(running.paneId, herdrAgentName(running.name))) {
 						running.labelPending = false;
 					}
 				})
@@ -250,26 +252,29 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 		timer.unref();
 	}
 
+	function disposeWaiter(stale: RunningSubagent): void {
+		if (stale.doneWaiterTimer) {
+			clearTimeout(stale.doneWaiterTimer);
+			stale.doneWaiterTimer = undefined;
+		}
+		try {
+			stale.doneWaiter?.kill();
+		} catch {
+			// Already gone.
+		}
+		stale.doneWaiter = undefined;
+	}
+
 	function completeSubagent(
 		running: RunningSubagent,
 		result: { exitCode: number; errorMessage?: string; crashed?: boolean; cancelled?: boolean; note?: string },
 	): void {
 		// ADR-2 teardown: the done-waiter (or its pending arming timer) must not
 		// outlive the entry — every completion path goes through this function.
-		if (running.doneWaiterTimer) {
-			clearTimeout(running.doneWaiterTimer);
-			running.doneWaiterTimer = undefined;
-		}
-		if (running.doneWaiter) {
-			try {
-				running.doneWaiter.kill();
-			} catch {
-				// Already gone.
-			}
-			running.doneWaiter = undefined;
-		}
+		disposeWaiter(running);
 
 		runningSubagents.delete(running.id);
+		panes.dropPane(running.paneId);
 		publishRunningChildrenCount();
 
 		if (tickTimer && runningSubagents.size === 0) {
@@ -522,24 +527,31 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 			// firing every 1s tick) until it sticks or the 60s ceiling
 			// surrenders for good (renaming stays cosmetics: addressing always
 			// goes through pane ids).
-			if (running.labelPending && now - (running.labelLastAttemptAt ?? running.startTime) >= LABEL_RETRY_INTERVAL_MS) {
+			if (
+				running.labelPending &&
+				!relabelInFlight &&
+				now - (running.labelLastAttemptAt ?? running.startTime) >= LABEL_RETRY_INTERVAL_MS
+			) {
 				running.labelLastAttemptAt = now;
+				relabelInFlight = true;
 				const ops = loadNativeAgentOps();
-				if (ops) {
-					void ops
-						.then((native) => {
-							if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
-							if (
-								native.applyPaneLabel(running.paneId, herdrAgentName(running.name)) ||
-								deps.now() - running.startTime >= LABEL_PENDING_MAX_MS
-							) {
-								running.labelPending = false;
-							}
-						})
-						.catch(() => {
-							// herdr hiccup this tick — the ceiling surrenders eventually.
-						});
-				}
+				const flight = (ops ?? Promise.resolve(null)).then(async (native) => {
+					if (!native) return;
+					if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
+					if (
+						(await native.applyPaneLabelAsync(running.paneId, herdrAgentName(running.name))) ||
+						deps.now() - running.startTime >= LABEL_PENDING_MAX_MS
+					) {
+						running.labelPending = false;
+					}
+				});
+				void flight
+					.catch(() => {
+						// herdr hiccup this tick — the ceiling surrenders eventually.
+					})
+					.finally(() => {
+						relabelInFlight = false;
+					});
 			}
 
 			observeActivity(running, now);
@@ -571,6 +583,7 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 	}
 
 	function reset(): void {
+		for (const stale of runningSubagents.values()) disposeWaiter(stale);
 		runningSubagents.clear();
 		if (tickTimer) {
 			clearInterval(tickTimer);
@@ -585,14 +598,7 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 		}
 		// Drop pending done-waiters: nobody reads nativeDoneAt after shutdown,
 		// and an unref'd waiter would otherwise linger for its full timeout.
-		for (const stale of runningSubagents.values()) {
-			if (stale.doneWaiterTimer) clearTimeout(stale.doneWaiterTimer);
-			try {
-				stale.doneWaiter?.kill();
-			} catch {
-				// Already gone.
-			}
-		}
+		for (const stale of runningSubagents.values()) disposeWaiter(stale);
 		runningSubagents.clear();
 	}
 

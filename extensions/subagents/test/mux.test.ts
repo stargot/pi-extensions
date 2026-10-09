@@ -42,8 +42,10 @@ test("herdr-only capabilities exist only on the herdr backend", () => {
 	assert.equal(weztermBackend.name, "wezterm");
 	assert.notEqual(herdrBackend.promptAgent, undefined);
 	assert.notEqual(herdrBackend.applyPaneLabel, undefined);
+	assert.notEqual(herdrBackend.applyPaneLabelAsync, undefined);
 	assert.notEqual(herdrBackend.spawnDoneWaiter, undefined);
 	assert.equal(weztermBackend.promptAgent, undefined);
 	assert.equal(weztermBackend.applyPaneLabel, undefined);
+	assert.equal(weztermBackend.applyPaneLabelAsync, undefined);
 	assert.equal(weztermBackend.spawnDoneWaiter, undefined);
 });

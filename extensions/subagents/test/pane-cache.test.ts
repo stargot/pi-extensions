@@ -158,6 +158,19 @@ test("screen tail: a failed read caches an empty tail, never a stale sentinel", 
 	assert.equal(ops.screenTailSnapshot("p1"), "");
 });
 
+test("screen tail: a failed read resets the throttle window, the retry is immediate", async () => {
+	const src = makeSource();
+	const ops = createWatcherPaneOps(src.source, { now: () => 0, readThrottleMs: 60_000 });
+	ops.requestScreenTail("p1");
+	src.rejectRead("p1");
+	await flush();
+	assert.equal(ops.screenTailSnapshot("p1"), "");
+
+	ops.requestScreenTail("p1");
+	assert.equal(src.readCalls.length, 2);
+	assert.equal(src.readInFlight("p1"), true);
+});
+
 test("screen tail: reads for different panes never overlap themselves", async () => {
 	const src = makeSource();
 	const ops = createWatcherPaneOps(src.source, { readThrottleMs: 0 });

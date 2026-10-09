@@ -55,7 +55,10 @@ export function createWatcherPaneOps(
 						if ((tailGenerations.get(paneId) ?? 0) === generation) tails.set(paneId, text);
 					},
 					() => {
-						if ((tailGenerations.get(paneId) ?? 0) === generation) tails.set(paneId, "");
+						if ((tailGenerations.get(paneId) ?? 0) === generation) {
+							tails.set(paneId, "");
+							tailStartedAt.delete(paneId);
+						}
 					},
 				)
 				.finally(() => {

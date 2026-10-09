@@ -316,12 +316,16 @@ function splitPane(target: string, stacking: boolean, opts: CreatePaneOptions): 
 	return paneId;
 }
 
-/** Type a launcher invocation into the pane; pwsh stays open after the child exits. */
-function launchScript(paneId: string, ps1Path: string): void {
+function launcherCommand(ps1Path: string): string {
 	// Windows paths cannot contain `"`, so double quotes are unambiguous and
 	// work under pwsh, cmd and bash alike. One argv element on purpose: herdr
 	// joins COMMAND args with spaces, so quoting must survive on our side.
-	runHerdr(["pane", "run", paneId, `${PWSH} -NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -File "${ps1Path}"`]);
+	return `${PWSH} -NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -File "${ps1Path}"`;
+}
+
+/** Type a launcher invocation into the pane; pwsh stays open after the child exits. */
+function launchScript(paneId: string, ps1Path: string): void {
+	runHerdr(["pane", "run", paneId, launcherCommand(ps1Path)]);
 }
 
 /** Send text to a pane and submit it (pane run = text + Enter, one write). */
@@ -351,7 +355,12 @@ export async function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): P
 
 /** Run a launcher script in a pane that is sitting at a shell prompt (resume). */
 export async function runScriptInPane(paneId: string, scriptPath: string): Promise<void> {
-	launchScript(paneId, scriptPath);
+	const result = await runHerdrAsync(["pane", "run", paneId, launcherCommand(scriptPath)]);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`herdr pane run exited with code ${result.exitCode}: ${pickFailureOutput(result.stdout, result.stderr)}`.trim(),
+		);
+	}
 }
 
 /** Read the last `lines` lines of a pane's output. Returns "" when the pane is gone. */
@@ -541,6 +550,20 @@ export function applyPaneLabel(paneId: string, label: string): boolean {
 	return renameAgent(paneId, labelWithIdSuffix(base, paneId)) === "ok";
 }
 
+async function renameAgentAsync(paneId: string, name: string): Promise<AgentRenameStatus> {
+	const result = await runHerdrAsync(["agent", "rename", paneId, name]);
+	const out = result.exitCode === 0 ? result.stdout : pickFailureOutput(result.stdout, result.stderr);
+	return parseAgentRenameOutput(out, result.exitCode);
+}
+
+export async function applyPaneLabelAsync(paneId: string, label: string): Promise<boolean> {
+	const base = herdrAgentName(label);
+	const first = await renameAgentAsync(paneId, base);
+	if (first === "ok") return true;
+	if (first === "not_found") return false;
+	return (await renameAgentAsync(paneId, labelWithIdSuffix(base, paneId))) === "ok";
+}
+
 // ── Agent wait / status parsing (shapes captured from 0.9.1-preview) ──
 
 /**
@@ -618,5 +641,6 @@ export const herdrBackend: MuxBackend = {
 	activatePane,
 	promptAgent,
 	applyPaneLabel,
+	applyPaneLabelAsync,
 	spawnDoneWaiter,
 };

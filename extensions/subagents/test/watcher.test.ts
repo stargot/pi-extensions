@@ -52,6 +52,8 @@ interface Harness {
 	waiterCalls: Array<[string, string[]]>;
 	waiter: FakeWaiter | null;
 	applyResult: boolean;
+	labelDeferred: boolean;
+	labelResolvers: Array<(ok: boolean) => void>;
 	waiterKilled: boolean;
 	widgetUpdates: number;
 	paneOps: PaneOpsFake;
@@ -150,6 +152,8 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
 		waiterCalls: [],
 		waiter: null,
 		applyResult: true,
+		labelDeferred: false,
+		labelResolvers: [],
 		waiterKilled: false,
 		widgetUpdates: 0,
 	} as Omit<Harness, "paneOps">;
@@ -183,9 +187,14 @@ function makeDeps(h: Harness): WatcherDeps {
 				exit: (code) => exitCb?.(code),
 			};
 			return Promise.resolve({
-				applyPaneLabel: (paneId: string, label: string) => {
+				applyPaneLabelAsync: (paneId: string, label: string) => {
 					h.labelCalls.push([paneId, label]);
-					return h.applyResult;
+					if (h.labelDeferred) {
+						return new Promise<boolean>((resolve) => {
+							h.labelResolvers.push(resolve);
+						});
+					}
+					return Promise.resolve(h.applyResult);
 				},
 				spawnDoneWaiter: (paneId: string, until: string[]) => {
 					h.waiterCalls.push([paneId, until]);
@@ -508,6 +517,25 @@ test("tracking a pane id drops any cached tail snapshot for it", () => {
 	assert.equal(h.tails.has("pane-1"), false);
 });
 
+test("completing an entry releases its pane-cache state — no per-pane growth", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.paneOps.deferred = true;
+	const watcher = createSubagentWatcher(makeDeps(h));
+	watcher.track(makeRunning());
+	watcher.ensureTicker();
+	oneTick(t);
+	h.paneOps.completeTail("pane-1", "still running");
+	assert.equal(h.tails.has("pane-1"), true);
+
+	h.files.set(DONE, "0");
+	oneTick(t);
+
+	assert.equal(watcher.running.size, 0);
+	assert.deepEqual(h.paneOps.droppedPanes, ["pane-1", "pane-1"]);
+	assert.equal(h.tails.has("pane-1"), false);
+});
+
 test("native done completes after the 5s grace window with the sidecar-lost note", (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 	const h = makeHarness();
@@ -765,6 +793,21 @@ test("session reset orphans a pending done-waiter arm — no waiter is spawned",
 	assert.equal(h.labelCalls.length, 0);
 });
 
+test("session reset kills an already-armed done-waiter child", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.backend = "herdr";
+	const watcher = createSubagentWatcher(makeDeps(h));
+	watcher.track(makeRunning());
+	t.mock.timers.tick(NATIVE_WAITER_DELAY_MS);
+	await flush();
+	assert.equal(h.waiterCalls.length, 1);
+	assert.equal(h.waiterKilled, false);
+
+	watcher.reset();
+	assert.equal(h.waiterKilled, true);
+});
+
 test("shutdown kills live waiters, clears the ticker and empties the map", async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 	const h = makeHarness();
@@ -823,6 +866,36 @@ test("re-label gives up at the 60s ceiling even when applyPaneLabel keeps failin
 	await flush();
 	assert.deepEqual(h.labelCalls, [["pane-1", "scout"]]);
 	assert.equal(entry.labelPending, false);
+});
+
+test("stage-7 re-label never double-fires while an async attempt is in flight", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.backend = "herdr";
+	h.applyResult = false;
+	h.labelDeferred = true;
+	const watcher = createSubagentWatcher(makeDeps(h));
+	const entry = makeRunning({ labelPending: true, labelLastAttemptAt: START - LABEL_RETRY_INTERVAL_MS });
+	watcher.track(entry);
+	watcher.ensureTicker();
+	oneTick(t);
+	await flush();
+	assert.deepEqual(h.labelCalls, [["pane-1", "scout"]]);
+
+	h.nowMs += LABEL_RETRY_INTERVAL_MS;
+	oneTick(t);
+	await flush();
+	assert.equal(h.labelCalls.length, 1);
+
+	h.labelResolvers.shift()?.(false);
+	await flush();
+	await flush();
+	assert.equal(entry.labelPending, true);
+
+	h.nowMs += LABEL_RETRY_INTERVAL_MS;
+	oneTick(t);
+	await flush();
+	assert.equal(h.labelCalls.length, 2);
 });
 
 test("a silent auto-exit subagent flips to stalled and sends one status steer", (t) => {
