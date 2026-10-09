@@ -79,8 +79,9 @@ function send(res: ServerResponse, code: number, body: string, type = "text/plai
 /** Предел тела POST /load: там только путь к файлу. */
 const MAX_LOAD_BODY = 64 * 1024;
 
-// Ре-экспорт: реализация живёт в shared/loopback.ts (переиспользуется quiz-web),
-// но существующий тест session-trace импортирует символ отсюда.
+// Ре-экспорт: реализация живёт в shared/loopback.ts (quiz его раньше
+// переиспользовал, теперь только session-trace), но существующий тест
+// session-trace импортирует символ отсюда.
 export { isLoopbackHost };
 
 function handle(req: IncomingMessage, res: ServerResponse, state: { file?: string }): void {
