@@ -181,6 +181,14 @@ export function labelPane(paneId: string, label: string): void {
 	backend.applyPaneLabel?.(paneId, label);
 }
 
+export async function labelPaneAsync(paneId: string, label: string): Promise<void> {
+	const backend = activeImpl();
+	if (!backend?.applyPaneLabelAsync) return;
+	try {
+		await backend.applyPaneLabelAsync(paneId, label);
+	} catch {}
+}
+
 /** Interrupt the foreground program in a pane (Esc aborts pi's turn, Ctrl+C kills a command). */
 export async function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): Promise<void> {
 	const backend = requireBackend();

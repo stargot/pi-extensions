@@ -134,6 +134,26 @@
 			]
 		},
 		{
+			"name": "single-collapsed-item-overflow",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				"✓ scout 1m05s                                                                                                           ",
+				"... 3 earlier items                                                                                                     ",
+				"→ grep /todo-3/ in src                                                                                                  ",
+				"→ grep /todo-4/ in src                                                                                                  ",
+				"→ grep /todo-5/ in src                                                                                                  ",
+				"→ grep /todo-6/ in src                                                                                                  ",
+				"→ grep /todo-7/ in src                                                                                                  ",
+				"→ grep /todo-8/ in src                                                                                                  ",
+				"→ grep /todo-9/ in src                                                                                                  ",
+				"→ grep /todo-10/ in src                                                                                                 ",
+				"→ grep /todo-11/ in src                                                                                                 ",
+				"Found 12 stale TODOs.                                                                                                   ",
+				"13 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x                                                                           "
+			]
+		},
+		{
 			"name": "chain-collapsed-ok",
 			"width": 120,
 			"expanded": false,

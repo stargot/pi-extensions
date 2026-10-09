@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef } from "./agents.ts";
 
@@ -71,6 +71,24 @@ export function resolveAgentDef(defs: Map<string, AgentDef>, agent: string): Age
 	);
 }
 
+export function cwdProblemMessage(cwd: string | undefined): string | null {
+	const dir = cwd?.trim();
+	if (!dir) return null;
+	try {
+		if (!statSync(dir).isDirectory()) return `cwd is not a directory: ${dir}`;
+	} catch {
+		return `cwd does not exist: ${dir}`;
+	}
+	return null;
+}
+
+export function resolveLaunchCwd(cwd: string | undefined, fallback: string): string {
+	const dir = cwd?.trim() || fallback;
+	const problem = cwdProblemMessage(dir);
+	if (problem) throw new Error(problem);
+	return dir;
+}
+
 export interface LaunchPlan {
 	id: string;
 	model?: string;
@@ -92,13 +110,27 @@ export interface LaunchPlanInput {
 
 export function buildLaunchPlan(input: LaunchPlanInput): LaunchPlan {
 	const id = input.id ?? subagentId(input.name);
-	const identityFile = input.def.body ? buildIdentityFile(input.identityPolicy, input.name, input.def.body) : undefined;
-	const taskFile = input.task ? buildTaskFile(input.task.policy, input.name, input.task.content) : undefined;
-	return {
-		id,
-		model: resolveLaunchModel(input.modelOverride, input.def, input.parentModel),
-		sessionFile: sessionFilePath(input.sessionsRoot, id),
-		identityFile,
-		taskFile,
-	};
+	const written: string[] = [];
+	try {
+		const identityFile = input.def.body
+			? buildIdentityFile(input.identityPolicy, input.name, input.def.body)
+			: undefined;
+		if (identityFile) written.push(identityFile);
+		const taskFile = input.task ? buildTaskFile(input.task.policy, input.name, input.task.content) : undefined;
+		if (taskFile) written.push(taskFile);
+		return {
+			id,
+			model: resolveLaunchModel(input.modelOverride, input.def, input.parentModel),
+			sessionFile: sessionFilePath(input.sessionsRoot, id),
+			identityFile,
+			taskFile,
+		};
+	} catch (err) {
+		for (const file of written) {
+			try {
+				unlinkSync(file);
+			} catch {}
+		}
+		throw err;
+	}
 }

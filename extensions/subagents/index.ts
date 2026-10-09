@@ -41,8 +41,10 @@ import {
 	buildIdentityFile,
 	buildLaunchPlan,
 	buildTaskFile,
+	cwdProblemMessage,
 	dispatchParentModel,
 	resolveAgentDef,
+	resolveLaunchCwd,
 	safeFilePart,
 	subagentId,
 } from "./launch-plan.ts";
@@ -67,6 +69,10 @@ import {
 	substitutePrevious,
 	truncateOutput,
 	PREVIOUS_OUTPUT_CAP,
+	BATCH_DEPTH_ENV,
+	MAX_BATCH_DEPTH,
+	batchDepthFromEnv,
+	batchDepthRefusal,
 	type BatchResult,
 } from "./batch.ts";
 import { renderLauncherPs1, type LauncherSpec } from "./launcher.ts";
@@ -80,7 +86,7 @@ import {
 	type DeliveryResult,
 	deliverMessage,
 	herdrAgentName,
-	labelPane,
+	labelPaneAsync,
 	listPaneIds,
 	listPaneIdsAsync,
 	loadNativeAgentOps,
@@ -370,6 +376,7 @@ function buildLauncherSpec(opts: {
 		if (def.autoExit) env["PI_SUBAGENT_AUTO_EXIT"] = "1";
 		if (def.subagents && def.subagents.length > 0) env["PI_SUBAGENT_ALLOWED"] = def.subagents.join(",");
 	}
+	env[BATCH_DEPTH_ENV] = String(batchDepthFromEnv() + 1);
 
 	return {
 		name: opts.name,
@@ -405,6 +412,7 @@ function doSpawn(
 		);
 	}
 	const def = resolveAgentDef(sctx.defs, params.agent);
+	const cwd = resolveLaunchCwd(params.cwd, ctx.cwd);
 
 	const reserved = new Set<string>([...watcher.running.keys(), ...Object.keys(readNameRegistry(sctx.registryFile))]);
 	const name = uniqueName(params.name?.trim() || def.name, reserved);
@@ -425,7 +433,6 @@ function doSpawn(
 	const sessionFile = plan.sessionFile;
 	const doneFile = `${sessionFile}.done`;
 	const activityFile = join(sctx.artifactDir, "activity", `${id}.json`);
-	const cwd = params.cwd?.trim() || ctx.cwd;
 	const model = plan.model;
 	const grantSpawning = !!(def.subagents && def.subagents.length > 0);
 
@@ -533,6 +540,7 @@ async function doResume(
 	const id = subagentId(name);
 	const startTime = Date.now();
 	const def = sctx.defs.get(entry.agent) ?? null;
+	const cwd = resolveLaunchCwd(entry.cwd, ctx.cwd);
 
 	const contextDir = join(sctx.artifactDir, "context");
 	const taskFile = buildTaskFile({ kind: "artifact", dir: contextDir }, name, taskWrapper(def, message));
@@ -550,7 +558,7 @@ async function doResume(
 		doneFile: `${entry.session}.done`,
 		activityFile,
 		identityFile,
-		cwd: entry.cwd ?? ctx.cwd,
+		cwd,
 		model: entry.model,
 		grantSpawning: !!(def?.subagents && def.subagents.length > 0),
 	});
@@ -580,13 +588,13 @@ async function doResume(
 		paneId = entry.paneId;
 		// Re-used pane: re-apply our label (ADR-3) — the previous run may have
 		// left a stale or collision-suffixed name on it.
-		labelPane(paneId, herdrAgentName(name));
+		await labelPaneAsync(paneId, herdrAgentName(name));
 	} else {
 		// Split targets must be live panes (see doSpawn).
 		pruneColumnPanes();
 		paneId = createSubagentPane({
 			ps1Path: scriptPath,
-			cwd: entry.cwd ?? ctx.cwd,
+			cwd,
 			runningCount: columnPanes.length,
 			topPane: columnPanes[0],
 			label: herdrAgentName(name),
@@ -610,7 +618,7 @@ async function doResume(
 		activity: { state: null, lastChangeAt: startTime, stalled: false },
 		cancelRequested: false,
 		// Both branches label the pane before the fresh child registers (new
-		// pane: split-time rename; reused pane: labelPane right after the
+		// pane: split-time rename; reused pane: labelPaneAsync right after the
 		// launcher — the previous run's agent record was removed on exit),
 		// so the deferred re-label has to close the gap (herdr only).
 		labelPending: activeBackend() === "herdr",
@@ -1091,6 +1099,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const batchDepth = batchDepthFromEnv();
+			if (batchDepth >= MAX_BATCH_DEPTH) {
+				return {
+					content: [{ type: "text", text: batchDepthRefusal(batchDepth) }],
+					details: makeBatchDetails("single", []),
+					isError: true,
+				};
+			}
 			const defs = discoverAgents(ctx.cwd, getAgentDir());
 			const dispatchDefaults = {
 				model: dispatchParentModel(ctx.model),
@@ -1123,6 +1139,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					r.stderr = err instanceof Error ? err.message : String(err);
 					return r;
 				}
+				const cwdProblem = cwdProblemMessage(cwd);
+				if (cwdProblem) {
+					const r = emptyResult(agentName, task);
+					r.exitCode = 1;
+					r.stderr = cwdProblem;
+					return r;
+				}
 				// Identity via a temp file: system prompts can be long, and Windows
 				// command lines are not.
 				const plan = buildLaunchPlan({
@@ -1140,7 +1163,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					sessionFile: plan.sessionFile,
 					taskFile: plan.taskFile!,
 					promptFile: plan.identityFile,
-					cwd: cwd ?? ctx.cwd,
+					cwd: cwd?.trim() || ctx.cwd,
 					model: plan.model,
 					thinking: def.model ? undefined : dispatchDefaults.thinking,
 					tools: def.tools,
@@ -1153,6 +1176,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					signal,
 					onEvent: onChildEvent,
 					step,
+					depth: batchDepth,
+					tempArtifacts: [plan.taskFile!, ...(plan.identityFile ? [plan.identityFile] : [])],
 				});
 				if (def.warnings.length > 0) {
 					result.stderr += `⚠ Agent definition warnings for "${def.name}": ${def.warnings.join("; ")}.\n`;

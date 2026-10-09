@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { AgentDef } from "../agents.ts";
@@ -8,8 +8,10 @@ import {
 	buildIdentityFile,
 	buildLaunchPlan,
 	buildTaskFile,
+	cwdProblemMessage,
 	dispatchParentModel,
 	resolveAgentDef,
+	resolveLaunchCwd,
 	resolveLaunchModel,
 	safeFilePart,
 	sessionFilePath,
@@ -204,6 +206,36 @@ test("buildLaunchPlan: empty def body yields no identity file and creates no con
 		});
 		assert.equal(plan.identityFile, undefined);
 		assert.equal(existsSync(contextDir), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("cwdProblemMessage: ok for blank/valid dirs, structured message for missing paths and plain files", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-launch-cwd-"));
+	try {
+		assert.equal(cwdProblemMessage(undefined), null);
+		assert.equal(cwdProblemMessage("   "), null);
+		assert.equal(cwdProblemMessage(dir), null);
+		assert.match(cwdProblemMessage(join(dir, "missing"))!, /does not exist/);
+		const filePath = join(dir, "file.txt");
+		writeFileSync(filePath, "x", "utf8");
+		assert.match(cwdProblemMessage(filePath)!, /not a directory/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("resolveLaunchCwd: trims and falls back, throws a readable error on a bad cwd", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-launch-cwd-resolve-"));
+	try {
+		assert.equal(resolveLaunchCwd(`  ${dir}  `, "/elsewhere"), dir);
+		assert.equal(resolveLaunchCwd(undefined, dir), dir);
+		assert.equal(resolveLaunchCwd("", dir), dir);
+		assert.throws(
+			() => resolveLaunchCwd(join(dir, "nope"), dir),
+			(err: unknown) => err instanceof Error && /does not exist/.test(err.message),
+		);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

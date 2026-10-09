@@ -48,6 +48,9 @@ export interface AgentDef {
 /** Frontmatter keys this extension understands; anything else is a warning. */
 const KNOWN_KEYS = new Set(["name", "description", "model", "thinking", "tools", "subagents", "auto-exit", "dispatch"]);
 
+const AUTO_EXIT_TRUE = new Set(["true", "yes", "1", "on"]);
+const AUTO_EXIT_FALSE = new Set(["false", "no", "0", "off"]);
+
 export function parseAgentMarkdown(raw: string, fallbackName: string): AgentDef {
 	const normalized = raw.replace(/\r\n/g, "\n");
 	const attrs: Record<string, string> = {};
@@ -76,6 +79,17 @@ export function parseAgentMarkdown(raw: string, fallbackName: string): AgentDef 
 	for (const key of Object.keys(attrs)) {
 		if (!KNOWN_KEYS.has(key)) warnings.push(`unknown frontmatter key "${key}"`);
 	}
+	const autoExitRaw = attrs["auto-exit"]?.trim().toLowerCase();
+	if (
+		autoExitRaw !== undefined &&
+		autoExitRaw !== "" &&
+		!AUTO_EXIT_TRUE.has(autoExitRaw) &&
+		!AUTO_EXIT_FALSE.has(autoExitRaw)
+	) {
+		warnings.push(
+			`invalid auto-exit value "${attrs["auto-exit"]?.trim()}" (use true/yes/1/on or false/no/0/off) — defaulting to true`,
+		);
+	}
 	const list = (key: string): string[] | undefined => {
 		const raw = attrs[key]?.trim();
 		if (!raw) return undefined;
@@ -93,7 +107,7 @@ export function parseAgentMarkdown(raw: string, fallbackName: string): AgentDef 
 		thinking: attrs["thinking"]?.trim() || undefined,
 		tools: list("tools"),
 		subagents: list("subagents"),
-		autoExit: attrs["auto-exit"]?.trim().toLowerCase() !== "false",
+		autoExit: autoExitRaw === undefined || autoExitRaw === "" || !AUTO_EXIT_FALSE.has(autoExitRaw),
 		body: body.trim(),
 		warnings,
 		scope: "global",

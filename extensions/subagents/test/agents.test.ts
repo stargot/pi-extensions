@@ -40,6 +40,29 @@ test("parseAgentMarkdown: auto-exit defaults to true, name falls back to file na
 	assert.equal(def.tools, undefined);
 });
 
+test("parseAgentMarkdown: auto-exit accepts true/yes/1/on and false/no/0/off, case-insensitive", () => {
+	for (const value of ["true", "TRUE", "Yes", "1", "on", "ON"]) {
+		const def = parseAgentMarkdown(`---\nauto-exit: ${value}\n---\nBody.`, "x");
+		assert.equal(def.autoExit, true, `auto-exit: ${value}`);
+		assert.deepEqual(def.warnings, [], `auto-exit: ${value} must not warn`);
+	}
+	for (const value of ["false", "FALSE", "No", "0", "off", "Off"]) {
+		const def = parseAgentMarkdown(`---\nauto-exit: ${value}\n---\nBody.`, "x");
+		assert.equal(def.autoExit, false, `auto-exit: ${value}`);
+		assert.deepEqual(def.warnings, [], `auto-exit: ${value} must not warn`);
+	}
+});
+
+test("parseAgentMarkdown: unrecognized auto-exit keeps the default (true) and reports a warning", () => {
+	for (const value of ["maybe", "auto", "2", "waar"]) {
+		const def = parseAgentMarkdown(`---\nauto-exit: ${value}\n---\nBody.`, "x");
+		assert.equal(def.autoExit, true, `auto-exit: ${value} falls back to the default`);
+		assert.equal(def.warnings.length, 1, `auto-exit: ${value} warns once`);
+		assert.match(def.warnings[0]!, /auto-exit/);
+		assert.match(def.warnings[0]!, /defaulting to true/);
+	}
+});
+
 test("parseAgentMarkdown: handles CRLF line endings", () => {
 	const def = parseAgentMarkdown("---\r\nname: crlf\r\ntools: a, b\r\n---\r\n\r\nBody.", "x");
 	assert.equal(def.name, "crlf");

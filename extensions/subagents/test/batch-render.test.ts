@@ -95,6 +95,25 @@ const singleRunning: BatchResult = {
 	liveTool: { name: "bash" },
 };
 
+const singleManyItems: BatchResult = {
+	...singleOk,
+	task: "Sweep the repo for stale TODOs",
+	messages: [
+		...Array.from({ length: 12 }, (_, i) => ({
+			role: "assistant",
+			content: [{ type: "toolCall", name: "grep", arguments: { pattern: `todo-${i}`, path: "src" } }],
+		})),
+		{
+			role: "assistant",
+			model: "claude-x",
+			stopReason: "stop",
+			usage: { input: 1200, output: 340, cost: { total: 0.0042 }, totalTokens: 9000 },
+			content: [{ type: "text", text: "Found 12 stale TODOs." }],
+		},
+	],
+	usage: usage({ input: 1200, output: 340, cost: 0.0042, contextTokens: 9000, turns: 13 }),
+};
+
 const chainOk: BatchResult[] = [
 	{ ...singleOk, step: 1, startedAt: FIXED_NOW - 100_000, finishedAt: FIXED_NOW - 35_000 },
 	{ ...singleOk, agent: "writer", task: "Expand the finding", step: 2, elapsedMs: 31_000 },
@@ -219,6 +238,15 @@ const cases: RenderCase[] = [
 		result: { content: [{ type: "text", text: "Found it." }], details: { mode: "single", results: [singleOk] } },
 		width: 80,
 		expanded: true,
+	},
+	{
+		name: "single-collapsed-item-overflow",
+		result: {
+			content: [{ type: "text", text: "Found 12 stale TODOs." }],
+			details: { mode: "single", results: [singleManyItems] },
+		},
+		width: 120,
+		expanded: false,
 	},
 	{
 		name: "chain-collapsed-ok",

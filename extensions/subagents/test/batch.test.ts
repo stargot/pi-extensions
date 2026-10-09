@@ -4,6 +4,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	batchDepthFromEnv,
+	batchDepthRefusal,
 	batchWallTime,
 	cancelledResult,
 	compactResultForDetails,
@@ -30,6 +32,8 @@ import {
 	substitutePrevious,
 	summarizeTools,
 	truncateOutput,
+	BATCH_DEPTH_ENV,
+	MAX_BATCH_DEPTH,
 	type BatchResult,
 } from "../batch.ts";
 import { buildIdentityFile, buildTaskFile } from "../launch-plan.ts";
@@ -253,7 +257,7 @@ test("runHeadlessChild: spawns fixture, parses events, pre-creates session, clea
 	writeFileSync(
 		fixture,
 		[
-			`require("node:fs").writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv));`,
+			`require("node:fs").writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify({ argv: process.argv, batchDepth: process.env.PI_TASK_BATCH_DEPTH ?? null }));`,
 			`console.log(JSON.stringify({type:"message_end", message:{role:"assistant", content:[{type:"text",text:"partial"}], usage:{input:10,output:2,cost:{total:0.001}}}}));`,
 			`console.log(JSON.stringify({type:"tool_result_end", message:{role:"toolResult"}}));`,
 			`console.log(JSON.stringify({type:"message_end", message:{role:"assistant", content:[{type:"text",text:"FINAL OUTPUT"}], model:"fixture-model", stopReason:"end", usage:{input:5,output:1,cost:{total:0.002}}}}));`,
@@ -282,6 +286,7 @@ test("runHeadlessChild: spawns fixture, parses events, pre-creates session, clea
 			defaultCwd: dir,
 			sessionsRoot,
 			denyTools: ["subagent"],
+			tempArtifacts: [taskFile, promptFile],
 			onEvent: (r) => events.push({ ...r, messages: [...r.messages], usage: { ...r.usage } }),
 		});
 
@@ -296,16 +301,73 @@ test("runHeadlessChild: spawns fixture, parses events, pre-creates session, clea
 		assert.ok(typeof result.startedAt === "number" && result.startedAt > 0, "startedAt recorded");
 		assert.ok(typeof result.elapsedMs === "number" && result.elapsedMs >= 0, "elapsedMs recorded on exit");
 
-		const argv = JSON.parse(readFileSync(argvFile, "utf8")) as string[];
+		const captured = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[]; batchDepth: string | null };
+		const argv = captured.argv;
 		const prompt = argv.at(-1) ?? "";
 		assert.equal(prompt, `@${taskFile}`, "task delivered via @file reference");
 		assert.ok(!argv.some((a) => a.includes("do things")), "task text never rides argv");
 		assert.equal(argv[argv.indexOf("--append-system-prompt") + 1], promptFile);
+		assert.equal(captured.batchDepth, "1", "children of a depth-0 batch run at depth 1");
 
 		assert.equal(existsSync(promptFile), false, "identity temp file removed after run");
 		assert.equal(existsSync(taskFile), false, "task temp file removed after run");
 		const leftovers = readdirSync(sessionsRoot).filter((f) => f.startsWith(".identity-") || f.startsWith(".task-"));
 		assert.equal(leftovers.length, 0, "no temp prompt/task files left behind");
+	} finally {
+		process.argv[1] = original;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("batchDepthFromEnv: strict parse, junk and non-positive fall back to 0", () => {
+	assert.equal(batchDepthFromEnv({}), 0);
+	assert.equal(batchDepthFromEnv({ [BATCH_DEPTH_ENV]: "2" }), 2);
+	assert.equal(batchDepthFromEnv({ [BATCH_DEPTH_ENV]: "0" }), 0);
+	assert.equal(batchDepthFromEnv({ [BATCH_DEPTH_ENV]: "-1" }), 0);
+	assert.equal(batchDepthFromEnv({ [BATCH_DEPTH_ENV]: "abc" }), 0);
+	assert.equal(batchDepthFromEnv({ [BATCH_DEPTH_ENV]: "3abc" }), 0);
+	assert.equal(batchDepthFromEnv({ [BATCH_DEPTH_ENV]: "" }), 0);
+	assert.equal(batchDepthFromEnv({ [BATCH_DEPTH_ENV]: " 3 " }), 3);
+});
+
+test("batchDepthRefusal: names the depth, the cap, and the way out", () => {
+	const text = batchDepthRefusal(3);
+	assert.match(text, /depth 3/);
+	assert.match(text, new RegExp(`max ${MAX_BATCH_DEPTH}`));
+	assert.match(text, /shallower session/);
+});
+
+test("runHeadlessChild: parent depth is handed to the child, non-temp artifacts survive", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-batch-depth-"));
+	const envFile = join(dir, "env.json");
+	const fixture = join(dir, "fixture.js");
+	writeFileSync(
+		fixture,
+		[
+			`require("node:fs").writeFileSync(${JSON.stringify(envFile)}, JSON.stringify(process.env.PI_TASK_BATCH_DEPTH ?? null));`,
+			`process.exit(0);`,
+		].join("\n"),
+		"utf8",
+	);
+	const persistentTask = join(dir, "persistent-task.md");
+	writeFileSync(persistentTask, "Task: t", "utf8");
+	const original = process.argv[1];
+	try {
+		process.argv[1] = fixture;
+		const result = await runHeadlessChild({
+			agentName: "x",
+			agentLabel: "x",
+			task: "t",
+			sessionFile: join(dir, "sessions", "depth.jsonl"),
+			taskFile: persistentTask,
+			cwd: dir,
+			defaultCwd: dir,
+			sessionsRoot: join(dir, "sessions"),
+			depth: 2,
+		});
+		assert.equal(result.exitCode, 0);
+		assert.equal(readFileSync(envFile, "utf8"), JSON.stringify("3"), "child sees depth+1");
+		assert.equal(existsSync(persistentTask), true, "files not listed in tempArtifacts are never deleted");
 	} finally {
 		process.argv[1] = original;
 		rmSync(dir, { recursive: true, force: true });

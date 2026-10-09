@@ -43,6 +43,22 @@ export const DEFAULT_CHILD_TIMEOUT_MS = 30 * 60 * 1000;
 /** Per-message text cap for intermediate UI updates (see compactResultForDetails). */
 export const DETAIL_TEXT_CAP = 2 * 1024;
 
+export const MAX_BATCH_DEPTH = 3;
+export const BATCH_DEPTH_ENV = "PI_TASK_BATCH_DEPTH";
+
+export function batchDepthFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = (env[BATCH_DEPTH_ENV] ?? "").trim();
+	return /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : 0;
+}
+
+export function batchDepthRefusal(depth: number): string {
+	return (
+		`task_batch nesting limit reached: this session is itself a task_batch child at depth ${depth} ` +
+		`(max ${MAX_BATCH_DEPTH}). Children at depth ${MAX_BATCH_DEPTH} cannot spawn further headless batches. ` +
+		`Flatten the pipeline — run the remaining steps from a shallower session instead.`
+	);
+}
+
 // ── Types ──
 
 export interface BatchUsage {
@@ -526,6 +542,8 @@ export interface HeadlessChildOptions {
 	spawnerSession?: string;
 	/** Absolute pi CLI path; preferred on Windows where spawning .cmd shims directly fails (EINVAL). */
 	piPath?: string;
+	depth?: number;
+	tempArtifacts?: string[];
 	/** Per-child timeout in ms. Default DEFAULT_CHILD_TIMEOUT_MS; 0 disables. */
 	timeoutMs?: number;
 	/** Grace period before SIGKILL escalation after a kill (tests shrink this). */
@@ -617,6 +635,7 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 					shell: false,
 					stdio: ["ignore", "pipe", "pipe"],
 					windowsHide: true,
+					env: { ...process.env, [BATCH_DEPTH_ENV]: String((opts.depth ?? 0) + 1) },
 				});
 				// Registered only after a successful spawn: a PID-less record is
 				// unusable for liveness checks.
@@ -751,8 +770,7 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 		});
 	} finally {
 		unregister();
-		for (const temp of [opts.promptFile, opts.taskFile]) {
-			if (!temp) continue;
+		for (const temp of opts.tempArtifacts ?? []) {
 			try {
 				unlinkSync(temp);
 			} catch {
