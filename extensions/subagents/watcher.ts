@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentDef } from "./agents.ts";
 import type { ActivityReadResult, SubagentActivityState } from "./activity.ts";
-import { herdrAgentName, type MuxBackend } from "./mux.ts";
+import { herdrAgentName, type MuxBackendName, type NativeAgentOps } from "./mux.ts";
 import { formatUsage, type SessionSummary } from "./session-read.ts";
 import { cancelSidecarPath, classifyExitSidecar, fmtElapsed, parseSentinel } from "./shared.ts";
 
@@ -83,8 +83,6 @@ export interface RunningSubagent {
 	labelLastAttemptAt?: number;
 }
 
-type HerdrModule = typeof import("./herdr.ts");
-
 export interface TraceEntry {
 	agent: string;
 	task: string;
@@ -93,17 +91,26 @@ export interface TraceEntry {
 	model?: string;
 }
 
+export type PaneListSnapshot = { ok: true; ids: Set<string> } | { ok: false };
+
+export interface WatcherPaneOps {
+	refreshPaneList(): void;
+	paneListSnapshot(): PaneListSnapshot | null;
+	requestScreenTail(paneId: string): void;
+	screenTailSnapshot(paneId: string): string;
+	dropPane(paneId: string): void;
+}
+
 export interface WatcherDeps {
 	now(): number;
 	existsSync(path: string): boolean;
 	readFileSync(path: string, options: BufferEncoding): string;
 	rmSync(path: string, options: { force: true }): void;
 	readActivityState(activityFile: string, runningChildId: string): ActivityReadResult;
-	listPaneIds(): Set<string>;
+	panes: WatcherPaneOps;
 	closePane(paneId: string): void;
-	readScreenTail(paneId: string, lines: number): string;
-	activeBackend(): MuxBackend | null;
-	loadHerdr(): Promise<HerdrModule>;
+	activeBackend(): MuxBackendName | null;
+	loadNativeAgentOps(): Promise<NativeAgentOps> | null;
 	sendMessage(
 		message: Parameters<ExtensionAPI["sendMessage"]>[0],
 		opts: { triggerTurn: boolean; deliverAs: "steer" },
@@ -131,11 +138,10 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 		readFileSync,
 		rmSync,
 		readActivityState,
-		listPaneIds,
+		panes,
 		closePane,
-		readScreenTail,
 		activeBackend,
-		loadHerdr,
+		loadNativeAgentOps,
 		sendMessage,
 		appendTraceCard,
 		summarizeSessionFile,
@@ -177,8 +183,10 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 		}
 		const timer = setTimeout(() => {
 			running.doneWaiterTimer = undefined;
-			void loadHerdr()
-				.then((herdr) => {
+			const ops = loadNativeAgentOps();
+			if (!ops) return;
+			void ops
+				.then((native) => {
 					// Completed (or session reset) while the module promise settled:
 					// never spawn a waiter for a dead entry — it would orphan.
 					if (runningSubagents.get(running.id) !== running) return;
@@ -191,11 +199,11 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 					// net's own pacing (R10) starts from here, not from boot.
 					if (running.labelPending) {
 						running.labelLastAttemptAt = deps.now();
-						if (herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
+						if (native.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
 							running.labelPending = false;
 						}
 					}
-					const waiter = herdr.spawnDoneWaiter(running.paneId, NATIVE_DONE_UNTIL);
+					const waiter = native.spawnDoneWaiter(running.paneId, NATIVE_DONE_UNTIL);
 					if (!waiter) return;
 					waiter.on("exit", (code) => {
 						if (code === 0) running.nativeDoneAt = deps.now();
@@ -223,12 +231,14 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 	 */
 	function armDeferredRelabel(running: RunningSubagent): void {
 		const timer = setTimeout(() => {
-			void loadHerdr()
-				.then((herdr) => {
+			const ops = loadNativeAgentOps();
+			if (!ops) return;
+			void ops
+				.then((native) => {
 					if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
 					// Stamp before the attempt: paces the pollTick safety net (R10).
 					running.labelLastAttemptAt = deps.now();
-					if (herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
+					if (native.applyPaneLabel(running.paneId, herdrAgentName(running.name))) {
 						running.labelPending = false;
 					}
 				})
@@ -458,8 +468,9 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 	function pollTick(): void {
 		if (runningSubagents.size === 0) return;
 		const now = deps.now();
-		const alive = listPaneIds();
-		if (alive.size === 0) return;
+		panes.refreshPaneList();
+		const paneSnapshot = panes.paneListSnapshot();
+		const alive = paneSnapshot !== null && paneSnapshot.ok && paneSnapshot.ids.size > 0 ? paneSnapshot.ids : null;
 
 		for (const running of Array.from(runningSubagents.values())) {
 			// 1. Fast path: launcher-written sidecar with the exit code.
@@ -476,14 +487,15 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 			}
 
 			// 4. Pane vanished without finishing → crashed or closed by the user.
-			if (!alive.has(running.paneId)) {
+			if (alive !== null && !alive.has(running.paneId)) {
 				forgetPane(running.paneId);
 				completeSubagent(running, { exitCode: 1, crashed: true, errorMessage: "pane closed" });
 				continue;
 			}
 
 			// 5. Screen sentinel fallback (sidecars failed to write).
-			const sentinel = parseSentinel(readScreenTail(running.paneId, 4));
+			panes.requestScreenTail(running.paneId);
+			const sentinel = parseSentinel(panes.screenTailSnapshot(running.paneId));
 			if (sentinel !== null) {
 				completeSubagent(running, { exitCode: sentinel });
 				continue;
@@ -512,19 +524,22 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 			// goes through pane ids).
 			if (running.labelPending && now - (running.labelLastAttemptAt ?? running.startTime) >= LABEL_RETRY_INTERVAL_MS) {
 				running.labelLastAttemptAt = now;
-				void loadHerdr()
-					.then((herdr) => {
-						if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
-						if (
-							herdr.applyPaneLabel(running.paneId, herdrAgentName(running.name)) ||
-							deps.now() - running.startTime >= LABEL_PENDING_MAX_MS
-						) {
-							running.labelPending = false;
-						}
-					})
-					.catch(() => {
-						// herdr hiccup this tick — the ceiling surrenders eventually.
-					});
+				const ops = loadNativeAgentOps();
+				if (ops) {
+					void ops
+						.then((native) => {
+							if (runningSubagents.get(running.id) !== running || !running.labelPending) return;
+							if (
+								native.applyPaneLabel(running.paneId, herdrAgentName(running.name)) ||
+								deps.now() - running.startTime >= LABEL_PENDING_MAX_MS
+							) {
+								running.labelPending = false;
+							}
+						})
+						.catch(() => {
+							// herdr hiccup this tick — the ceiling surrenders eventually.
+						});
+				}
 			}
 
 			observeActivity(running, now);
@@ -550,6 +565,7 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 	}
 	function track(sub: RunningSubagent): void {
 		runningSubagents.set(sub.id, sub);
+		panes.dropPane(sub.paneId);
 		publishRunningChildrenCount();
 		armDoneWaiter(sub);
 	}

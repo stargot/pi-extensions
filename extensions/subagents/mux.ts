@@ -10,11 +10,12 @@
  * The exported surface mirrors the old wezterm.ts API one-to-one, so callers
  * (index.ts, manual e2e scripts) stay backend-agnostic.
  */
+import type { ChildProcess } from "node:child_process";
 import { parseSentinel, SENTINEL_PATTERN } from "./shared.ts";
-import * as herdr from "./herdr.ts";
-import * as wezterm from "./wezterm.ts";
+import { herdrBackend, isHerdrAvailable, isHerdrEnv, type AgentPromptOutcome } from "./herdr.ts";
+import { isWezTermAvailable, weztermBackend } from "./wezterm.ts";
 
-export type MuxBackend = "herdr" | "wezterm";
+export type MuxBackendName = "herdr" | "wezterm";
 
 export interface CreatePaneOptions {
 	/** Launcher script the new pane executes. */
@@ -29,29 +30,54 @@ export interface CreatePaneOptions {
 	label?: string;
 }
 
+export interface MuxBackend {
+	readonly name: MuxBackendName;
+	createSubagentPane(opts: CreatePaneOptions): string;
+	listPaneIds(): Set<string>;
+	listPaneIdsAsync(): Promise<Set<string>>;
+	paneExists(paneId: string, known?: Set<string>): boolean;
+	readScreenTail(paneId: string, lines?: number): string;
+	readScreenTailAsync(paneId: string, lines?: number): Promise<string>;
+	sendText(paneId: string, text: string): Promise<void>;
+	sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): Promise<void>;
+	runScriptInPane(paneId: string, scriptPath: string): Promise<void>;
+	closePane(paneId: string): void;
+	activatePane(paneId: string): void;
+	promptAgent?(paneId: string, text: string): Promise<AgentPromptOutcome>;
+	applyPaneLabel?(paneId: string, label: string): boolean;
+	spawnDoneWaiter?(paneId: string, untilStatuses: string[]): ChildProcess | null;
+}
+
+export interface NativeAgentOps {
+	applyPaneLabel(paneId: string, label: string): boolean;
+	spawnDoneWaiter(paneId: string, untilStatuses: string[]): ChildProcess | null;
+}
+
+const backends: Record<MuxBackendName, MuxBackend> = { herdr: herdrBackend, wezterm: weztermBackend };
+
 /**
  * Pure selection logic — exported for tests. The regression case: both
  * HERDR_ENV=1 and WEZTERM_PANE set (pi inside a herdr pane) must pick herdr.
  */
-export function selectBackend(env: NodeJS.ProcessEnv, herdrOk: boolean, weztermOk: boolean): MuxBackend | null {
+export function selectBackend(env: NodeJS.ProcessEnv, herdrOk: boolean, weztermOk: boolean): MuxBackendName | null {
 	if (env.HERDR_ENV === "1") return herdrOk ? "herdr" : null;
 	if (env.WEZTERM_PANE) return weztermOk ? "wezterm" : null;
 	return null;
 }
 
-let cachedBackend: MuxBackend | null | undefined;
+let cachedBackend: MuxBackendName | null | undefined;
 
 /** The backend this session drives, or null when no mux is usable. */
-export function activeBackend(): MuxBackend | null {
+export function activeBackend(): MuxBackendName | null {
 	if (cachedBackend === undefined) {
-		cachedBackend = selectBackend(process.env, herdr.isHerdrAvailable(), wezterm.isWezTermAvailable());
+		cachedBackend = selectBackend(process.env, isHerdrAvailable(), isWezTermAvailable());
 	}
 	return cachedBackend;
 }
 
 /** Setup advice tailored to the environment the user actually runs pi in. */
 export function muxSetupHint(): string {
-	if (herdr.isHerdrEnv()) {
+	if (isHerdrEnv()) {
 		return "pi is running inside herdr (HERDR_ENV=1) — make sure the `herdr` CLI is on PATH.";
 	}
 	if (process.env.WEZTERM_PANE) {
@@ -60,8 +86,13 @@ export function muxSetupHint(): string {
 	return "Start pi inside WezTerm or herdr (https://herdr.dev) and make sure the matching CLI (`wezterm`/`herdr`) and `pwsh` are on PATH.";
 }
 
+function activeImpl(): MuxBackend | null {
+	const name = activeBackend();
+	return name ? backends[name] : null;
+}
+
 function requireBackend(): MuxBackend {
-	const backend = activeBackend();
+	const backend = activeImpl();
 	if (!backend) throw new Error(`No terminal multiplexer available. ${muxSetupHint()}`);
 	return backend;
 }
@@ -73,41 +104,52 @@ function requireBackend(): MuxBackend {
  */
 export function createSubagentPane(opts: CreatePaneOptions): string {
 	const backend = requireBackend();
-	return backend === "herdr" ? herdr.createSubagentPane(opts) : wezterm.createSubagentPane(opts);
+	return backend.createSubagentPane(opts);
 }
 
 /** Ids of all panes the mux currently knows about. */
 export function listPaneIds(): Set<string> {
-	const backend = activeBackend();
+	const backend = activeImpl();
 	if (!backend) return new Set();
-	return backend === "herdr" ? herdr.listPaneIds() : wezterm.listPaneIds();
+	return backend.listPaneIds();
+}
+
+export function listPaneIdsAsync(): Promise<Set<string>> {
+	const backend = activeImpl();
+	if (!backend) return Promise.resolve(new Set());
+	return backend.listPaneIdsAsync();
 }
 
 export function paneExists(paneId: string, known?: Set<string>): boolean {
-	const backend = activeBackend();
+	const backend = activeImpl();
 	if (!backend) return false;
-	return backend === "herdr" ? herdr.paneExists(paneId, known) : wezterm.paneExists(paneId, known);
+	return backend.paneExists(paneId, known);
 }
 
 /** Read the last `lines` lines of a pane's output ("" when the pane is gone). */
 export function readScreenTail(paneId: string, lines = 6): string {
-	const backend = activeBackend();
+	const backend = activeImpl();
 	if (!backend) return "";
-	return backend === "herdr" ? herdr.readScreenTail(paneId, lines) : wezterm.readScreenTail(paneId, lines);
+	return backend.readScreenTail(paneId, lines);
+}
+
+export function readScreenTailAsync(paneId: string, lines = 6): Promise<string> {
+	const backend = activeImpl();
+	if (!backend) return Promise.resolve("");
+	return backend.readScreenTailAsync(paneId, lines);
 }
 
 /** Send text to a pane as a single submission (paste + Enter semantics). */
-export function sendText(paneId: string, text: string): void {
+export async function sendText(paneId: string, text: string): Promise<void> {
 	const backend = requireBackend();
-	if (backend === "herdr") herdr.sendText(paneId, text);
-	else wezterm.sendText(paneId, text);
+	await backend.sendText(paneId, text);
 }
 
 /** Result of a steer delivery: ok = the message reached the child. */
 export interface DeliveryResult {
 	ok: boolean;
 	/** Structured herdr prompt outcome — always set on failure; undefined on wezterm success. */
-	outcome?: herdr.AgentPromptOutcome;
+	outcome?: AgentPromptOutcome;
 }
 
 /**
@@ -118,13 +160,13 @@ export interface DeliveryResult {
  * throws — failures return a structured outcome; the wezterm branch still
  * propagates sendText failures (pane gone) to the caller's catch.
  */
-export function deliverMessage(paneId: string, text: string): DeliveryResult {
+export async function deliverMessage(paneId: string, text: string): Promise<DeliveryResult> {
 	const backend = requireBackend();
-	if (backend === "herdr") {
-		const outcome = herdr.promptAgent(paneId, text);
+	if (backend.promptAgent) {
+		const outcome = await backend.promptAgent(paneId, text);
 		return { ok: outcome === "delivered", outcome };
 	}
-	wezterm.sendText(paneId, text);
+	await backend.sendText(paneId, text);
 	return { ok: true };
 }
 
@@ -136,39 +178,54 @@ export function deliverMessage(paneId: string, text: string): DeliveryResult {
  * cosmetics, addressing always goes through pane ids.
  */
 export function labelPane(paneId: string, label: string): void {
-	const backend = activeBackend();
+	const backend = activeImpl();
 	if (!backend) return;
-	if (backend === "herdr") herdr.applyPaneLabel(paneId, label);
+	backend.applyPaneLabel?.(paneId, label);
 }
 
 /** Interrupt the foreground program in a pane (Esc aborts pi's turn, Ctrl+C kills a command). */
-export function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): void {
+export async function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): Promise<void> {
 	const backend = requireBackend();
-	if (backend === "herdr") herdr.sendInterrupt(paneId, key);
-	else wezterm.sendInterrupt(paneId, key);
+	await backend.sendInterrupt(paneId, key);
 }
 
 /** Run a launcher script in a pane sitting at a shell prompt (resume). */
-export function runScriptInPane(paneId: string, scriptPath: string): void {
+export async function runScriptInPane(paneId: string, scriptPath: string): Promise<void> {
 	const backend = requireBackend();
-	if (backend === "herdr") herdr.runScriptInPane(paneId, scriptPath);
-	else wezterm.runScriptInPane(paneId, scriptPath);
+	await backend.runScriptInPane(paneId, scriptPath);
 }
 
 /** Close a pane. Best-effort: must never break the parent. */
 export function closePane(paneId: string): void {
-	const backend = activeBackend();
+	const backend = activeImpl();
 	if (!backend) return;
-	if (backend === "herdr") herdr.closePane(paneId);
-	else wezterm.closePane(paneId);
+	backend.closePane(paneId);
 }
 
 /** Focus hand-back after splits (wezterm needs it; herdr is a no-op). */
 export function activatePane(paneId: string): void {
-	const backend = activeBackend();
+	const backend = activeImpl();
 	if (!backend) return;
-	if (backend === "herdr") herdr.activatePane(paneId);
-	else wezterm.activatePane(paneId);
+	backend.activatePane(paneId);
+}
+
+// Dynamic herdr import, cached: callers must stay backend-agnostic — mux is
+// the only surface, and herdr is not imported outside this module — while
+// the deferred re-label (ADR-3) and the done-waiter need herdr directly.
+// The ESM module promise is memoized, so repeated loads are free.
+let herdrModule: Promise<typeof import("./herdr.ts")> | null = null;
+function loadHerdr(): Promise<typeof import("./herdr.ts")> {
+	herdrModule ??= import("./herdr.ts");
+	return herdrModule;
+}
+
+export function loadNativeAgentOps(): Promise<NativeAgentOps> | null {
+	const backend = activeImpl();
+	if (!backend) return null;
+	const { applyPaneLabel, spawnDoneWaiter } = backend;
+	if (!applyPaneLabel || !spawnDoneWaiter) return null;
+	const ops: NativeAgentOps = { applyPaneLabel, spawnDoneWaiter };
+	return loadHerdr().then(() => ops);
 }
 
 // ── Completion detection (backend-independent) ──

@@ -29,8 +29,8 @@
  * debugging, and resume recreates a collapsed pane on demand.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Box, Container, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -49,15 +49,7 @@ import {
 import { killProcessTree } from "../shared/proctree.ts";
 import { activityLabel, readActivityState } from "./activity.ts";
 import {
-	displayItems,
-	elapsedOf,
 	emptyResult,
-	batchWallTime,
-	firstLines,
-	formatDuration,
-	formatTokens,
-	formatToolCall,
-	formatUsageStats,
 	finalOutput,
 	isFailedResult,
 	isQueued,
@@ -69,17 +61,16 @@ import {
 	cancelledResult,
 	compactResultForDetails,
 	oneline,
-	progressBar,
 	resultOutput,
 	runHeadlessChild,
 	spinnerFrame,
 	substitutePrevious,
-	summarizeTools,
 	truncateOutput,
 	PREVIOUS_OUTPUT_CAP,
 	type BatchResult,
 } from "./batch.ts";
 import { renderLauncherPs1, type LauncherSpec } from "./launcher.ts";
+import { createWatcherPaneOps } from "./pane-cache.ts";
 import { summarizeSessionFile } from "./session-read.ts";
 import { readNameRegistry, registryPath, uniqueName, upsertName, type RegistryEntry } from "./registry.ts";
 import {
@@ -91,8 +82,10 @@ import {
 	herdrAgentName,
 	labelPane,
 	listPaneIds,
+	listPaneIdsAsync,
+	loadNativeAgentOps,
 	paneExists,
-	readScreenTail,
+	readScreenTailAsync,
 	runScriptInPane,
 	sendInterrupt,
 } from "./mux.ts";
@@ -104,14 +97,13 @@ import {
 	resolveInterrupt,
 } from "./shared.ts";
 import {
-	BatchCard,
-	errorLine,
+	renderBatchResult,
 	renderSubagentCancelResult,
 	renderSubagentMessageResult,
 	renderSubagentResult,
 	renderSubagentsListResult,
 	subagentResultCard,
-	verdictChip,
+	type BatchDetails,
 } from "./render.ts";
 import { readRunningWorkers, runningIndexPath } from "./running-index.ts";
 import { createSubagentWatcher, type RunningSubagent } from "./watcher.ts";
@@ -164,17 +156,21 @@ let latestCtx: ExtensionContext | null = null;
 let columnPanes: string[] = [];
 let cachedPiPath: string | null = null;
 
+const watcherPaneOps = createWatcherPaneOps({
+	listPaneIds: listPaneIdsAsync,
+	readScreenTail: readScreenTailAsync,
+});
+
 const watcher = createSubagentWatcher({
 	now: () => Date.now(),
 	existsSync,
 	readFileSync: (path, options) => readFileSync(path, options),
 	rmSync,
 	readActivityState,
-	listPaneIds,
+	panes: watcherPaneOps,
 	closePane,
-	readScreenTail,
 	activeBackend,
-	loadHerdr,
+	loadNativeAgentOps,
 	sendMessage: (message, opts) => latestPi?.sendMessage(message, opts),
 	appendTraceCard: (entry) => appendTraceCard(latestPi, entry),
 	summarizeSessionFile,
@@ -316,18 +312,6 @@ function updateWidget(): void {
 		box.addChild(new Text(`${header}\n${lines.join("\n")}`, 0, 0));
 		return box;
 	});
-}
-
-// ── Completion / steering ──
-
-// Dynamic herdr import, cached: static herdr imports in index.ts are
-// forbidden (this module stays backend-agnostic — mux is the only surface),
-// while the deferred re-label (ADR-3) and the done-waiter need herdr
-// directly. The ESM module promise is memoized, so repeated loads are free.
-let herdrModule: Promise<typeof import("./herdr.ts")> | null = null;
-function loadHerdr(): Promise<typeof import("./herdr.ts")> {
-	herdrModule ??= import("./herdr.ts");
-	return herdrModule;
 }
 
 // ── Spawning ──
@@ -539,12 +523,12 @@ function doSpawn(
 	};
 }
 
-function doResume(
+async function doResume(
 	ctx: ExtensionContext,
 	sctx: SpawnContext,
 	entry: RegistryEntry & { paneId?: string },
 	message: string,
-): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
+): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> {
 	const name = entry.name;
 	const id = subagentId(name);
 	const startTime = Date.now();
@@ -592,7 +576,7 @@ function doResume(
 	let paneId: string;
 	if (paneAlive && entry.paneId) {
 		// The pane is sitting at a pwsh prompt — run the resume launcher there.
-		runScriptInPane(entry.paneId, scriptPath);
+		await runScriptInPane(entry.paneId, scriptPath);
 		paneId = entry.paneId;
 		// Re-used pane: re-apply our label (ADR-3) — the previous run may have
 		// left a stale or collision-suffixed name on it.
@@ -783,7 +767,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					// must not surface the steer as a tool error; the next pollTick
 					// completes the entry as crashed.
 					try {
-						sendInterrupt(running.paneId, "escape");
+						await sendInterrupt(running.paneId, "escape");
 					} catch {
 						// Pane already gone.
 					}
@@ -792,7 +776,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				if (!watcher.completeFromSidecars(running)) {
 					let delivery: DeliveryResult;
 					try {
-						delivery = deliverMessage(running.paneId, message);
+						delivery = await deliverMessage(running.paneId, message);
 					} catch {
 						// Pane died during the settle sleep — the next pollTick
 						// completes the entry; a steer into a dead pane surfaces as
@@ -826,6 +810,20 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						// outcome names the story — surface it as a readable tool error,
 						// never as a raw herdr JSON envelope.
 						throw new Error(describePromptFailure(delivery.outcome ?? "error", name));
+					}
+					if (!watcher.running.has(running.id)) {
+						return {
+							content: [
+								{
+									type: "text",
+									text:
+										`Subagent "${name}" has already finished — no live agent to steer. ` +
+										`Its completion result still arrives as a steer message if it just finished; ` +
+										`call subagent_message again with the same name to resume it from its saved session.`,
+								},
+							],
+							details: { name, status: "finished" },
+						};
 					}
 					running.activity.lastChangeAt = Date.now();
 					running.activity.stalled = false;
@@ -939,13 +937,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			// mid-grace-period) — a send into a dead pane must not surface the
 			// cancel as a tool error; the next pollTick completes the entry.
 			try {
-				sendInterrupt(running.paneId, "escape");
+				await sendInterrupt(running.paneId, "escape");
 			} catch {
 				// Pane already gone.
 			}
 			await sleep(400);
 			try {
-				sendInterrupt(running.paneId, "ctrl-c");
+				await sendInterrupt(running.paneId, "ctrl-c");
 			} catch {
 				// Same race, one sleep later.
 			}
@@ -1041,16 +1039,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		if (running > 0) parts.push(`${running} running`);
 		if (queued > 0) parts.push(`${queued} queued`);
 		return `Parallel: ${parts.join(" · ")}`;
-	}
-
-	interface BatchDetails {
-		mode: "single" | "parallel" | "chain";
-		results: BatchResult[];
-		/**
-		 * Chain only: size (utf8 bytes) of the {previous} output handed into
-		 * step i; aligns with results by index, 0 for the first step.
-		 */
-		handOff?: number[];
 	}
 
 	const makeBatchDetails = (mode: BatchDetails["mode"], results: BatchResult[], handOff?: number[]): BatchDetails => ({
@@ -1217,10 +1205,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 					for (let i = 0; i < params.chain.length; i++) {
 						const step = params.chain[i];
-						// Cap what this step receives via {previous}: the prompt rides
-						// the child's argv, and Windows command lines are finite — an
-						// uncapped handoff turns a verbose step into the next one's
-						// spawn failure.
+						// Cap what this step receives via {previous}: the handoff is spliced into
+						// the next step's task, which the child reads whole as its prompt — an
+						// uncapped handoff lets a verbose step drown the next child's context
+						// window and bury the task instructions.
 						const handOffOutput = i === 0 ? "" : truncateOutput(previousOutput, PREVIOUS_OUTPUT_CAP);
 						// Size of what this step receives via {previous} — shown as ← +Nk.
 						handOff.push(Buffer.byteLength(handOffOutput, "utf8"));
@@ -1417,271 +1405,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			return container;
 		},
 
-		renderResult(result, options, theme, _context) {
-			const expanded = options.expanded;
-			const details = result.details as BatchDetails | undefined;
-			if (!details || details.results.length === 0) {
-				const first = result.content[0] as { type?: string; text?: string } | undefined;
-				return new Text(first?.type === "text" ? (first.text ?? "(no output)") : "(no output)", 0, 0);
-			}
-
-			const mdTheme = getMarkdownTheme();
-			const statusIcon = (r: BatchResult): string => {
-				if (isQueued(r)) return theme.fg("dim", "○");
-				if (isRunning(r)) return theme.fg("warning", spinnerFrame());
-				if (isFailedResult(r)) return theme.fg("error", "✗");
-				return theme.fg("success", "✓");
-			};
-			const elapsedTag = (r: BatchResult): string => {
-				const ms = elapsedOf(r);
-				return ms === undefined ? "" : ` ${theme.fg("dim", formatDuration(ms))}`;
-			};
-			// Verdict chips and error banners come from the shared render helpers.
-			const stderrExcerpt = (r: BatchResult): string => (isFailedResult(r) && r.stderr ? firstLines(r.stderr, 3) : "");
-			// One line per task for the collapsed parallel view (No.7).
-			const taskLine = (r: BatchResult): string => {
-				const head = `${statusIcon(r)} ${theme.fg("accent", r.agent)}${elapsedTag(r)}`;
-				if (isQueued(r)) return `${head} ${theme.fg("muted", "queued")}`;
-				const bits: string[] = [];
-				if (isFailedResult(r)) {
-					const reason = oneline(r.errorMessage || r.stopReason || `exit ${r.exitCode}`);
-					bits.push(theme.fg("error", `failed (${reason})`));
-				} else {
-					const tools = summarizeTools(displayItems(r.messages));
-					if (tools) bits.push(theme.fg("muted", tools));
-					if (isRunning(r) && r.liveTool) {
-						// Mid-turn tool progress — arrives via tool_execution_start,
-						// so this updates without waiting for the turn to end.
-						bits.push(theme.fg("warning", `${r.liveTool.name}…`));
-					} else if (!isRunning(r)) {
-						const out = finalOutput(r.messages);
-						if (out) bits.push(theme.fg("dim", `→ ${formatTokens(out.length)}`));
-					}
-				}
-				return bits.length > 0 ? `${head} ${bits.join(" ")}` : head;
-			};
-			const collapsedItems = (items: ReturnType<typeof displayItems>, limit: number): string => {
-				const toShow = items.slice(-limit);
-				const skipped = items.length > limit ? items.length - limit : 0;
-				let text = "";
-				if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-				for (const item of toShow) {
-					if (item.type === "text") {
-						const preview = expanded ? (item.text ?? "") : (item.text ?? "").split("\n").slice(0, 3).join("\n");
-						text += `${theme.fg("toolOutput", preview)}\n`;
-					} else {
-						text += `${theme.fg("muted", "→ ") + formatToolCall(item.name ?? "", item.args ?? {}, theme.fg)}\n`;
-					}
-				}
-				return text.trimEnd();
-			};
-			const childCard = (container: Container, r: BatchResult, header: string): void => {
-				const usageStr = formatUsageStats(r.usage, r.model);
-				const card = new BatchCard((s) => theme.fg("borderMuted", s), header, usageStr || undefined);
-				card.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
-				for (const item of displayItems(r.messages)) {
-					if (item.type === "toolCall") {
-						card.addChild(
-							new Text(theme.fg("muted", "→ ") + formatToolCall(item.name ?? "", item.args ?? {}, theme.fg), 0, 0),
-						);
-					}
-				}
-				const output = finalOutput(r.messages);
-				if (output) {
-					card.addChild(new Spacer(1));
-					card.addChild(new Markdown(output.trim(), 0, 0, mdTheme));
-				}
-				container.addChild(new Spacer(1));
-				container.addChild(card);
-			};
-			const aggregateUsage = (results: BatchResult[]) => {
-				const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
-				for (const r of results) {
-					total.input += r.usage.input;
-					total.output += r.usage.output;
-					total.cacheRead += r.usage.cacheRead;
-					total.cacheWrite += r.usage.cacheWrite;
-					total.cost += r.usage.cost;
-					total.turns += r.usage.turns;
-				}
-				return total;
-			};
-			// Done-state header tail: cost · wall time, then failed agent names.
-			const costWallTag = (results: BatchResult[]): string => {
-				const usage = aggregateUsage(results);
-				const bits: string[] = [];
-				if (usage.cost > 0) bits.push(`$${usage.cost < 0.01 ? usage.cost.toFixed(4) : usage.cost.toFixed(2)}`);
-				const wall = batchWallTime(results);
-				if (wall !== undefined) bits.push(formatDuration(wall));
-				return theme.fg("dim", bits.join(" · "));
-			};
-			const failedTag = (results: BatchResult[]): string => {
-				const failed = results.filter((r) => !isRunning(r) && !isQueued(r) && isFailedResult(r));
-				if (failed.length === 0) return "";
-				const names = failed.map((r) => r.agent);
-				const shown = names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "");
-				return theme.fg("error", `${failed.length} failed: ${shown}`);
-			};
-
-			if (details.mode === "single" && details.results.length === 1) {
-				const r = details.results[0];
-				const isError = isFailedResult(r);
-				const isBusy = isRunning(r);
-				const icon = isBusy
-					? theme.fg("warning", spinnerFrame())
-					: isError
-						? theme.fg("error", "✗")
-						: theme.fg("success", "✓");
-				const items = displayItems(r.messages);
-				if (expanded) {
-					const container = new Container();
-					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${elapsedTag(r)}`;
-					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-					container.addChild(new Text(header, 0, 0));
-					if (isError && r.errorMessage) container.addChild(new Text(errorLine(theme, r.errorMessage), 0, 0));
-					const stderr = stderrExcerpt(r);
-					if (stderr) container.addChild(new Text(theme.fg("dim", stderr), 0, 0));
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
-					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
-					const output = finalOutput(r.messages);
-					if (items.length === 0 && !output) {
-						container.addChild(new Text(theme.fg("muted", isBusy ? "(running...)" : "(no output)"), 0, 0));
-					} else {
-						for (const item of items) {
-							if (item.type === "toolCall") {
-								container.addChild(
-									new Text(theme.fg("muted", "→ ") + formatToolCall(item.name ?? "", item.args ?? {}, theme.fg), 0, 0),
-								);
-							}
-						}
-						if (output) {
-							container.addChild(new Spacer(1));
-							container.addChild(new Markdown(output.trim(), 0, 0, mdTheme));
-						}
-					}
-					const usageStr = formatUsageStats(r.usage, r.model);
-					if (usageStr) {
-						container.addChild(new Spacer(1));
-						container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
-					}
-					return container;
-				}
-				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${elapsedTag(r)}`;
-				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				if (isError && r.errorMessage) {
-					text += `\n${errorLine(theme, r.errorMessage)}`;
-					const stderr = stderrExcerpt(r);
-					if (stderr) text += `\n${theme.fg("dim", stderr)}`;
-				} else if (items.length === 0) text += `\n${theme.fg("muted", isBusy ? "(running...)" : "(no output)")}`;
-				else text += `\n${collapsedItems(items, 10)}`;
-				const usageStr = formatUsageStats(r.usage, r.model);
-				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
-				return new Text(text, 0, 0);
-			}
-
-			if (details.mode === "chain") {
-				const activeCount = details.results.filter((r) => isRunning(r) || isQueued(r)).length;
-				const successCount = details.results.filter((r) => !isRunning(r) && !isQueued(r) && !isFailedResult(r)).length;
-				const doneCount = details.results.length - activeCount;
-				const total = details.results.length;
-				const kind = activeCount > 0 ? "running" : doneCount > successCount ? "fail" : "ok";
-				const head = verdictChip(
-					theme,
-					kind,
-					activeCount > 0 ? `${spinnerFrame()} CHAIN ${doneCount}/${total}` : `CHAIN ${successCount}/${total}`,
-				);
-				const bar = theme.fg("muted", `[${progressBar(doneCount, total)}] `);
-				const tailBits =
-					activeCount > 0 ? [] : [costWallTag(details.results), failedTag(details.results)].filter((s) => s.length > 0);
-				if (expanded) {
-					const container = new Container();
-					container.addChild(new Text(`${head} ${bar}${tailBits.map((s) => ` ${s}`).join("")}`, 0, 0));
-					// Frames supersede the No.6 rail glyphs; ← +Nk still marks the flow.
-					for (let i = 0; i < details.results.length; i++) {
-						const r = details.results[i];
-						const handIn = details.handOff?.[i] ?? 0;
-						const hand = i > 0 && handIn > 0 ? theme.fg("muted", ` ← +${formatTokens(handIn)}`) : "";
-						const stepHeader = `${statusIcon(r)} ${theme.fg("muted", `Step ${r.step ?? i + 1} ·`)} ${theme.fg(
-							"accent",
-							r.agent,
-						)}${hand}${elapsedTag(r)}`;
-						childCard(container, r, stepHeader);
-					}
-					const usageStr = formatUsageStats(aggregateUsage(details.results));
-					if (usageStr) {
-						container.addChild(new Spacer(1));
-						container.addChild(new Text(theme.fg("dim", `Total: ${usageStr}`), 0, 0));
-					}
-					return container;
-				}
-				let text = `${head} ${bar}${tailBits.map((s) => ` ${s}`).join("")}`;
-				for (const r of details.results) {
-					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${statusIcon(r)}${elapsedTag(r)}`;
-					const items = displayItems(r.messages);
-					text += items.length === 0 ? `\n${theme.fg("muted", "(no output)")}` : `\n${collapsedItems(items, 5)}`;
-				}
-				const usageStr = formatUsageStats(aggregateUsage(details.results));
-				if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
-				return new Text(text, 0, 0);
-			}
-
-			// parallel
-			const queuedCount = details.results.filter((r) => isQueued(r)).length;
-			const runningCount = details.results.filter((r) => isRunning(r)).length;
-			const doneCount = details.results.length - queuedCount - runningCount;
-			const failCount = details.results.filter((r) => !isRunning(r) && !isQueued(r) && isFailedResult(r)).length;
-			const successCount = doneCount - failCount;
-			const total = details.results.length;
-			const isRunningBatch = runningCount > 0 || queuedCount > 0;
-			const head = verdictChip(
-				theme,
-				isRunningBatch ? "running" : failCount > 0 ? "fail" : "ok",
-				isRunningBatch ? `${spinnerFrame()} PARALLEL ${doneCount}/${total}` : `PARALLEL ${successCount}/${total}`,
-			);
-			const bar = theme.fg("muted", `[${progressBar(doneCount, total)}] `);
-			let tail: string;
-			if (isRunningBatch) {
-				const live = [runningCount > 0 ? `${runningCount} running` : "", queuedCount > 0 ? `${queuedCount} queued` : ""]
-					.filter(Boolean)
-					.join(" · ");
-				tail = `${bar}${live ? ` ${theme.fg("muted", live)}` : ""}`;
-			} else {
-				const bits = [costWallTag(details.results), failedTag(details.results)].filter((s) => s.length > 0);
-				tail = bar + bits.map((s) => ` ${s}`).join("");
-			}
-			if (expanded && !isRunningBatch) {
-				const container = new Container();
-				container.addChild(new Text(`${head} ${tail}`, 0, 0));
-				for (const r of details.results) {
-					container.addChild(new Spacer(1));
-					childCard(
-						container,
-						r,
-						`${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${statusIcon(r)}${elapsedTag(r)}`,
-					);
-				}
-				const usageStr = formatUsageStats(aggregateUsage(details.results));
-				if (usageStr) {
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("dim", `Total: ${usageStr}`), 0, 0));
-				}
-				return container;
-			}
-			// Collapsed: one line per task — status, duration, tools, output size.
-			let text = `${head} ${tail}`;
-			for (const r of details.results) {
-				text += `\n${taskLine(r)}`;
-			}
-			if (!isRunningBatch) {
-				const usageStr = formatUsageStats(aggregateUsage(details.results));
-				if (usageStr) text += `\n${theme.fg("dim", `Total: ${usageStr}`)}`;
-			}
-			if (!expanded) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
-			return new Text(text, 0, 0);
-		},
+		renderResult: renderBatchResult,
 	});
 
 	// ── Command: /subagent ──

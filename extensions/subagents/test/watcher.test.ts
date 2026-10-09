@@ -3,7 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { test } from "node:test";
 import type { ActivityReadResult } from "../activity.ts";
 import type { AgentDef } from "../agents.ts";
-import type { TraceEntry } from "../watcher.ts";
+import type { PaneListSnapshot, TraceEntry, WatcherPaneOps } from "../watcher.ts";
 import {
 	CANCEL_KILL_AFTER_MS,
 	createSubagentWatcher,
@@ -54,16 +54,92 @@ interface Harness {
 	applyResult: boolean;
 	waiterKilled: boolean;
 	widgetUpdates: number;
-	listPaneCalls: number;
+	paneOps: PaneOpsFake;
+}
+
+interface PaneOpsFake {
+	ops: WatcherPaneOps;
+	listRefreshes: number;
+	tailRequests: string[];
+	droppedPanes: string[];
+	deferred: boolean;
+	listOk: boolean;
+	listInFlight: boolean;
+	completeList(ok: boolean, ids: string[]): void;
+	completeTail(paneId: string, text: string): void;
+	tailInFlight(paneId: string): boolean;
+}
+
+function makePaneOpsFake(h: Harness): PaneOpsFake {
+	const pendingLists: Array<(snapshot: PaneListSnapshot) => void> = [];
+	const pendingTails = new Map<string, Array<(text: string) => void>>();
+	let latestSnapshot: PaneListSnapshot | null = null;
+	const fake: PaneOpsFake = {
+		ops: {
+			refreshPaneList() {
+				fake.listRefreshes++;
+				if (fake.deferred) {
+					fake.listInFlight = true;
+					pendingLists.push((snapshot) => {
+						fake.listInFlight = false;
+						latestSnapshot = snapshot;
+					});
+					return;
+				}
+				latestSnapshot = fake.listOk ? { ok: true, ids: h.panes } : { ok: false };
+			},
+			paneListSnapshot() {
+				return latestSnapshot;
+			},
+			requestScreenTail(paneId) {
+				fake.tailRequests.push(paneId);
+				if (fake.deferred) {
+					const queue = pendingTails.get(paneId) ?? [];
+					queue.push((text) => {
+						h.tails.set(paneId, text);
+					});
+					pendingTails.set(paneId, queue);
+					return;
+				}
+			},
+			screenTailSnapshot(paneId) {
+				return h.tails.get(paneId) ?? "";
+			},
+			dropPane(paneId) {
+				fake.droppedPanes.push(paneId);
+				h.tails.delete(paneId);
+			},
+		},
+		listRefreshes: 0,
+		tailRequests: [],
+		droppedPanes: [],
+		deferred: false,
+		listOk: true,
+		listInFlight: false,
+		completeList(ok, ids) {
+			const next = pendingLists.shift();
+			assert.ok(next);
+			next(ok ? { ok: true, ids: new Set(ids) } : { ok: false });
+		},
+		completeTail(paneId, text) {
+			const next = pendingTails.get(paneId)?.shift();
+			assert.ok(next);
+			next(text);
+		},
+		tailInFlight(paneId) {
+			return (pendingTails.get(paneId)?.length ?? 0) > 0;
+		},
+	};
+	return fake;
 }
 
 function makeHarness(overrides: Partial<Harness> = {}): Harness {
-	return {
+	const h = {
 		nowMs: START,
-		backend: "wezterm",
-		files: new Map(),
+		backend: "wezterm" as const,
+		files: new Map<string, string>(),
 		panes: new Set(["pane-1"]),
-		tails: new Map(),
+		tails: new Map<string, string>(),
 		summaries: new Map(),
 		activities: new Map(),
 		steers: [],
@@ -76,9 +152,10 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
 		applyResult: true,
 		waiterKilled: false,
 		widgetUpdates: 0,
-		listPaneCalls: 0,
-		...overrides,
-	};
+	} as Omit<Harness, "paneOps">;
+	const harness = h as Harness;
+	harness.paneOps = makePaneOpsFake(harness);
+	return Object.assign(harness, overrides);
 }
 
 function makeDeps(h: Harness): WatcherDeps {
@@ -94,16 +171,13 @@ function makeDeps(h: Harness): WatcherDeps {
 			h.files.delete(path);
 		},
 		readActivityState: (file) => h.activities.get(file) ?? { ok: false, reason: "missing" },
-		listPaneIds: () => {
-			h.listPaneCalls++;
-			return h.panes;
-		},
+		panes: h.paneOps.ops,
 		closePane: (paneId) => {
 			h.closedPanes.push(paneId);
 		},
-		readScreenTail: (paneId) => h.tails.get(paneId) ?? "",
 		activeBackend: () => h.backend,
-		loadHerdr: () => {
+		loadNativeAgentOps: () => {
+			if (h.backend !== "herdr") return null;
 			let exitCb: ((code: number) => void) | undefined;
 			h.waiter = {
 				exit: (code) => exitCb?.(code),
@@ -124,7 +198,7 @@ function makeDeps(h: Harness): WatcherDeps {
 						},
 					} as unknown as ChildProcess;
 				},
-			} as unknown as typeof import("../herdr.ts"));
+			});
 		},
 		sendMessage: (message, opts) => {
 			h.steers.push({ message, opts } as Steer);
@@ -299,7 +373,7 @@ test("honored cancel (.exit cancelled) completes as cancelled and removes the ca
 	assert.deepEqual(h.closedPanes, ["pane-1"]);
 });
 
-test("empty pane list makes the tick a no-op — nothing is marked crashed", (t) => {
+test("empty pane list is not mass-crash: the entry survives with all other stages active", (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 	const h = makeHarness();
 	h.panes = new Set();
@@ -312,9 +386,126 @@ test("empty pane list makes the tick a no-op — nothing is marked crashed", (t)
 
 	assert.equal(h.steers.length, 0);
 	assert.equal(watcher.running.size, 1);
-	assert.equal(h.listPaneCalls, 2);
-	assert.equal(h.widgetUpdates, 0);
+	assert.equal(h.paneOps.listRefreshes, 2);
 	assert.equal(entry.activity.stalled, false);
+});
+
+test("empty pane list keeps the sidecar completion stage active", (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.panes = new Set();
+	h.files.set(DONE, "7");
+	const watcher = createSubagentWatcher(makeDeps(h));
+	watcher.track(makeRunning());
+	watcher.ensureTicker();
+	oneTick(t);
+
+	assert.equal(lastSteer(h).message.details["exitCode"], 7);
+});
+
+test("a failed pane-list refresh counts as no fresh result — no crash marking", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.paneOps.deferred = true;
+	h.panes = new Set(["other-pane"]);
+	const watcher = createSubagentWatcher(makeDeps(h));
+	const entry = makeRunning();
+	watcher.track(entry);
+	watcher.ensureTicker();
+	oneTick(t);
+	await flush();
+	h.paneOps.completeList(false, []);
+	await flush();
+	oneTick(t);
+	await flush();
+
+	assert.equal(h.steers.length, 0);
+	assert.equal(watcher.running.size, 1);
+	assert.equal(entry.activity.stalled, false);
+
+	h.paneOps.completeList(true, ["other-pane"]);
+	await flush();
+	oneTick(t);
+	const steer = lastSteer(h);
+	assert.equal(steer.message.details["errorMessage"], "pane closed");
+	assert.equal(steer.message.details["crashed"], undefined);
+	assert.deepEqual(h.forgottenPanes, ["pane-1"]);
+});
+
+test("no fresh pane-list snapshot skips the pane-vanished stage until a snapshot lands", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.paneOps.deferred = true;
+	h.panes = new Set(["other-pane"]);
+	const watcher = createSubagentWatcher(makeDeps(h));
+	const entry = makeRunning();
+	watcher.track(entry);
+	watcher.ensureTicker();
+	oneTick(t);
+	await flush();
+
+	assert.equal(h.steers.length, 0);
+	assert.equal(watcher.running.size, 1);
+
+	h.paneOps.completeList(true, ["other-pane"]);
+	await flush();
+	oneTick(t);
+	const steer = lastSteer(h);
+	assert.equal(steer.message.details["errorMessage"], "pane closed");
+	assert.equal(steer.message.details["status"], "failed");
+	assert.deepEqual(h.forgottenPanes, ["pane-1"]);
+});
+
+test("each tick kicks exactly one pane-list refresh even while a refresh is in flight", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.paneOps.deferred = true;
+	const watcher = createSubagentWatcher(makeDeps(h));
+	watcher.track(makeRunning());
+	watcher.ensureTicker();
+	oneTick(t);
+	oneTick(t);
+	await flush();
+
+	assert.equal(h.paneOps.listRefreshes, 2);
+	assert.equal(h.paneOps.listInFlight, true);
+
+	h.paneOps.completeList(true, ["pane-1"]);
+	await flush();
+	assert.equal(h.paneOps.listInFlight, false);
+	assert.equal(h.steers.length, 0);
+});
+
+test("deferred tail refresh: the sentinel completes only after the snapshot lands", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.paneOps.deferred = true;
+	const watcher = createSubagentWatcher(makeDeps(h));
+	const entry = makeRunning();
+	watcher.track(entry);
+	watcher.ensureTicker();
+	oneTick(t);
+	await flush();
+
+	assert.deepEqual(h.paneOps.tailRequests, ["pane-1"]);
+	assert.equal(h.paneOps.tailInFlight("pane-1"), true);
+	assert.equal(h.steers.length, 0);
+
+	h.paneOps.completeList(true, ["pane-1"]);
+	h.paneOps.completeTail("pane-1", "working…\n__SUBAGENT_DONE_3__");
+	await flush();
+	oneTick(t);
+	assert.equal(lastSteer(h).message.details["exitCode"], 3);
+});
+
+test("tracking a pane id drops any cached tail snapshot for it", () => {
+	const h = makeHarness();
+	h.tails.set("pane-1", "__SUBAGENT_DONE_0__");
+	const watcher = createSubagentWatcher(makeDeps(h));
+	watcher.track(makeRunning());
+
+	assert.deepEqual(h.paneOps.droppedPanes, ["pane-1"]);
+	assert.equal(h.tails.has("pane-1"), false);
 });
 
 test("native done completes after the 5s grace window with the sidecar-lost note", (t) => {
@@ -386,9 +577,9 @@ test("pane missing from the alive set completes as crashed and is dropped from t
 test("screen sentinel fallback parses the exit code when sidecars never landed", (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 	const h = makeHarness();
-	h.tails.set("pane-1", "doing things...\n__SUBAGENT_DONE_3__");
 	const watcher = createSubagentWatcher(makeDeps(h));
 	watcher.track(makeRunning());
+	h.tails.set("pane-1", "doing things...\n__SUBAGENT_DONE_3__");
 	watcher.ensureTicker();
 	oneTick(t);
 
@@ -438,12 +629,12 @@ test("the ticker interval is cleared when the running map empties", (t) => {
 	watcher.ensureTicker();
 	oneTick(t);
 	assert.equal(h.steers.length, 1);
-	assert.equal(h.listPaneCalls, 1);
+	assert.equal(h.paneOps.listRefreshes, 1);
 	assert.equal(h.widgetUpdates, 2);
 
 	t.mock.timers.tick(5 * POLL_INTERVAL_MS);
 	assert.equal(h.steers.length, 1);
-	assert.equal(h.listPaneCalls, 1);
+	assert.equal(h.paneOps.listRefreshes, 1);
 	assert.equal(h.widgetUpdates, 2);
 });
 
@@ -461,7 +652,7 @@ test("session_start reset clears the map and stops completions", (t) => {
 	oneTick(t);
 	assert.equal(h.steers.length, 0);
 	assert.equal(h.widgetUpdates, 1);
-	assert.equal(h.listPaneCalls, 1);
+	assert.equal(h.paneOps.listRefreshes, 1);
 });
 
 test("done-waiter arms after NATIVE_WAITER_DELAY_MS and stamps nativeDoneAt on exit 0", async (t) => {
@@ -590,9 +781,9 @@ test("shutdown kills live waiters, clears the ticker and empties the map", async
 	watcher.shutdown();
 	assert.equal(h.waiterKilled, true);
 	assert.equal(watcher.running.size, 0);
-	const listPaneCallsAtShutdown = h.listPaneCalls;
+	const listRefreshesAtShutdown = h.paneOps.listRefreshes;
 	t.mock.timers.tick(5 * POLL_INTERVAL_MS);
-	assert.equal(h.listPaneCalls, listPaneCallsAtShutdown);
+	assert.equal(h.paneOps.listRefreshes, listRefreshesAtShutdown);
 });
 
 test("pollTick retries the deferred re-label no earlier than LABEL_RETRY_INTERVAL_MS", async (t) => {

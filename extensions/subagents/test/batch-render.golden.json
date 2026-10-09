@@ -1,0 +1,319 @@
+{
+	"fixedNow": 1750000000000,
+	"note": "Captured from the pre-refactor inline renderResult; do not edit by hand.",
+	"cases": [
+		{
+			"name": "no-details-fallback",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				"Plain text fallback                                                                                                     "
+			]
+		},
+		{
+			"name": "empty-results",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				"Invalid parameters.                                                                                                     "
+			]
+		},
+		{
+			"name": "single-collapsed-ok",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				"✓ scout 1m05s                                                                                                           ",
+				"→ grep /TODO/ in src                                                                                                    ",
+				"Found it in **src/a.ts** — the TODO marks the spot.                                                                     ",
+				"2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x                                                                            "
+			]
+		},
+		{
+			"name": "single-collapsed-failed",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				"✗ writer 4s [error]                                                                                                     ",
+				" Error: Model overloaded after 3 retries                                                                                ",
+				"WARN deprecated flag                                                                                                    ",
+				"Error: ECONNRESET                                                                                                       ",
+				" at retry (cli.ts:88)                                                                                                   ",
+				"[+2 more lines]                                                                                                         ",
+				"1 turn ↑800                                                                                                             "
+			]
+		},
+		{
+			"name": "single-collapsed-running",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				"⠋ scout 42s                                                                                                             ",
+				"→ $ npm test                                                                                                            "
+			]
+		},
+		{
+			"name": "single-collapsed-no-output",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				"✓ scout 1m05s                                                                                                           ",
+				"(no output)                                                                                                             ",
+				"claude-x                                                                                                                "
+			]
+		},
+		{
+			"name": "single-expanded-ok",
+			"width": 120,
+			"expanded": true,
+			"lines": [
+				"✓ scout 1m05s                                                                                                           ",
+				"",
+				"─── Task ───                                                                                                            ",
+				"Find the failing test                                                                                                   ",
+				"",
+				"─── Output ───                                                                                                          ",
+				"→ grep /TODO/ in src                                                                                                    ",
+				"",
+				"Found it in src/a.ts — the TODO marks the spot.                                                                         ",
+				"",
+				"2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x                                                                            "
+			]
+		},
+		{
+			"name": "single-expanded-failed",
+			"width": 120,
+			"expanded": true,
+			"lines": [
+				"✗ writer 4s [error]                                                                                                     ",
+				" Error: Model overloaded after 3 retries                                                                                ",
+				"WARN deprecated flag                                                                                                    ",
+				"Error: ECONNRESET                                                                                                       ",
+				" at retry (cli.ts:88)                                                                                                   ",
+				"[+2 more lines]                                                                                                         ",
+				"",
+				"─── Task ───                                                                                                            ",
+				"Write the docs                                                                                                          ",
+				"",
+				"─── Output ───                                                                                                          ",
+				"(no output)                                                                                                             ",
+				"",
+				"1 turn ↑800                                                                                                             "
+			]
+		},
+		{
+			"name": "single-expanded-running",
+			"width": 120,
+			"expanded": true,
+			"lines": [
+				"⠋ scout 42s                                                                                                             ",
+				"",
+				"─── Task ───                                                                                                            ",
+				"long hunt                                                                                                               ",
+				"",
+				"─── Output ───                                                                                                          ",
+				"→ $ npm test                                                                                                            "
+			]
+		},
+		{
+			"name": "single-expanded-ok-w80",
+			"width": 80,
+			"expanded": true,
+			"lines": [
+				"✓ scout 1m05s                                                                   ",
+				"",
+				"─── Task ───                                                                    ",
+				"Find the failing test                                                           ",
+				"",
+				"─── Output ───                                                                  ",
+				"→ grep /TODO/ in src                                                            ",
+				"",
+				"Found it in src/a.ts — the TODO marks the spot.                                 ",
+				"",
+				"2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x                                    "
+			]
+		},
+		{
+			"name": "chain-collapsed-ok",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				" CHAIN 3/3  [▰▰▰▰▰▰▰▰▰▰▰▰]  $0.01 · 1m05s                                                                               ",
+				"                                                                                                                        ",
+				"─── Step 1: scout ✓ 1m05s                                                                                               ",
+				"→ grep /TODO/ in src                                                                                                    ",
+				"Found it in **src/a.ts** — the TODO marks the spot.                                                                     ",
+				"                                                                                                                        ",
+				"─── Step 2: writer ✓ 31s                                                                                                ",
+				"→ grep /TODO/ in src                                                                                                    ",
+				"Found it in **src/a.ts** — the TODO marks the spot.                                                                     ",
+				"                                                                                                                        ",
+				"─── Step 3: reviewer ✓ 12s                                                                                              ",
+				"→ grep /TODO/ in src                                                                                                    ",
+				"Found it in **src/a.ts** — the TODO marks the spot.                                                                     ",
+				"                                                                                                                        ",
+				"Total: 6 turns ↑3.6k ↓1.0k $0.01                                                                                        "
+			]
+		},
+		{
+			"name": "chain-expanded-ok",
+			"width": 120,
+			"expanded": true,
+			"lines": [
+				" CHAIN 3/3  [▰▰▰▰▰▰▰▰▰▰▰▰]  $0.01 · 1m05s                                                                               ",
+				"",
+				"╭─ ✓ Step 1 · scout 1m05s ─────────────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Find the failing test                                                                                          │",
+				"│ → grep /TODO/ in src                                                                                                 │",
+				"│                                                                                                                      │",
+				"│ Found it in src/a.ts — the TODO marks the spot.                                                                      │",
+				"╰──────────────────────────────────────────────────────────────────────── 2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x ╯",
+				"",
+				"╭─ ✓ Step 2 · writer ← +512 31s ───────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Expand the finding                                                                                             │",
+				"│ → grep /TODO/ in src                                                                                                 │",
+				"│                                                                                                                      │",
+				"│ Found it in src/a.ts — the TODO marks the spot.                                                                      │",
+				"╰──────────────────────────────────────────────────────────────────────── 2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x ╯",
+				"",
+				"╭─ ✓ Step 3 · reviewer ← +1.5k 12s ────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Review the draft                                                                                               │",
+				"│ → grep /TODO/ in src                                                                                                 │",
+				"│                                                                                                                      │",
+				"│ Found it in src/a.ts — the TODO marks the spot.                                                                      │",
+				"╰──────────────────────────────────────────────────────────────────────── 2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x ╯",
+				"",
+				"Total: 6 turns ↑3.6k ↓1.0k $0.01                                                                                        "
+			]
+		},
+		{
+			"name": "chain-collapsed-running",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				" ⠋ CHAIN 2/3  [▰▰▰▰▰▰▰▰▱▱▱▱]                                                                                            ",
+				"                                                                                                                        ",
+				"─── Step 1: scout ✓ 1m05s                                                                                               ",
+				"→ grep /TODO/ in src                                                                                                    ",
+				"Found it in **src/a.ts** — the TODO marks the spot.                                                                     ",
+				"                                                                                                                        ",
+				"─── Step 2: writer ✓ 31s                                                                                                ",
+				"→ grep /TODO/ in src                                                                                                    ",
+				"Found it in **src/a.ts** — the TODO marks the spot.                                                                     ",
+				"                                                                                                                        ",
+				"─── Step 3: reviewer ⠋ 42s                                                                                              ",
+				"→ $ npm test                                                                                                            ",
+				"                                                                                                                        ",
+				"Total: 4 turns ↑2.4k ↓680 $0.0084                                                                                       "
+			]
+		},
+		{
+			"name": "chain-expanded-failed",
+			"width": 120,
+			"expanded": true,
+			"lines": [
+				" CHAIN 2/3  [▰▰▰▰▰▰▰▰▰▰▰▰]  $0.0084 · 1m05s 1 failed: reviewer                                                          ",
+				"",
+				"╭─ ✓ Step 1 · scout 1m05s ─────────────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Find the failing test                                                                                          │",
+				"│ → grep /TODO/ in src                                                                                                 │",
+				"│                                                                                                                      │",
+				"│ Found it in src/a.ts — the TODO marks the spot.                                                                      │",
+				"╰──────────────────────────────────────────────────────────────────────── 2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x ╯",
+				"",
+				"╭─ ✓ Step 2 · writer ← +512 31s ───────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Expand the finding                                                                                             │",
+				"│ → grep /TODO/ in src                                                                                                 │",
+				"│                                                                                                                      │",
+				"│ Found it in src/a.ts — the TODO marks the spot.                                                                      │",
+				"╰──────────────────────────────────────────────────────────────────────── 2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x ╯",
+				"",
+				"╭─ ✗ Step 3 · reviewer 4s ─────────────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Write the docs                                                                                                 │",
+				"╰───────────────────────────────────────────────────────────────────────────────────────────────────────── 1 turn ↑800 ╯",
+				"",
+				"Total: 5 turns ↑3.2k ↓680 $0.0084                                                                                       "
+			]
+		},
+		{
+			"name": "parallel-collapsed-ok",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				" PARALLEL 2/3  [▰▰▰▰▰▰▰▰▰▰▰▰]  $0.02 · 1m20s 1 failed: reviewer                                                         ",
+				"✓ scout 1m05s grep → 51                                                                                                 ",
+				"✓ writer 1m10s grep → 51                                                                                                ",
+				"✗ reviewer 20s failed (Model overloaded after 3 retries)                                                                ",
+				"Total: 6 turns ↑4.0k ↓1.2k $0.02                                                                                        ",
+				"(Ctrl+O to expand)                                                                                                      "
+			]
+		},
+		{
+			"name": "parallel-collapsed-failed",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				" PARALLEL 2/3  [▰▰▰▰▰▰▰▰▰▰▰▰]  $0.02 · 1m20s 1 failed: reviewer                                                         ",
+				"✓ scout 1m05s grep → 51                                                                                                 ",
+				"✓ writer 1m10s grep → 51                                                                                                ",
+				"✗ reviewer 20s failed (Model overloaded after 3 retries)                                                                ",
+				"Total: 6 turns ↑4.0k ↓1.2k $0.02                                                                                        ",
+				"(Ctrl+O to expand)                                                                                                      "
+			]
+		},
+		{
+			"name": "parallel-collapsed-live",
+			"width": 120,
+			"expanded": false,
+			"lines": [
+				" ⠋ PARALLEL 0/3  [▱▱▱▱▱▱▱▱▱▱▱▱]  2 running · 1 queued                                                                   ",
+				"⠋ scout 10s bash bash…                                                                                                  ",
+				"⠋ writer 5s bash                                                                                                        ",
+				"○ reviewer queued                                                                                                       ",
+				"(Ctrl+O to expand)                                                                                                      "
+			]
+		},
+		{
+			"name": "parallel-expanded-ok",
+			"width": 120,
+			"expanded": true,
+			"lines": [
+				" PARALLEL 2/3  [▰▰▰▰▰▰▰▰▰▰▰▰]  $0.02 · 1m20s 1 failed: reviewer                                                         ",
+				"",
+				"",
+				"╭─ ─── scout ✓ 1m05s ──────────────────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Find the failing test                                                                                          │",
+				"│ → grep /TODO/ in src                                                                                                 │",
+				"│                                                                                                                      │",
+				"│ Found it in src/a.ts — the TODO marks the spot.                                                                      │",
+				"╰──────────────────────────────────────────────────────────────────────── 2 turns ↑1.2k ↓340 $0.0042 ctx:9.0k claude-x ╯",
+				"",
+				"",
+				"╭─ ─── writer ✓ 1m10s ─────────────────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Draft the changelog                                                                                            │",
+				"│ → grep /TODO/ in src                                                                                                 │",
+				"│                                                                                                                      │",
+				"│ Found it in src/a.ts — the TODO marks the spot.                                                                      │",
+				"╰─────────────────────────────────────────────────────────────────────────── 3 turns ↑2.0k ↓900 $0.02 ctx:12k claude-x ╯",
+				"",
+				"",
+				"╭─ ─── reviewer ✗ 20s ─────────────────────────────────────────────────────────────────────────────────────────────────╮",
+				"│ Task: Write the docs                                                                                                 │",
+				"╰───────────────────────────────────────────────────────────────────────────────────────────────────────── 1 turn ↑800 ╯",
+				"",
+				"Total: 6 turns ↑4.0k ↓1.2k $0.02                                                                                        "
+			]
+		},
+		{
+			"name": "parallel-expanded-live",
+			"width": 120,
+			"expanded": true,
+			"lines": [
+				" ⠋ PARALLEL 0/3  [▱▱▱▱▱▱▱▱▱▱▱▱]  2 running · 1 queued                                                                   ",
+				"⠋ scout 10s bash bash…                                                                                                  ",
+				"⠋ writer 5s bash                                                                                                        ",
+				"○ reviewer queued                                                                                                       "
+			]
+		}
+	]
+}

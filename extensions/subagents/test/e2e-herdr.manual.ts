@@ -85,7 +85,7 @@ until("HERDR_E2E_HELLO", () => readScreenTail(paneId, 10));
 console.log("launcher output: OK");
 
 // 3. Steering: text + Enter reaches the pane's shell.
-sendText(paneId, "echo STEER_OK_$((6 * 7))");
+await sendText(paneId, "echo STEER_OK_$((6 * 7))");
 until("STEER_OK_", () => readScreenTail(paneId, 10));
 console.log("steer: OK");
 
@@ -258,7 +258,7 @@ disposablePanes.push(busyPane);
 until("HERDR_E2E_BUSY", () => readScreenTail(busyPane, 10));
 let outcome: AgentPromptOutcome;
 try {
-	outcome = promptAgent(busyPane, "HERDR_E2E probe — expect a structured refusal, not a crash", 5_000);
+	outcome = await promptAgent(busyPane, "HERDR_E2E probe — expect a structured refusal, not a crash", 5_000);
 } catch (err) {
 	fail(`promptAgent threw instead of returning an outcome: ${String(err)}`);
 }

@@ -78,7 +78,7 @@ console.log("summary visible:", screen.includes("E2E_SUBAGENT_SUMMARY all good")
 // Parked pwsh prompt → resume path must work
 const probeScript = join(dir, "probe.ps1");
 writeFileSync(probeScript, "Write-Host 'E2E_RESUME_PROMPT_ALIVE'", "utf8");
-runScriptInPane(pane, probeScript);
+await runScriptInPane(pane, probeScript);
 await new Promise((r) => setTimeout(r, 1500));
 console.log("prompt alive for resume:", readScreenTail(pane, 6).includes("E2E_RESUME_PROMPT_ALIVE"));
 

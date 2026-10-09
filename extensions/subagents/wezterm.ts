@@ -19,7 +19,8 @@
  *     approximated by always splitting the top pane of the subagent column
  *     downward with percent k/(k+1) — see computeStackPercent().
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import type { MuxBackend } from "./mux.ts";
 import { computeStackPercent, parseSentinel, SENTINEL_PATTERN } from "./shared.ts";
 
 const WEZTERM = "wezterm";
@@ -71,6 +72,39 @@ function runWezterm(args: string[], timeoutMs = 15_000): string {
 	return execFileSync(WEZTERM, args, { encoding: "utf8", timeout: timeoutMs, windowsHide: true });
 }
 
+interface WeztermCliResult {
+	stdout: string;
+	stderr: string;
+	exitCode: number;
+}
+
+function runWeztermAsync(args: string[], timeoutMs = 15_000): Promise<WeztermCliResult> {
+	return new Promise((resolve) => {
+		const child = spawn(WEZTERM, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+		let timer: NodeJS.Timeout | undefined;
+		const finish = (exitCode: number): void => {
+			if (settled) return;
+			settled = true;
+			if (timer !== undefined) clearTimeout(timer);
+			resolve({ stdout, stderr, exitCode });
+		};
+		child.stdout.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString("utf8");
+		});
+		child.stderr.on("data", (chunk: Buffer) => {
+			stderr += chunk.toString("utf8");
+		});
+		child.on("error", () => finish(1));
+		child.on("close", (code) => finish(typeof code === "number" ? code : 1));
+		timer = setTimeout(() => {
+			child.kill();
+		}, timeoutMs).unref();
+	});
+}
+
 // ── Pane liveness ──
 
 /** Ids of all panes WezTerm currently knows about. */
@@ -78,6 +112,17 @@ export function listPaneIds(): Set<string> {
 	try {
 		const out = runWezterm(["cli", "list", "--format", "json"]);
 		const panes: Array<{ pane_id: number }> = JSON.parse(out);
+		return new Set(panes.map((p) => String(p.pane_id)));
+	} catch {
+		return new Set();
+	}
+}
+
+export async function listPaneIdsAsync(): Promise<Set<string>> {
+	const result = await runWeztermAsync(["cli", "list", "--format", "json"]);
+	if (result.exitCode !== 0) return new Set();
+	try {
+		const panes: Array<{ pane_id: number }> = JSON.parse(result.stdout);
 		return new Set(panes.map((p) => String(p.pane_id)));
 	} catch {
 		return new Set();
@@ -148,9 +193,14 @@ export function createSubagentPane(opts: CreatePaneOptions): string {
  * Bracketed paste is what pi's editor and PSReadLine both handle cleanly;
  * the trailing newline submits.
  */
-export function sendText(paneId: string, text: string): void {
+export async function sendText(paneId: string, text: string): Promise<void> {
 	const flattened = text.replace(/\r?\n/g, " ").trim();
-	runWezterm(["cli", "send-text", "--pane-id", paneId, `${flattened}\n`]);
+	const result = await runWeztermAsync(["cli", "send-text", "--pane-id", paneId, `${flattened}\n`]);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`wezterm cli send-text exited with code ${result.exitCode}: ${result.stderr || result.stdout}`.trim(),
+		);
+	}
 }
 
 /**
@@ -158,15 +208,26 @@ export function sendText(paneId: string, text: string): void {
  * send-text — deliberately WITHOUT a trailing newline, which would submit an
  * empty prompt line after the interrupt.
  */
-export function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): void {
-	runWezterm(["cli", "send-text", "--pane-id", paneId, key === "escape" ? "\u001b" : "\u0003"]);
+export async function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): Promise<void> {
+	const result = await runWeztermAsync([
+		"cli",
+		"send-text",
+		"--pane-id",
+		paneId,
+		key === "escape" ? "\u001b" : "\u0003",
+	]);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`wezterm cli send-text (interrupt) exited with code ${result.exitCode}: ${result.stderr || result.stdout}`.trim(),
+		);
+	}
 }
 
 /**
  * Run a script in a pane that is sitting at a pwsh prompt (finished subagent).
  */
-export function runScriptInPane(paneId: string, scriptPath: string): void {
-	sendText(paneId, `& ${ps1SingleQuote(scriptPath)}`);
+export async function runScriptInPane(paneId: string, scriptPath: string): Promise<void> {
+	await sendText(paneId, `& ${ps1SingleQuote(scriptPath)}`);
 }
 
 /** PowerShell single-quote escaping ('' for a literal quote). */
@@ -186,6 +247,18 @@ export function readScreenTail(paneId: string, lines = 6): string {
 	}
 }
 
+export async function readScreenTailAsync(paneId: string, lines = 6): Promise<string> {
+	const result = await runWeztermAsync([
+		"cli",
+		"get-text",
+		"--pane-id",
+		paneId,
+		"--start-line",
+		String(-Math.max(1, lines)),
+	]);
+	return result.exitCode === 0 ? result.stdout : "";
+}
+
 /** Close a pane. Best-effort: a closing pane must never break the parent. */
 export function closePane(paneId: string): void {
 	try {
@@ -203,3 +276,18 @@ export function activatePane(paneId: string): void {
 		// Cosmetic — ignore.
 	}
 }
+
+export const weztermBackend: MuxBackend = {
+	name: "wezterm",
+	createSubagentPane,
+	listPaneIds,
+	listPaneIdsAsync,
+	paneExists,
+	readScreenTail,
+	readScreenTailAsync,
+	sendText,
+	sendInterrupt,
+	runScriptInPane,
+	closePane,
+	activatePane,
+};

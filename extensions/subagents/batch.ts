@@ -26,10 +26,10 @@ export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
 export const PER_TASK_OUTPUT_CAP = 50 * 1024;
 /**
- * Cap for a chain step's {previous} output. The prompt rides the child's
- * argv, and Windows command lines top out around 32K characters — an
- * uncapped handoff turns a verbose step into a spawn failure (EINVAL) of
- * the next one.
+ * Cap for a chain step's {previous} output. The handoff is spliced into the
+ * next step's task, which the child reads whole as its prompt — an uncapped
+ * handoff lets a verbose step drown the next child's context window and
+ * bury the actual task instructions.
  */
 export const PREVIOUS_OUTPUT_CAP = 16 * 1024;
 /** stderr kept per child (tail). Diagnostics live at the end of a crash
@@ -537,10 +537,11 @@ export interface HeadlessChildOptions {
 
 /**
  * Run one headless child: `pi --mode json -p --session <pre-created>` with the
- * task as the prompt. The session file is created before spawn so the parent
- * knows the path up front (no race between parallel children). Also registers
- * in the global running index for the duration of the run, so /workers and
- * /trace can discover live children from any session.
+ * task passed as an `@<taskFile>` reference (not inline text). The session
+ * file is created before spawn so the parent knows the path up front (no
+ * race between parallel children). Also registers in the global running
+ * index for the duration of the run, so /workers and /trace can discover
+ * live children from any session.
  */
 export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<BatchResult> {
 	mkdirSync(opts.sessionsRoot, { recursive: true });

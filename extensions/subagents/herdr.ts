@@ -47,6 +47,7 @@
  *     record is removed entirely (agent get → agent_not_found)
  */
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import type { MuxBackend } from "./mux.ts";
 import { computeStackPercent } from "./shared.ts";
 
 const HERDR = "herdr";
@@ -79,6 +80,39 @@ export function parentPaneId(): string {
 
 function runHerdr(args: string[], timeoutMs = 15_000): string {
 	return execFileSync(HERDR, args, { encoding: "utf8", timeout: timeoutMs, windowsHide: true });
+}
+
+interface HerdrCliResult {
+	stdout: string;
+	stderr: string;
+	exitCode: number;
+}
+
+function runHerdrAsync(args: string[], timeoutMs = 15_000): Promise<HerdrCliResult> {
+	return new Promise((resolve) => {
+		const child = spawn(HERDR, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+		let timer: NodeJS.Timeout | undefined;
+		const finish = (exitCode: number): void => {
+			if (settled) return;
+			settled = true;
+			if (timer !== undefined) clearTimeout(timer);
+			resolve({ stdout, stderr, exitCode });
+		};
+		child.stdout.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString("utf8");
+		});
+		child.stderr.on("data", (chunk: Buffer) => {
+			stderr += chunk.toString("utf8");
+		});
+		child.on("error", () => finish(1));
+		child.on("close", (code) => finish(typeof code === "number" ? code : 1));
+		timer = setTimeout(() => {
+			child.kill();
+		}, timeoutMs).unref();
+	});
 }
 
 // ── Response parsing (exported for tests; shapes captured from 0.9.0) ──
@@ -291,9 +325,14 @@ function launchScript(paneId: string, ps1Path: string): void {
 }
 
 /** Send text to a pane and submit it (pane run = text + Enter, one write). */
-export function sendText(paneId: string, text: string): void {
+export async function sendText(paneId: string, text: string): Promise<void> {
 	const flattened = text.replace(/\r?\n/g, " ").trim();
-	runHerdr(["pane", "run", paneId, flattened]);
+	const result = await runHerdrAsync(["pane", "run", paneId, flattened]);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`herdr pane run exited with code ${result.exitCode}: ${pickFailureOutput(result.stdout, result.stderr)}`.trim(),
+		);
+	}
 }
 
 /**
@@ -301,12 +340,17 @@ export function sendText(paneId: string, text: string): void {
  * running turn; "ctrl-c" kills a shell command. Key names per herdr 0.9.0
  * (`pane send-keys <id> esc|ctrl+c`).
  */
-export function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): void {
-	runHerdr(["pane", "send-keys", paneId, key === "escape" ? "esc" : "ctrl+c"]);
+export async function sendInterrupt(paneId: string, key: "escape" | "ctrl-c"): Promise<void> {
+	const result = await runHerdrAsync(["pane", "send-keys", paneId, key === "escape" ? "esc" : "ctrl+c"]);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`herdr pane send-keys exited with code ${result.exitCode}: ${pickFailureOutput(result.stdout, result.stderr)}`.trim(),
+		);
+	}
 }
 
 /** Run a launcher script in a pane that is sitting at a shell prompt (resume). */
-export function runScriptInPane(paneId: string, scriptPath: string): void {
+export async function runScriptInPane(paneId: string, scriptPath: string): Promise<void> {
 	launchScript(paneId, scriptPath);
 }
 
@@ -319,16 +363,39 @@ export function readScreenTail(paneId: string, lines = 6): string {
 	}
 }
 
+export async function readScreenTailAsync(paneId: string, lines = 6): Promise<string> {
+	const result = await runHerdrAsync([
+		"pane",
+		"read",
+		paneId,
+		"--source",
+		"recent",
+		"--lines",
+		String(Math.max(1, lines)),
+	]);
+	return result.exitCode === 0 ? result.stdout : "";
+}
+
+function paneListArgs(): string[] {
+	const args = ["pane", "list"];
+	const workspace = process.env.HERDR_WORKSPACE_ID;
+	if (workspace) args.push("--workspace", workspace);
+	return args;
+}
+
 /** Ids of all panes in the caller's herdr workspace (all workspaces if unknown). */
 export function listPaneIds(): Set<string> {
 	try {
-		const args = ["pane", "list"];
-		const workspace = process.env.HERDR_WORKSPACE_ID;
-		if (workspace) args.push("--workspace", workspace);
-		return new Set(parsePaneListIds(runHerdr(args)));
+		return new Set(parsePaneListIds(runHerdr(paneListArgs())));
 	} catch {
 		return new Set();
 	}
+}
+
+export async function listPaneIdsAsync(): Promise<Set<string>> {
+	const result = await runHerdrAsync(paneListArgs());
+	if (result.exitCode !== 0) return new Set();
+	return new Set(parsePaneListIds(result.stdout));
 }
 
 export function paneExists(paneId: string, known?: Set<string>): boolean {
@@ -356,27 +423,22 @@ export function activatePane(_paneId: string): void {}
  * --wait turns "typed into the pane" into "the child was seen working" — so
  * nothing is ever dropped silently. TARGET is always the pane id, never a
  * never throws: herdr's JSON errors (printed on STDERR of the non-zero exit
- * and reaped off the thrown execFileSync error via pickFailureOutput) and any
- * CLI failure (missing binary, our own timeout kill) collapse into an
- * outcome; "error" is the catch-all.
+ * and reaped off the failed spawn via pickFailureOutput) and any CLI failure
+ * (missing binary, our own timeout kill) collapse into an outcome; "error"
+ * is the catch-all.
  */
-export function promptAgent(paneId: string, text: string, timeoutMs = 15_000): AgentPromptOutcome {
-	try {
-		const args = ["agent", "prompt", paneId, text, "--wait", "--timeout", String(timeoutMs)];
-		// The herdr-side timeout bounds the wait; execFileSync gets a small
-		// grace on top so herdr's own timeout JSON wins the race, not our kill.
-		const out = runHerdr(args, timeoutMs + 2_000);
-		return parseAgentPromptOutput(out, 0);
-	} catch (err) {
-		const failure = err as { stdout?: unknown; stderr?: unknown; status?: unknown };
-		const exitCode = typeof failure.status === "number" ? failure.status : 1;
-		return parseAgentPromptOutput(pickFailureOutput(failure.stdout, failure.stderr), exitCode);
-	}
+export async function promptAgent(paneId: string, text: string, timeoutMs = 15_000): Promise<AgentPromptOutcome> {
+	const args = ["agent", "prompt", paneId, text, "--wait", "--timeout", String(timeoutMs)];
+	// The herdr-side timeout bounds the wait; our kill gets a small grace on
+	// top so herdr's own timeout JSON wins the race, not our kill.
+	const result = await runHerdrAsync(args, timeoutMs + 2_000);
+	if (result.exitCode === 0) return parseAgentPromptOutput(result.stdout, 0);
+	return parseAgentPromptOutput(pickFailureOutput(result.stdout, result.stderr), result.exitCode);
 }
 
 /**
- * Raw body for failure classification, from both pipes of a failed
- * execFileSync. Live-probed (herdr 0.9.1): error envelopes are printed on
+ * Raw body for failure classification, from both pipes of a failed CLI run.
+ * Live-probed (herdr 0.9.1): error envelopes are printed on
  * STDERR of the non-zero exit, so a stdout-only read collapsed every
  * structured refusal (not_found, blocked, …) into the catch-all "error".
  * Takes whichever pipe actually carries text (stdout wins when both do);
@@ -540,3 +602,21 @@ export function spawnDoneWaiter(paneId: string, untilStatuses: string[]): ChildP
 		return null;
 	}
 }
+
+export const herdrBackend: MuxBackend = {
+	name: "herdr",
+	createSubagentPane,
+	listPaneIds,
+	listPaneIdsAsync,
+	paneExists,
+	readScreenTail,
+	readScreenTailAsync,
+	sendText,
+	sendInterrupt,
+	runScriptInPane,
+	closePane,
+	activatePane,
+	promptAgent,
+	applyPaneLabel,
+	spawnDoneWaiter,
+};
