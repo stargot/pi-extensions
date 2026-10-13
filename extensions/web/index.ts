@@ -23,10 +23,13 @@
  * where the pairing token lives (or why the bridge is disabled).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { loadDotEnv } from "./env.ts";
 import { readBridgeConfig, resolveTokenFilePath, startBridge, type BridgeHandle } from "./fetch/bridge.ts";
 import { dedupeInFlight } from "./fetch/in-flight.ts";
 import { registerWebFetch } from "./fetch/tool.ts";
 import registerWebSearch from "./search.ts";
+
+loadDotEnv(process.env);
 
 // ── Module state (one bridge per process; reset in session_start/shutdown) ──
 
