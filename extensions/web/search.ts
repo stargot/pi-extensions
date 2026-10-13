@@ -1,75 +1,18 @@
-/**
- * web_search — DuckDuckGo search for pi, no API keys.
- *
- * Based on the web-search extension by Eero Alvar (amosblomqvist,
- * https://github.com/amosblomqvist/pi-config), which used the Google Custom
- * Search API. This version searches the DuckDuckGo HTML endpoint instead:
- * no credentials, structured-argument building, AbortSignal-aware, with a
- * request timeout and one retry on transient bot-check responses.
- *
- * DuckDuckGo has no official search API; the HTML endpoint is the de-facto one
- * (same approach as the ddgs Python library). POST form-encoded is mandatory:
- * GET gets 403/202 bot-challenge regardless of headers. The full browser-like
- * header set (Origin/Referer/Sec-Fetch-*) matters too — a bare UA + Content-Type
- * gets 202 from Node's fetch even though curl passes.
- */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { combineSignals, isAbort, sleep } from "./http.ts";
-import { looksLikeBotChallenge, parseDdgResults } from "./parse.ts";
-import { buildSearchQuery, clampCount, formatResults, type StructuredSearchArgs } from "./query.ts";
-
-const USER_AGENT =
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-
-const REQUEST_TIMEOUT_MS = 20_000;
-const RETRYABLE_STATUS = new Set([202, 403, 429]);
-const RETRY_BACKOFF_MS = 1500;
-
-function searchHeaders(): Record<string, string> {
-	return {
-		"Content-Type": "application/x-www-form-urlencoded",
-		"User-Agent": USER_AGENT,
-		Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-		"Accept-Language": "en-US,en;q=0.9",
-		Origin: "https://html.duckduckgo.com",
-		Referer: "https://html.duckduckgo.com/",
-		"Sec-Fetch-Dest": "document",
-		"Sec-Fetch-Mode": "navigate",
-		"Sec-Fetch-Site": "same-origin",
-		"Upgrade-Insecure-Requests": "1",
-	};
-}
-
-async function fetchResultsPage(query: string, signal: AbortSignal | undefined): Promise<string> {
-	const resp = await fetch("https://html.duckduckgo.com/html/", {
-		method: "POST",
-		headers: searchHeaders(),
-		body: new URLSearchParams({ q: query }).toString(),
-		signal: combineSignals(signal, REQUEST_TIMEOUT_MS),
-	});
-
-	if (!resp.ok) {
-		throw Object.assign(
-			new Error(`DuckDuckGo HTTP ${resp.status}${resp.status === 403 || resp.status === 202 ? " (bot-check)" : ""}`),
-			{ transient: RETRYABLE_STATUS.has(resp.status) },
-		);
-	}
-
-	const html = await resp.text();
-	if (looksLikeBotChallenge(html)) {
-		throw Object.assign(new Error("DuckDuckGo returned a bot-challenge page instead of results."), { transient: true });
-	}
-	return html;
-}
+import { Type } from "typebox";
+import { isAbort } from "./http.ts";
+import { ddgProvider } from "./providers/ddg.ts";
+import { langSearchProvider } from "./providers/langsearch.ts";
+import { decideProvider, type ProviderName } from "./providers/select.ts";
+import { buildSearchQuery, clampCount, formatResults, type SearchResult, type StructuredSearchArgs } from "./query.ts";
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search the web via DuckDuckGo. Build one search per call from a base query string, exact phrases, exclusions, and an optional site. Returns title, URL, and snippet.",
+			"Search the web. DuckDuckGo is the default provider; set PI_WEB_SEARCH_PROVIDER=langsearch plus LANGSEARCH_API_KEY to use LangSearch instead. Build one search per call from a base query string, exact phrases, exclusions, and an optional site. Returns title, URL, and snippet.",
 		promptSnippet:
 			"Search the web via a query string plus optional exactPhrases, excludeTerms, and site. Use one tool call per search angle.",
 		promptGuidelines: [
@@ -112,21 +55,27 @@ export default function (pi: ExtensionAPI) {
 			const built = buildSearchQuery(params);
 			const startedAt = Date.now();
 
-			let html: string;
-			try {
-				html = await fetchResultsPage(built.query, signal);
-			} catch (error) {
-				// One retry for transient bot-check responses; a genuine challenge
-				// page stays a challenge on immediate retry, but rate-limit hiccups
-				// clear within the backoff window. Aborts are never retried.
-				if (isAbort(error) || !(error as { transient?: boolean })?.transient) {
-					throw error;
-				}
-				await sleep(RETRY_BACKOFF_MS, signal);
-				html = await fetchResultsPage(built.query, signal);
-			}
+			const decision = decideProvider(process.env);
+			let providerUsed: ProviderName = decision.name;
+			const fallbackReasons: string[] = [];
+			if (decision.fallbackReason) fallbackReasons.push(decision.fallbackReason);
 
-			const results = parseDdgResults(html).slice(0, count);
+			let results: SearchResult[];
+			if (providerUsed === "langsearch") {
+				try {
+					results = await langSearchProvider.search(built, { signal, count });
+				} catch (error) {
+					if (isAbort(error) || (error as { transient?: boolean })?.transient !== true) {
+						throw error;
+					}
+					providerUsed = "ddg";
+					const message = error instanceof Error ? error.message : String(error);
+					fallbackReasons.push(`langsearch failed: ${message}; fell back to DuckDuckGo`);
+					results = await ddgProvider.search(built, { signal, count });
+				}
+			} else {
+				results = await ddgProvider.search(built, { signal, count });
+			}
 
 			return {
 				content: [
@@ -143,6 +92,8 @@ export default function (pi: ExtensionAPI) {
 					site: built.site,
 					resultCount: results.length,
 					durationMs: Date.now() - startedAt,
+					providerUsed,
+					...(fallbackReasons.length > 0 ? { fallbackReason: fallbackReasons.join("; ") } : {}),
 				},
 			};
 		},
