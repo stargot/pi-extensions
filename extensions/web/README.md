@@ -2,9 +2,10 @@
 
 Пакет `pi-web`, два инструмента:
 
-- `web_search` — полнотекстовый веб-поиск через HTML-endpoint DuckDuckGo.
-  Без ключей, без квот, со структурированными аргументами (базовый запрос +
-  точные фразы + исключения + сайт).
+- `web_search` — полнотекстовый веб-поиск: DuckDuckGo (HTML-endpoint, без
+  ключей) по умолчанию или LangSearch через `PI_WEB_SEARCH_PROVIDER`
+  (см. «Провайдеры поиска»); структурированные аргументы — базовый запрос +
+  точные фразы + исключения + сайт.
 - `web_fetch` — fetch URL → чистый markdown: HTML-статьи (Readability +
   Turndown), PDF, plain text; JS-rendered страницы дорендериваются локально
   в браузере пользователя через браузерный мост (расширение
@@ -46,6 +47,44 @@ web_search({
 - В `details` возвращается составленный запрос, счётчик результатов и время
   выполнения; рендереры показывают запрос при вызове и «N results in Xs» при
   результате (раскрытие — превью выдачи).
+
+## Провайдеры поиска
+
+`web_search` работает поверх абстракции `SearchProvider`
+(`providers/provider.ts`): провайдер превращает построенный запрос в список
+результатов. Выбор — по переменной `PI_WEB_SEARCH_PROVIDER`:
+
+- **`ddg`** (дефолт) — HTML-endpoint DuckDuckGo, без ключей и квот;
+- **`langsearch`** — веб-поиск LangSearch
+  (`POST https://api.langsearch.com/v1/web-search`, `Authorization: Bearer`),
+  требует `LANGSEARCH_API_KEY`. Маппинг аргументов: `site` →
+  `includeDomains`; доменоподобные `excludeTerms` (содержат точку, без
+  пробелов) → `excludeDomains`, остальные остаются в тексте запроса с `-`;
+  `count` — 1..10. Ответ `data.webPages.value[]` → `SearchResult`
+  (`name` → `title`), порядок сохраняется.
+
+**Фолбэк**: выбран `langsearch`, но ключ не задан → сразу `ddg`, причина
+попадает в `details.fallbackReason`; transient-сбой LangSearch
+(401/403/429/5xx, сетевые ошибки) после одного ретрая → один фолбэк на
+`ddg`. Прочие ошибки (битый JSON, остальные 4xx) и отмена пробрасываются
+как есть.
+
+**`.env`**: при старте расширение один раз вызывает `loadDotEnv` (`env.ts`) —
+ищет `.env` от текущего каталога вверх до корня диска, парсит строки
+`KEY=VALUE` (пустые строки и `#`-комментарии игнорируются, парные кавычки
+срезаются) и НЕ перезаписывает уже существующие переменные окружения: явный
+`process.env.LANGSEARCH_API_KEY` всегда сильнее файла. Файла нет — ничего
+не происходит.
+
+**Переменные окружения**:
+
+| Переменная | Значение |
+|---|---|
+| `PI_WEB_SEARCH_PROVIDER` | `ddg` (дефолт) или `langsearch`; любое другое значение → `ddg` |
+| `LANGSEARCH_API_KEY` | API-ключ LangSearch (Bearer); берётся из `process.env` или `.env` |
+
+В `details` результата появились `providerUsed` (фактический провайдер) и
+`fallbackReason` (только при фолбэке).
 
 ## web_fetch
 
@@ -170,7 +209,12 @@ IP — бан на 60 с (слепые локальные сканеры).
 | Файл | Роль |
 |---|---|
 | `index.ts` | Точка входа пакета: регистрирует `web_search`, `web_fetch` и команду `/bridge`; lifecycle WS-сервера моста (`session_start`/`session_shutdown`) |
-| `search.ts` | Инструмент `web_search`: схема, сеть, ретрай, рендереры |
+| `search.ts` | Инструмент `web_search`: схема, выбор провайдера и фолбэк, рендереры |
+| `env.ts` | `parseDotEnv`/`loadDotEnv`: чтение `.env` вверх от cwd, без перезаписи существующих переменных |
+| `providers/provider.ts` | Абстракция поискового провайдера: `SearchProvider` + опции вызова |
+| `providers/ddg.ts` | Провайдер DuckDuckGo: сеть, таймаут, ретрай, парсинг выдачи |
+| `providers/langsearch.ts` | Провайдер LangSearch: маппинг запроса, парсинг ответа, fetch + transient-ретрай |
+| `providers/select.ts` | `decideProvider`: выбор провайдера по env + причина фолбэка |
 | `http.ts` | Общие сетевые хелперы: `combineSignals`, `sleep`, `withRetry`, `readBodyCapped` (стримовый size-лимит) |
 | `fetch/ssrf.ts` | Чистый SSRF-гард `assertPublicHttpUrl` (без I/O) |
 | `fetch/fetcher.ts` | Оркестрация `fetchAndExtract`: ретрай, роутинг content-type, капы, фолбэк через браузерный мост (`renderFn`) |
@@ -189,12 +233,15 @@ IP — бан на 60 с (слепые локальные сканеры).
 ## Тесты
 
 ```bash
-node --test extensions/web/test/*.test.ts   # 152 теста
+node --test extensions/web/test/*.test.ts   # 176 тестов
 ```
 
 | Файл | Тестов | Покрывает |
 |---|---|---|
 | `query.test.ts` | 9 | построение запроса |
+| `env.test.ts` | 7 | `parseDotEnv` (кавычки, комментарии, мусор) и `loadDotEnv` в tmp-каталоге: найден/нет, подъём вверх, потолок, без перезаписи |
+| `langsearch.test.ts` | 13 | маппинг запроса LangSearch, парсер фикстуры, fetch+ретрай подменой `globalThis.fetch` (401/500/сеть → transient; 4xx и битый JSON — нет) |
+| `select.test.ts` | 4 | выбор провайдера: дефолт, мусор, `langsearch` с ключом и без |
 | `html.test.ts` | 16 | HTML-парсер |
 | `parse.test.ts` | 4 | парсер выдачи (+ фикстура `fixtures/ddg-sample.html`) |
 | `http.test.ts` | 16 | `combineSignals` / `sleep` / `withRetry` / `readBodyCapped` |
