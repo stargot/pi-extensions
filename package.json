@@ -39,6 +39,7 @@
 			"./extensions/bg-jobs/index.ts",
 			"./extensions/context-inspector/index.ts",
 			"./extensions/edit-guard/index.ts",
+			"./extensions/env-guard/index.ts",
 			"./extensions/payload-capture/index.ts",
 			"./extensions/prompt-snippets/index.ts",
 			"./extensions/prime-protocol/index.ts",
