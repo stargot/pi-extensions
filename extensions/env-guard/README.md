@@ -1,54 +1,71 @@
 # env-guard
 
-Keeps secret values out of the session transcript. A tool that prints an environment variable (the incident that motivated this extension: a bash `echo $LANGSEARCH_API_KEY` put the token straight into the log) gets its output rewritten before the text reaches the model or is stored. The guard never shows, logs, or writes the values it tracks — they live only in memory for the lifetime of the session.
+Не пускает значения секретов в транскрипт сессии. Утечка — вывод инструмента, который дошёл до модели и сохранён в сессии: мотивирующий инцидент — bash `echo $LANGSEARCH_API_KEY`, лёгший в лог как есть. Гард переписывает такой текст до отправки модели и до записи. Значения, которые он трекает, нигде не показываются и не пишутся на диск — только память на время сессии.
 
-## What it does
+## Что делает
 
-- On `session_start` (and on every `/env-guard rescan`), the guard collects known secret values:
-  - `.env` and `.env.local` from the working directory and every parent directory up to the filesystem root (unreadable files are skipped);
-  - `process.env` entries whose **name** matches `/(?:KEY|TOKEN|SECRET|PASSWD|PASSWORD|CREDENTIAL|PRIVATE)/i`.
-- A value becomes a tracked secret only if it passes the false-positive filters:
-  - length ≥ 8 characters;
-  - no whitespace or newlines;
-  - not `true`/`false`/`none`/`null`/`undefined`/`0`/`1` (case-insensitive), not a pure integer;
-  - not an `http://` / `https://` URL.
-- Values are deduplicated by `key`+`value`; when the same value appears under several keys, one entry remains and the **shortest** key name wins for the replacement marker.
-- Secrets exist only in memory. Nothing is written to disk or to the session.
+- На `session_start` (и на каждом `/env-guard rescan`) собирает известные значения секретов:
+  - `.env` и `.env.local` из рабочей директории и всех родителей до корня файловой системы (нечитаемые файлы пропускаются; в `.env` понимаются `export`, кавычки и инлайн-комментарии `#`);
+  - записи `process.env`, чьё **имя** подходит под паттерн имени секрета (см. ниже).
+- Запись собирается по правилу ИЛИ:
+  - **значение проходит shape-фильтр** — длина ≥ 8, без пробелов, не `true`/`false`/`none`/`null`/`undefined`/`0`/`1` (регистр не важен), не чистое целое, не `http(s)://` URL. Имя ключа не важно;
+  - **или** имя ключа подходит под паттерн, а значение проходит упрощённый фильтр — ≥ 8 символов, без пробелов, не булево/none-значение. Целые числа и URL при секретном имени собираются: `SOME_KEY=144888554` и `VERY_SECRET_LINK=https://…` трекаются, а `DEBUG_SECRET=true`, `MY_SECRET=1` и `PORT=3000` — нет.
+- Дубли снимаются по паре ключ+значение. Если одно значение встречается под несколькими ключами, маркером становится кратчайшее имя.
 
-## Redaction points
+## Паттерн имени секрета
 
-| Hook | What happens |
+```
+/(?:^|[^A-Za-z])(?:KEY|TOKEN|SECRET|PASSWD|PASSWORD|CREDENTIAL|EMAIL|PRIVATE)(?![A-Za-z])/i
+```
+
+Ключевое слово должно быть отграничено: слева — начало строки или не-буква, справа — не буква. Середина слова не совпадает.
+
+| Совпадает | Не совпадает |
 |---|---|
-| `tool_call` | Before a tool executes, known secret values inside its arguments (`event.input`, deep walk over strings in plain objects and arrays) are replaced with the marker in place, so a command like `curl -H "Authorization: Bearer <token>"` runs without the real value and the transcript stores only the marker. Cycles are handled; non-plain objects (`Date`, `Map`, `Set`, `Buffer`) are passed through untouched. |
-| `tool_result` | Every text block of the result, the `structuredContent` tree (deep walk over strings in objects and arrays), and the `details` tree are rewritten. When `content` is replaced, `structuredContent` is returned alongside it, so the machine-readable result is kept rather than dropped. |
-| `message_end` | A finalized **assistant** message is redacted the same way (text and thinking blocks, tool-call blocks untouched, role preserved). This covers resumed legacy sessions where a secret already sits in the transcript. |
+| `LANGSEARCH_API_KEY`, `GITHUB_TOKEN`, `DB_PASSWD`, `KEY_ID`, `MY.API_KEY`, `VEGA_EMAIL`, `VERY_SECRET_LINK`, `client_private.pem_marker` | `XKEY` и `VOICEMAIL_GREETING` (KEY/EMAIL внутри слова), `EMAILS_SENT` и `MY_CREDENTIALS` (следом буква), `PATH`, `HOME`, `EDITOR` |
 
-For each tracked value the guard redacts several textual variants of it: the raw value, the JSON-escaped inner form (`JSON.stringify(value).slice(1, -1)`), the URL-encoded form (`encodeURIComponent`), and the base64 form (only when it is at least 12 characters long). All variants go into one combined regular expression, alternatives ordered longest-first so a value always wins over its own prefixes, with every variant regex-escaped (`a.b*c+d(e)` matches literally).
+Один и тот же паттерн решает три вопроса: имена `process.env` для сбора, имя-ветку правила ИЛИ и какие `KEY=value`-строки маскирует фолбэк.
 
-Each occurrence is replaced with `[REDACTED:<KEY>]`. Redaction is idempotent: running it twice changes nothing. Values whose text would appear inside a replacement marker (for example a value literally spelled `REDACTED`) are excluded from the regex so the markers themselves cannot be corrupted on a second pass.
+## Маскировка
 
-After any redacting `tool_call`, `tool_result`, or `message_end` event, the user is notified once per session per key — key **names** only, never values — e.g. `env-guard: redacted LANGSEARCH_API_KEY`. Rescan resets this state for keys that disappeared, so a removed-and-re-added key notifies again.
+Два механизма:
 
-## The `/env-guard` command
+| Механизм | Как работает | Где применяется |
+|---|---|---|
+| По значению | Четыре варианта значения: raw, JSON-escaped, URL-encoded, base64 (если ≥ 12 символов). Один комбинированный regex: альтернативы от длинных к коротким (значение бьёт свой префикс), всё экранировано. Замена на `[REDACTED:<KEY>]`, идемпотентно. Варианты, встречающиеся внутри маркера (значение буквально `REDACTED`), исключены — второй проход не портит маркеры. | аргументы `tool_call` (на месте), текст и `structuredContent`/`details` в `tool_result`, финализированные assistant-сообщения на `message_end` |
+| По имени (фолбэк) | Строки `KEY=value` в начале строки: опциональный `export`, отступы, одиночный diff-префикс `[+-<>]`, CRLF сохраняются; значение вместе с инлайн-комментарием → `[REDACTED:<KEY>]`. Пустые, `''`/`""` и уже замаскированные значения пропускаются. Работает даже без собранных секретов. | только `tool_result`: текст-блоки результата и строковые листья `structuredContent`/`details`. На `tool_call` и assistant-сообщениях фолбэка нет |
 
-- `/env-guard` — status: how many secrets are tracked, from which sources (file paths with per-file counts, process env variable names) and the redaction counters per key.
-- `/env-guard rescan` — re-read all sources now and report the delta (added / removed / unchanged key names). Run it after adding secrets to `.env` mid-session.
-- Any other argument prints usage. Output goes through `ctx.ui.notify`, guarded by `ctx.hasUI`, so JSON and print modes stay silent but redaction itself stays active everywhere.
+По хукам:
 
-## Guarantees and limits
+| Хук | Что происходит |
+|---|---|
+| `tool_call` | До запуска инструмента значения-секреты в `event.input` (глубокий обход строк в простых объектах и массивах) заменяются маркером на месте: `curl -H "Authorization: Bearer <токен>"` выполняется уже с маркером. Циклы обрабатываются; неплоские объекты (`Date`, `Map`, `Set`, `Buffer`) проходят как есть. |
+| `tool_result` | Каждый текст-блок и деревья `structuredContent`/`details`: сначала по значению, затем фолбэк по имени. При находке возвращается патч — переписанный `content`, сохранённый `structuredContent` (машинночитаемый результат не выбрасывается), переписанный `details`. |
+| `message_end` | Финализированное **assistant**-сообщение переписывается по значению: текст и thinking-блоки, tool-call блоки не трогаются, роль сохранена. Покрывает возобновлённые старые сессии, где секрет уже в транскрипте. |
 
-- Only values known at collection time are redacted. A secret that reaches the transcript in a form other than the four tracked variants (for example reversed, split across lines, or hex-encoded) passes through.
-- Secrets shorter than 8 characters are never tracked — the false-positive cost outweighs the risk. Same for whole URLs.
-- Only `.env` / `.env.local` in the directory chain and `process.env` are scanned. Secrets in arbitrary config files, keychains, or other dotfiles are out of scope.
-- The guard repairs the future, not the past: it cannot remove a secret that was printed before the session started. Resumed sessions get assistant-message redaction via `message_end`, but user messages are never modified.
-- A cyclic `structuredContent` is copied cycle-safely (the copy never points back into the raw input), but the resulting copy still contains a cycle and therefore remains non-serializable for `JSON.stringify` — this is the pre-existing baseline, not a regression.
-- `message_end` redaction rewrites the finalized message object; `tool_result` redaction composes with other handlers and each sees the previous changes.
-- Rescan after changing `.env` — the guard does not watch files.
+После любого сработавшего `tool_call`/`tool_result`/`message_end` — уведомление раз на ключ за сессию, только имена: `env-guard: redacted LANGSEARCH_API_KEY`. Rescan возвращает уведомление ключу, который удалили и добавили заново.
 
-## Tests
+## Команда `/env-guard`
+
+- `/env-guard` — статус: сколько секретов трекается, источники (пути файлов со счётчиками, имена переменных `process.env`), счётчики маскировок по ключам.
+- `/env-guard rescan` — перечитать источники и показать дельту (added / removed / unchanged). Запускать после добавления секрета в `.env` посреди сессии.
+- Любой другой аргумент — предупреждение об использовании. Вывод через `ctx.ui.notify` под `ctx.hasUI`: в JSON- и print-режимах тихо, маскировка при этом работает везде.
+
+## Гарантии и границы
+
+- По значению маскируются только четыре варианта: перевёрнутое, разрезанное по строкам или hex-закодированное значение проходит.
+- Фолбэк по имени маскирует только `KEY=value` в начале строки. Формы через двоеточие — `x-api-key: value`, YAML `key: value` — не ловятся.
+- Сбор привязан к cwd и идёт вверх по дереву. `.env` вне этой цепочки не читается: его значения не попадают в маскировку по значению — такой секрет ловит только фолбэк, когда строка `KEY=value` появляется в выводе буквально.
+- Значения короче 8 символов не трекаются; булевы и none-значения не трекаются даже под секретным именем.
+- Сканируются только `.env`/`.env.local` в цепочке каталогов и `process.env`. Кейчейны и произвольные конфиги вне скоупа.
+- Гард чинит будущее, не прошлое: секрет, напечатанный до старта сессии, не убрать. Пользовательские сообщения не изменяются никогда.
+- Файлы не watch: после изменения `.env` — `/env-guard rescan`.
+- Циклический `structuredContent` копируется без зацикливания (копия не ссылается в сырой ввод), но остаётся цикличным и потому несериализуемым для `JSON.stringify` — прежнее поведение, не регрессия.
+
+## Тесты
 
 ```bash
 node --test extensions/env-guard/test/*.test.ts
 ```
 
-Tests use synthetic values only (`sk-test-0123456789abcdef` and similar); no real secret from any `.env` or `process.env` is ever printed or asserted.
+Тесты используют только синтетические значения (`sk-test-0123456789abcdef` и подобные); реальный секрет из `.env` или `process.env` не печатается и не ассертится.
