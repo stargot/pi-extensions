@@ -3,7 +3,12 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import type { MessageEndEvent, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import type {
+	MessageEndEvent,
+	ToolCallEvent,
+	ToolResultEvent,
+	UserBashEvent,
+} from "@earendil-works/pi-coding-agent";
 import {
 	buildRedactor,
 	escapeRegExp,
@@ -25,10 +30,14 @@ import {
 import {
 	createMessageEndHandler,
 	createState,
+	createToolCallDenyHandler,
 	createToolCallHandler,
 	createToolResultHandler,
+	createUserBashHandler,
+	findEnvReference,
 	formatStatus,
 	type GuardState,
+	isEnvFamilyPath,
 	type NotifyContext,
 	refresh,
 	rescan,
@@ -450,7 +459,7 @@ test("redactAssistantMessage: user messages are untouched", () => {
 });
 
 function makeCtx(notified: string[]): NotifyContext {
-	return { hasUI: true, ui: { notify: (message: string) => notified.push(message) } };
+	return { hasUI: true, cwd: "/tmp/proj", ui: { notify: (message: string) => notified.push(message) } };
 }
 
 function makeStateWithSecrets(): GuardState {
@@ -891,4 +900,330 @@ test("rescan: reports added and removed keys", async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test("isEnvFamilyPath: env-family basenames only", () => {
+	assert.equal(isEnvFamilyPath(".env", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath(".env.local", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath(".env.production", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath("sub/.env", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath("notes.txt", "/tmp/proj"), false);
+	assert.equal(isEnvFamilyPath("foo.env", "/tmp/proj"), false);
+	assert.equal(isEnvFamilyPath(".envrc", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath("my.env.local", "/tmp/proj"), false);
+});
+
+test("env-family matching is case-insensitive across paths, references and denies", async () => {
+	assert.equal(isEnvFamilyPath(".ENV", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath(".Env", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath(".ENV.LOCAL", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath("sub/.Env.Production", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath(".ENVRC", "/tmp/proj"), true);
+	assert.equal(isEnvFamilyPath("FOO.ENV", "/tmp/proj"), false);
+	assert.equal(findEnvReference("type .ENV", [{ path: "/tmp/proj/.env", count: 1 }]), ".ENV");
+	const state = makeStateWithSecrets();
+	const handler = createToolCallDenyHandler(state);
+	const readEvent = {
+		type: "tool_call",
+		toolCallId: "t1",
+		toolName: "read",
+		input: { path: ".ENV" },
+	} as unknown as ToolCallEvent;
+	const readResult = await handler(readEvent, makeCtx([]));
+	assert.ok(readResult);
+	assert.equal(readResult.reason, "env-guard: access to .ENV is denied");
+	const bashEvent = {
+		type: "tool_call",
+		toolCallId: "t2",
+		toolName: "bash",
+		input: { command: "type .Env" },
+	} as unknown as ToolCallEvent;
+	const bashResult = await handler(bashEvent, makeCtx([]));
+	assert.ok(bashResult);
+	assert.equal(bashResult.reason, "env-guard: access to .Env is denied");
+});
+
+test("findEnvReference: tracked paths and bare basename tokens", () => {
+	const files = [{ path: "/tmp/proj/.env", count: 2 }];
+	assert.equal(findEnvReference("cat /tmp/proj/.env", files), "/tmp/proj/.env");
+	assert.equal(findEnvReference("base64 .env", files), ".env");
+	assert.equal(findEnvReference("od -c .env.local", files), ".env.local");
+	assert.equal(findEnvReference("xxd ./.env", files), ".env");
+	assert.equal(findEnvReference("strings '../other/.env'", []), ".env");
+	assert.equal(findEnvReference("hexdump -C .env", files), ".env");
+	assert.equal(findEnvReference("cat foo.env", files), undefined);
+	assert.equal(findEnvReference("cat .envrc", files), ".envrc");
+	assert.equal(findEnvReference("od -c .envrc", files), ".envrc");
+	assert.equal(findEnvReference("echo .environment", files), undefined);
+	assert.equal(findEnvReference("ls notes.txt", files), undefined);
+});
+
+test("tool_call deny: read and edit of env files are blocked", async () => {
+	const state = makeStateWithSecrets();
+	const handler = createToolCallDenyHandler(state);
+	const notified: string[] = [];
+	const readEvent = {
+		type: "tool_call",
+		toolCallId: "t1",
+		toolName: "read",
+		input: { path: ".env" },
+	} as unknown as ToolCallEvent;
+	const readResult = await handler(readEvent, makeCtx(notified));
+	assert.deepEqual(readResult, { block: true, reason: "env-guard: access to .env is denied" });
+	const editEvent = {
+		type: "tool_call",
+		toolCallId: "t2",
+		toolName: "edit",
+		input: { path: ".env.local", edits: [{ oldText: "A=1", newText: "B=2" }] },
+	} as unknown as ToolCallEvent;
+	const editResult = await handler(editEvent, makeCtx(notified));
+	assert.ok(editResult);
+	assert.equal(editResult.block, true);
+	assert.ok(editResult.reason?.includes(".env.local"));
+	const safeRead = {
+		type: "tool_call",
+		toolCallId: "t3",
+		toolName: "read",
+		input: { path: "src/index.ts" },
+	} as unknown as ToolCallEvent;
+	assert.equal(await handler(safeRead, makeCtx(notified)), undefined);
+	assert.deepEqual(notified, ["env-guard: access to .env is denied", "env-guard: access to .env.local is denied"]);
+});
+
+test("tool_call deny: bash encoding commands referencing env files are blocked", async () => {
+	const state = makeStateWithSecrets();
+	const handler = createToolCallDenyHandler(state);
+	for (const command of [
+		"cat .env",
+		"base64 .env",
+		"od -c .env",
+		"xxd .env",
+		"hexdump -C .env",
+		"strings .env.local",
+		"cat /tmp/proj/.env",
+		"less ../.env",
+	]) {
+		const event = {
+			type: "tool_call",
+			toolCallId: "t1",
+			toolName: "bash",
+			input: { command },
+		} as unknown as ToolCallEvent;
+		const result = await handler(event, makeCtx([]));
+		assert.ok(result, command);
+		assert.equal(result.block, true, command);
+		const reason = result.reason ?? "";
+		assert.ok(reason.startsWith("env-guard: access to "), command);
+		assert.ok(reason.endsWith(" is denied"), command);
+	}
+	const safe = {
+		type: "tool_call",
+		toolCallId: "t2",
+		toolName: "bash",
+		input: { command: "echo hi" },
+	} as unknown as ToolCallEvent;
+	assert.equal(await handler(safe, makeCtx([])), undefined);
+	const otherFile = {
+		type: "tool_call",
+		toolCallId: "t3",
+		toolName: "bash",
+		input: { command: "cat foo.env notes.txt" },
+	} as unknown as ToolCallEvent;
+	assert.equal(await handler(otherFile, makeCtx([])), undefined);
+	const emptyState = createState();
+	const bareEvent = {
+		type: "tool_call",
+		toolCallId: "t4",
+		toolName: "bash",
+		input: { command: "base64 .env" },
+	} as unknown as ToolCallEvent;
+	const bareResult = await createToolCallDenyHandler(emptyState)(bareEvent, makeCtx([]));
+	assert.ok(bareResult);
+	assert.equal(bareResult.reason, "env-guard: access to .env is denied");
+});
+
+test("tool_call deny and user_bash: .envrc is covered by the shared matchers", async () => {
+	const state = makeStateWithSecrets();
+	const deny = createToolCallDenyHandler(state);
+	const readResult = await deny(
+		{ type: "tool_call", toolCallId: "t1", toolName: "read", input: { path: ".envrc" } } as unknown as ToolCallEvent,
+		makeCtx([]),
+	);
+	assert.deepEqual(readResult, { block: true, reason: "env-guard: access to .envrc is denied" });
+	const grepResult = await deny(
+		{
+			type: "tool_call",
+			toolCallId: "t2",
+			toolName: "grep",
+			input: { pattern: "KEY", path: "conf/.envrc" },
+		} as unknown as ToolCallEvent,
+		makeCtx([]),
+	);
+	assert.ok(grepResult);
+	assert.equal(grepResult.reason, "env-guard: access to conf/.envrc is denied");
+	const bashResult = await deny(
+		{
+			type: "tool_call",
+			toolCallId: "t3",
+			toolName: "bash",
+			input: { command: "cat .envrc" },
+		} as unknown as ToolCallEvent,
+		makeCtx([]),
+	);
+	assert.ok(bashResult);
+	assert.equal(bashResult.reason, "env-guard: access to .envrc is denied");
+	const userResult = await createUserBashHandler(state)(
+		{
+			type: "user_bash",
+			command: "base64 .envrc",
+			excludeFromContext: false,
+			cwd: "/tmp/proj",
+		} as unknown as UserBashEvent,
+		makeCtx([]),
+	);
+	assert.ok(userResult);
+	assert.equal(userResult.result?.exitCode, 1);
+	assert.equal(userResult.result?.output, "env-guard: access to .envrc is denied");
+	const bare = createState();
+	const bareResult = await createToolCallDenyHandler(bare)(
+		{
+			type: "tool_call",
+			toolCallId: "t4",
+			toolName: "bash",
+			input: { command: "hexdump -C .envrc" },
+		} as unknown as ToolCallEvent,
+		makeCtx([]),
+	);
+	assert.ok(bareResult);
+	assert.equal(bareResult.reason, "env-guard: access to .envrc is denied");
+	const safe = await deny(
+		{
+			type: "tool_call",
+			toolCallId: "t5",
+			toolName: "bash",
+			input: { command: "cat .environment" },
+		} as unknown as ToolCallEvent,
+		makeCtx([]),
+	);
+	assert.equal(safe, undefined);
+});
+
+test("tool_call deny: commands referencing tracked env var names are blocked", async () => {
+	const state = makeStateWithSecrets();
+	const handler = createToolCallDenyHandler(state);
+	for (const command of [
+		"printenv LANGSEARCH_API_KEY",
+		"env | grep LANGSEARCH_API_KEY",
+		"echo $LANGSEARCH_API_KEY",
+		"powershell -Command echo $env:LANGSEARCH_API_KEY",
+	]) {
+		const event = {
+			type: "tool_call",
+			toolCallId: "t1",
+			toolName: "bash",
+			input: { command },
+		} as unknown as ToolCallEvent;
+		const result = await handler(event, makeCtx([]));
+		assert.ok(result, command);
+		assert.equal(result.block, true, command);
+		assert.equal(result.reason, "env-guard: command references secret env var LANGSEARCH_API_KEY", command);
+	}
+	const prefix = {
+		type: "tool_call",
+		toolCallId: "t2",
+		toolName: "bash",
+		input: { command: "printenv LANGSEARCH_API_KEY_EXTRA" },
+	} as unknown as ToolCallEvent;
+	assert.equal(await handler(prefix, makeCtx([])), undefined);
+	const empty = createState();
+	const bare = {
+		type: "tool_call",
+		toolCallId: "t3",
+		toolName: "bash",
+		input: { command: "printenv LANGSEARCH_API_KEY" },
+	} as unknown as ToolCallEvent;
+	assert.equal(await createToolCallDenyHandler(empty)(bare, makeCtx([])), undefined);
+});
+
+test("tool_call deny: grep and find on env-family paths are blocked", async () => {
+	const state = makeStateWithSecrets();
+	const handler = createToolCallDenyHandler(state);
+	const grepEvent = {
+		type: "tool_call",
+		toolCallId: "t1",
+		toolName: "grep",
+		input: { pattern: "API_KEY", path: ".env" },
+	} as unknown as ToolCallEvent;
+	const grepResult = await handler(grepEvent, makeCtx([]));
+	assert.deepEqual(grepResult, { block: true, reason: "env-guard: access to .env is denied" });
+	const findEvent = {
+		type: "tool_call",
+		toolCallId: "t2",
+		toolName: "find",
+		input: { pattern: "*.local", path: ".env.local" },
+	} as unknown as ToolCallEvent;
+	const findResult = await handler(findEvent, makeCtx([]));
+	assert.ok(findResult);
+	assert.equal(findResult.block, true);
+	assert.equal(findResult.reason, "env-guard: access to .env.local is denied");
+	const noPath = {
+		type: "tool_call",
+		toolCallId: "t3",
+		toolName: "grep",
+		input: { pattern: "API_KEY" },
+	} as unknown as ToolCallEvent;
+	assert.equal(await handler(noPath, makeCtx([])), undefined);
+	const safePath = {
+		type: "tool_call",
+		toolCallId: "t4",
+		toolName: "find",
+		input: { pattern: "*.ts", path: "src" },
+	} as unknown as ToolCallEvent;
+	assert.equal(await handler(safePath, makeCtx([])), undefined);
+});
+
+test("user_bash handler: env references are replaced with an error result", async () => {
+	const state = makeStateWithSecrets();
+	const handler = createUserBashHandler(state);
+	const notified: string[] = [];
+	const event = {
+		type: "user_bash",
+		command: "base64 .env",
+		excludeFromContext: false,
+		cwd: "/tmp/proj",
+	} as unknown as UserBashEvent;
+	const result = await handler(event, makeCtx(notified));
+	assert.ok(result);
+	assert.equal(result.result?.exitCode, 1);
+	assert.equal(result.result?.output, "env-guard: access to .env is denied");
+	const clean = {
+		type: "user_bash",
+		command: "ls src",
+		excludeFromContext: false,
+		cwd: "/tmp/proj",
+	} as unknown as UserBashEvent;
+	assert.equal(await handler(clean, makeCtx(notified)), undefined);
+});
+
+test("user_bash handler: tracked env var names in commands are denied", async () => {
+	const state = makeStateWithSecrets();
+	const handler = createUserBashHandler(state);
+	const notified: string[] = [];
+	const event = {
+		type: "user_bash",
+		command: "printenv LANGSEARCH_API_KEY",
+		excludeFromContext: false,
+		cwd: "/tmp/proj",
+	} as unknown as UserBashEvent;
+	const result = await handler(event, makeCtx(notified));
+	assert.ok(result);
+	assert.equal(result.result?.exitCode, 1);
+	assert.equal(result.result?.output, "env-guard: command references secret env var LANGSEARCH_API_KEY");
+	const clean = {
+		type: "user_bash",
+		command: "printenv OTHER_PLAIN",
+		excludeFromContext: false,
+		cwd: "/tmp/proj",
+	} as unknown as UserBashEvent;
+	assert.equal(await handler(clean, makeCtx(notified)), undefined);
 });

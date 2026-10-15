@@ -6,9 +6,14 @@ import type {
 	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
+	UserBashEvent,
+	UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { basename, resolve } from "node:path";
 import {
 	buildRedactor,
+	escapeRegExp,
 	mergeHits,
 	redactAssistantMessage,
 	redactDeep,
@@ -21,6 +26,7 @@ import { collectSecrets, type CollectDeps, type FileSource, type SecretEntry } f
 
 export interface NotifyContext {
 	hasUI: boolean;
+	cwd: string;
 	ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
 }
 
@@ -70,6 +76,68 @@ function redactEnvLineFallback(text: string, hits: Map<string, number>): string 
 	const result = redactEnvLines(text);
 	mergeHits(hits, result.hits);
 	return result.text;
+}
+
+const ENV_BASENAME_PATTERN = /(?:^|[^\w.])(\.env(?:\.[A-Za-z0-9_-]+)?|\.envrc)(?![\w-])/i;
+
+export function isEnvFamilyPath(path: string, cwd: string): boolean {
+	const name = basename(resolve(cwd, path)).toLowerCase();
+	return name === ".env" || name === ".env.local" || name.startsWith(".env.") || name === ".envrc";
+}
+
+export function findEnvReference(command: string, files: FileSource[]): string | undefined {
+	for (const file of files) {
+		if (command.includes(file.path)) return file.path;
+	}
+	const match = ENV_BASENAME_PATTERN.exec(command);
+	return match?.[1];
+}
+
+export function findEnvNameReference(command: string, names: string[]): string | undefined {
+	for (const name of names) {
+		if (new RegExp(`\\b${escapeRegExp(name)}\\b`).test(command)) return name;
+	}
+	return undefined;
+}
+
+export function createToolCallDenyHandler(state: GuardState) {
+	return async (event: ToolCallEvent, ctx: NotifyContext): Promise<ToolCallEventResult | undefined> => {
+		let reason: string | undefined;
+		if (
+			isToolCallEventType("read", event) ||
+			isToolCallEventType("edit", event) ||
+			isToolCallEventType("write", event) ||
+			isToolCallEventType("grep", event) ||
+			isToolCallEventType("find", event)
+		) {
+			const path = event.input.path;
+			if (typeof path === "string" && isEnvFamilyPath(path, ctx.cwd)) {
+				reason = `env-guard: access to ${path} is denied`;
+			}
+		}
+		if (!reason && (isToolCallEventType("bash", event) || isToolCallEventType("powershell", event))) {
+			const file = findEnvReference(event.input.command, state.files);
+			const name = file === undefined ? findEnvNameReference(event.input.command, state.envNames) : undefined;
+			if (file !== undefined) reason = `env-guard: access to ${file} is denied`;
+			else if (name !== undefined) reason = `env-guard: command references secret env var ${name}`;
+		}
+		if (!reason) return undefined;
+		if (ctx.hasUI) ctx.ui.notify(reason, "warning");
+		return { block: true, reason };
+	};
+}
+
+export function createUserBashHandler(state: GuardState) {
+	return async (event: UserBashEvent, ctx: NotifyContext): Promise<UserBashEventResult | undefined> => {
+		const file = findEnvReference(event.command, state.files);
+		const name = file === undefined ? findEnvNameReference(event.command, state.envNames) : undefined;
+		let reason: string | undefined;
+		if (file !== undefined) reason = `env-guard: access to ${file} is denied`;
+		else if (name !== undefined) reason = `env-guard: command references secret env var ${name}`;
+		if (!reason) return undefined;
+		if (ctx.hasUI) ctx.ui.notify(reason, "warning");
+		return { result: { output: reason, exitCode: 1, cancelled: false, truncated: false } };
+	};
 }
 
 export function createToolCallHandler(state: GuardState) {
@@ -177,7 +245,9 @@ export function createEnvGuard(pi: ExtensionAPI, deps: CollectDeps = {}): GuardS
 	pi.on("session_start", async (_event, ctx) => {
 		await refresh(state, ctx.cwd, deps);
 	});
+	pi.on("tool_call", createToolCallDenyHandler(state));
 	pi.on("tool_call", createToolCallHandler(state));
+	pi.on("user_bash", createUserBashHandler(state));
 	pi.on("tool_result", createToolResultHandler(state));
 	pi.on("message_end", createMessageEndHandler(state));
 	pi.registerCommand("env-guard", {
