@@ -29,7 +29,7 @@ export interface CollectDeps {
 export const SECRET_NAME_PATTERN =
 	/(?:^|[^A-Za-z])(?:KEY|TOKEN|SECRET|PASSWD|PASSWORD|CREDENTIAL|EMAIL|PRIVATE)(?![A-Za-z])/i;
 
-export const ENV_FILE_NAMES: readonly string[] = [".env", ".env.local"];
+export const ENV_FILE_NAMES: readonly string[] = [".env", ".env.local", ".envrc"];
 
 export function matchesSecretName(name: string): boolean {
 	return SECRET_NAME_PATTERN.test(name);

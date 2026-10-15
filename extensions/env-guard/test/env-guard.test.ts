@@ -799,6 +799,34 @@ test("collectSecrets: secret-named keys are tracked despite integer and url valu
 	}
 });
 
+test("collectSecrets: direnv .envrc entries are collected and reported as a source", async () => {
+	const root = await mkdtemp(join(tmpdir(), "env-guard-"));
+	try {
+		await writeFile(
+			join(root, ".envrc"),
+			[
+				`export DIRENV_TOKEN=${SECRET}`,
+				`PLAIN_DIRENV_KEY=${OTHER}`,
+				"PATH_add ./bin",
+				"layout python",
+				"use narwhal",
+				"SHORT=abc",
+				"",
+			].join("\n"),
+			"utf8",
+		);
+		const collected = await collectSecrets(root, { env: {} });
+		assert.deepEqual(collected.secrets, [
+			{ key: "DIRENV_TOKEN", value: SECRET },
+			{ key: "PLAIN_DIRENV_KEY", value: OTHER },
+		]);
+		assert.deepEqual(collected.sources.files, [{ path: join(root, ".envrc"), count: 2 }]);
+		assert.deepEqual(collected.sources.envNames, []);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("collectSecrets: envNames stay complete while implausible values are not tracked", async () => {
 	const collected = await collectSecrets("/nonexistent/env-guard", {
 		env: {
