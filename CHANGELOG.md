@@ -19,6 +19,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 - **subagents**: робастность `task_batch` — кап глубины вложенности спавна,
   валидация `cwd` при спавне, контракт артефактов батча, парсинг auto-exit
   агентов.
+- **env-guard**: сбор секретов больше не зависит от shape значения — под
+  секрет-именованным ключом собираются числа и URL, вырожденные значения
+  (bool, null-подобные, короткие, с пробелами) отсекаются
+  (`isCollectableEntry`); `SECRET_NAME_PATTERN` получил граничное
+  сопоставление (нет ложных срабатываний в середине слова: `EMAILS_SENT`,
+  `XKEY`) и ключевое слово `EMAIL`.
 
 ### Fixed
 
@@ -26,6 +32,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   агентов, guard на пустой список панелей, приоритет `.exit`-маркера над
   сайдкарами, повторные проверки сайдкаров при steer/cancel, живой статус
   в `task_batch`.
+- **env-guard**: именной fallback-редактор — строки `KEY=value` (dotenv-стиль,
+  включая дифф-префиксы `+`/`-`, `export`, CRLF и составные ключи) в тексте
+  tool-результатов, `structuredContent` и `details` маскируются по имени
+  ключа, даже если значение не собиралось; закрывает утечку `.env`
+  соседнего проекта.
 
 ### Removed
 
