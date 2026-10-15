@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { SecretEntry } from "./secrets.ts";
+import { SECRET_NAME_PATTERN, type SecretEntry } from "./secrets.ts";
 
 export interface Redactor {
 	regex: RegExp | null;
@@ -21,6 +21,26 @@ export function valueVariants(value: string): string[] {
 }
 
 const markerFor = (key: string): string => `[REDACTED:${key}]`;
+
+const ENV_ASSIGNMENT_PATTERN = /^([+\-<>]?)([ \t]*(?:export[ \t]+)?)([A-Za-z_][A-Za-z0-9_.]*)([ \t]*=)(.*)\r?$/gm;
+const REDACTED_MARKER_VALUE = /^["']?\[REDACTED:[^\]]*\]["']?$/;
+const EMPTY_QUOTED_VALUE = /^["']{2}$/;
+
+export function redactEnvLines(text: string): { text: string; hits: Map<string, number>; changed: boolean } {
+	const hits = new Map<string, number>();
+	const replaced = text.replace(
+		ENV_ASSIGNMENT_PATTERN,
+		(line: string, prefix: string, lead: string, key: string, separator: string, value: string) => {
+			if (!SECRET_NAME_PATTERN.test(key)) return line;
+			const trimmed = value.trim();
+			if (trimmed.length === 0 || EMPTY_QUOTED_VALUE.test(trimmed) || REDACTED_MARKER_VALUE.test(trimmed)) return line;
+			hits.set(key, (hits.get(key) ?? 0) + 1);
+			const carriage = line.endsWith("\r") ? "\r" : "";
+			return `${prefix}${lead}${key}${separator}${markerFor(key)}${carriage}`;
+		},
+	);
+	return { text: replaced, hits, changed: replaced !== text };
+}
 
 export function buildRedactor(secrets: SecretEntry[]): Redactor {
 	const candidates: Array<{ variant: string; key: string }> = [];
@@ -80,6 +100,7 @@ export function walkDeep(
 	input: unknown,
 	redactor: Redactor,
 	copy: boolean,
+	stringTransform?: (text: string, hits: Map<string, number>) => string,
 ): { value: unknown; hits: Map<string, number> } {
 	const hits = new Map<string, number>();
 	const copies = new WeakMap<object, unknown>();
@@ -88,7 +109,8 @@ export function walkDeep(
 		if (typeof node === "string") {
 			const result = redactText(node, redactor);
 			mergeHits(hits, result.hits);
-			return result.text;
+			if (!stringTransform) return result.text;
+			return stringTransform(result.text, hits);
 		}
 		if (Array.isArray(node)) {
 			if (copy) {
@@ -137,8 +159,12 @@ export function walkDeep(
 	return { value, hits };
 }
 
-export function redactDeep<T>(value: T, redactor: Redactor): { value: T; hits: Map<string, number>; changed: boolean } {
-	const { value: walked, hits } = walkDeep(value, redactor, true);
+export function redactDeep<T>(
+	value: T,
+	redactor: Redactor,
+	stringTransform?: (text: string, hits: Map<string, number>) => string,
+): { value: T; hits: Map<string, number>; changed: boolean } {
+	const { value: walked, hits } = walkDeep(value, redactor, true, stringTransform);
 	if (hits.size === 0) return { value, hits, changed: false };
 	return { value: walked as T, hits, changed: true };
 }

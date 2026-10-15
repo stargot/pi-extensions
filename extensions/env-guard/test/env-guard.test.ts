@@ -9,10 +9,11 @@ import {
 	escapeRegExp,
 	redactAssistantMessage,
 	redactDeep,
+	redactEnvLines,
 	redactText,
 	valueVariants,
 } from "../redact.ts";
-import { collectSecrets, isTrackableValue, matchesSecretName, parseDotenv } from "../secrets.ts";
+import { collectSecrets, isCollectableEntry, isTrackableValue, matchesSecretName, parseDotenv } from "../secrets.ts";
 import {
 	createMessageEndHandler,
 	createState,
@@ -66,7 +67,16 @@ test("matchesSecretName: pattern cases", () => {
 	assert.equal(matchesSecretName("DB_PASSWD"), true);
 	assert.equal(matchesSecretName("AWS_SECRET_ACCESS_KEY"), true);
 	assert.equal(matchesSecretName("client_private.pem_marker"), true);
-	assert.equal(matchesSecretName("MY_CREDENTIALS"), true);
+	assert.equal(matchesSecretName("MY_CREDENTIALS"), false);
+	assert.equal(matchesSecretName("VEGA_EMAIL"), true);
+	assert.equal(matchesSecretName("MY_KEY"), true);
+	assert.equal(matchesSecretName("KEY_ID"), true);
+	assert.equal(matchesSecretName("MY.API_KEY"), true);
+	assert.equal(matchesSecretName("SECRET_OF_SECRETS"), true);
+	assert.equal(matchesSecretName("VERY_SECRET_LINK"), true);
+	assert.equal(matchesSecretName("VOICEMAIL_GREETING"), false);
+	assert.equal(matchesSecretName("EMAILS_SENT"), false);
+	assert.equal(matchesSecretName("XKEY"), false);
 	assert.equal(matchesSecretName("PATH"), false);
 	assert.equal(matchesSecretName("HOME"), false);
 	assert.equal(matchesSecretName("EDITOR"), false);
@@ -89,6 +99,20 @@ test("isTrackableValue: filters", () => {
 	assert.equal(isTrackableValue("http://example.com/abc"), false);
 	assert.equal(isTrackableValue("https://way.toolong.value"), false);
 	assert.equal(isTrackableValue("p@ssw0rd!123"), true);
+});
+
+test("isCollectableEntry: trackable shape or secret-named key with sane value", () => {
+	assert.equal(isCollectableEntry({ key: "SOME_KEY", value: "144888554" }), true);
+	assert.equal(isCollectableEntry({ key: "VERY_SECRET_LINK", value: "https://vega.domeno.sh/144888554/" }), true);
+	assert.equal(isCollectableEntry({ key: "NUMBERS_TOKEN", value: "12345678" }), true);
+	assert.equal(isCollectableEntry({ key: "SHORT_KEY", value: "abc" }), false);
+	assert.equal(isCollectableEntry({ key: "DEBUG_SECRET", value: "true" }), false);
+	assert.equal(isCollectableEntry({ key: "MY_SECRET", value: "1" }), false);
+	assert.equal(isCollectableEntry({ key: "PORT", value: "3000" }), false);
+	assert.equal(isCollectableEntry({ key: "TIMEOUT", value: "30" }), false);
+	assert.equal(isCollectableEntry({ key: "PLAIN_VALUE", value: "short" }), false);
+	assert.equal(isCollectableEntry({ key: "SECRET_PIN", value: "" }), false);
+	assert.equal(isCollectableEntry({ key: "SECRET_PHRASE", value: "has space inside" }), false);
 });
 
 test("escapeRegExp: special characters become literal", () => {
@@ -148,6 +172,107 @@ test("redactText: shared value maps to shortest key", () => {
 	]);
 	const result = redactText(SECRET, redactor);
 	assert.equal(result.text, "[REDACTED:B]");
+});
+
+test("redactEnvLines: masks dotenv assignments for secret-named keys only", () => {
+	const result = redactEnvLines(
+		[
+			"export VEGA_EMAIL=ivan@domeno.sh",
+			"  SECRET_OF_SECRETS=hunter2123",
+			'MY_TOKEN  =  "abcdef123456"',
+			"SECRET_CODE=12345678 # trailing comment",
+			"PORT=3000",
+			"TIMEOUT=30",
+			"DATABASE_URL=postgres://localhost/db",
+			"SECRET_PIN=",
+			"rate = 0.9",
+		].join("\n"),
+	);
+	assert.equal(result.changed, true);
+	assert.equal(
+		result.text,
+		[
+			"export VEGA_EMAIL=[REDACTED:VEGA_EMAIL]",
+			"  SECRET_OF_SECRETS=[REDACTED:SECRET_OF_SECRETS]",
+			"MY_TOKEN  =[REDACTED:MY_TOKEN]",
+			"SECRET_CODE=[REDACTED:SECRET_CODE]",
+			"PORT=3000",
+			"TIMEOUT=30",
+			"DATABASE_URL=postgres://localhost/db",
+			"SECRET_PIN=",
+			"rate = 0.9",
+		].join("\n"),
+	);
+	assert.deepEqual(
+		[...result.hits.entries()],
+		[
+			["VEGA_EMAIL", 1],
+			["SECRET_OF_SECRETS", 1],
+			["MY_TOKEN", 1],
+			["SECRET_CODE", 1],
+		],
+	);
+});
+
+test("redactEnvLines: already-redacted lines stay unchanged and remain idempotent", () => {
+	const text =
+		"OPENROUTER_API_KEY=[REDACTED:OPENROUTER_API_KEY]\nSECOND_KEY=[REDACTED:OTHER_TOKEN]\nTHIRD_TOKEN=realvalue12345";
+	const once = redactEnvLines(text);
+	assert.equal(once.changed, true);
+	assert.equal(
+		once.text,
+		"OPENROUTER_API_KEY=[REDACTED:OPENROUTER_API_KEY]\nSECOND_KEY=[REDACTED:OTHER_TOKEN]\nTHIRD_TOKEN=[REDACTED:THIRD_TOKEN]",
+	);
+	assert.deepEqual([...once.hits.entries()], [["THIRD_TOKEN", 1]]);
+	const twice = redactEnvLines(once.text);
+	assert.equal(twice.changed, false);
+	assert.equal(twice.hits.size, 0);
+});
+
+test("redactEnvLines: unified diff prefix chars are preserved", () => {
+	const result = redactEnvLines(
+		["+MY_TOKEN=abcdef123456", "-OLD_SECRET=xyz12345678", "+ export NEW_KEY=abcdef123", " CONTEXT=plain"].join("\n"),
+	);
+	assert.equal(
+		result.text,
+		[
+			"+MY_TOKEN=[REDACTED:MY_TOKEN]",
+			"-OLD_SECRET=[REDACTED:OLD_SECRET]",
+			"+ export NEW_KEY=[REDACTED:NEW_KEY]",
+			" CONTEXT=plain",
+		].join("\n"),
+	);
+	assert.deepEqual(
+		[...result.hits.entries()],
+		[
+			["MY_TOKEN", 1],
+			["OLD_SECRET", 1],
+			["NEW_KEY", 1],
+		],
+	);
+});
+
+test("redactEnvLines: CRLF line endings are preserved on masked lines", () => {
+	const result = redactEnvLines("VEGA_EMAIL=ivan@domeno.sh\r\nPORT=3000\r\n");
+	assert.equal(result.changed, true);
+	assert.equal(result.text, "VEGA_EMAIL=[REDACTED:VEGA_EMAIL]\r\nPORT=3000\r\n");
+});
+
+test("redactEnvLines: dotted keys are masked", () => {
+	const result = redactEnvLines("MY.API_KEY=abcdef123456\nport.option=3000");
+	assert.equal(result.text, "MY.API_KEY=[REDACTED:MY.API_KEY]\nport.option=3000");
+});
+
+test("redactEnvLines: quoted-empty values are skipped", () => {
+	const text = "SECRET_PIN=''\nSECRET_PIN2=\"\"\nPORT=3000";
+	const result = redactEnvLines(text);
+	assert.equal(result.changed, false);
+	assert.equal(result.text, text);
+});
+
+test("redactEnvLines: inline comment is masked together with the value", () => {
+	const result = redactEnvLines("SECRET_CODE=12345678 # note\nOTHER=plain");
+	assert.equal(result.text, "SECRET_CODE=[REDACTED:SECRET_CODE]\nOTHER=plain");
 });
 
 test("redaction is idempotent", () => {
@@ -361,6 +486,97 @@ test("tool_result handler: no-op without secrets", async () => {
 	assert.equal(patch, undefined);
 });
 
+test("tool_result handler: name-based fallback masks dotenv lines with zero collected secrets", async () => {
+	const state = createState();
+	const notified: string[] = [];
+	const handler = createToolResultHandler(state);
+	const event = {
+		...TOOL_RESULT_EVENT,
+		content: [
+			{
+				type: "text",
+				text: [
+					"$ cat /d/Projects/diego/.env",
+					"VEGA_EMAIL=ivan@domeno.sh",
+					"SECRET_OF_SECRETS=hunter2123",
+					"PORT=3000",
+				].join("\n"),
+			},
+		],
+		structuredContent: undefined,
+		details: undefined,
+	} as unknown as ToolResultEvent;
+	const patch = await handler(event, makeCtx(notified));
+	assert.ok(patch);
+	assert.deepEqual(patch.content, [
+		{
+			type: "text",
+			text: [
+				"$ cat /d/Projects/diego/.env",
+				"VEGA_EMAIL=[REDACTED:VEGA_EMAIL]",
+				"SECRET_OF_SECRETS=[REDACTED:SECRET_OF_SECRETS]",
+				"PORT=3000",
+			].join("\n"),
+		},
+	]);
+	assert.deepEqual(notified, ["env-guard: redacted VEGA_EMAIL", "env-guard: redacted SECRET_OF_SECRETS"]);
+	assert.equal(state.counters.get("VEGA_EMAIL"), 1);
+	assert.equal(state.counters.get("SECRET_OF_SECRETS"), 1);
+	assert.equal(state.counters.get("PORT"), undefined);
+});
+
+test("tool_result handler: already-redacted dotenv lines are not double-masked", async () => {
+	const state = createState();
+	state.secrets = [{ key: "OPENROUTER_API_KEY", value: "sk-or-test-1234567890" }];
+	state.redactor = buildRedactor(state.secrets);
+	const handler = createToolResultHandler(state);
+	const patch = await handler(
+		{
+			...TOOL_RESULT_EVENT,
+			content: [{ type: "text", text: "OPENROUTER_API_KEY=[REDACTED:OPENROUTER_API_KEY]" }],
+			structuredContent: undefined,
+			details: undefined,
+		} as unknown as ToolResultEvent,
+		makeCtx([]),
+	);
+	assert.equal(patch, undefined);
+});
+
+test("tool_result handler: name fallback applies to structuredContent and details string leaves", async () => {
+	const state = createState();
+	const handler = createToolResultHandler(state);
+	const patch = await handler(
+		{
+			...TOOL_RESULT_EVENT,
+			content: [{ type: "text", text: "VEGA_EMAIL=ivan@domeno.sh" }],
+			structuredContent: { config: "SECRET_OF_SECRETS=hunter2123" },
+			details: { note: "SECRET_OF_SECRETS=hunter2123" },
+		} as unknown as ToolResultEvent,
+		makeCtx([]),
+	);
+	assert.ok(patch);
+	assert.deepEqual(patch.content, [{ type: "text", text: "VEGA_EMAIL=[REDACTED:VEGA_EMAIL]" }]);
+	assert.deepEqual(patch.structuredContent, { config: "SECRET_OF_SECRETS=[REDACTED:SECRET_OF_SECRETS]" });
+	assert.deepEqual(patch.details, { note: "SECRET_OF_SECRETS=[REDACTED:SECRET_OF_SECRETS]" });
+	assert.equal(state.counters.get("SECRET_OF_SECRETS"), 2);
+});
+
+test("name-based fallback never touches tool_call input or assistant messages", async () => {
+	const state = createState();
+	const callEvent = {
+		type: "tool_call",
+		toolName: "bash",
+		input: { command: "SECRET_OF_SECRETS=hunter2123" },
+	} as unknown as ToolCallEvent;
+	await createToolCallHandler(state)(callEvent, makeCtx([]));
+	assert.equal((callEvent as unknown as { input: { command: string } }).input.command, "SECRET_OF_SECRETS=hunter2123");
+	const messageEvent = {
+		...MESSAGE_END_EVENT,
+		message: { ...MESSAGE_END_EVENT.message, content: [{ type: "text", text: "SECRET_OF_SECRETS=hunter2123" }] },
+	} as unknown as MessageEndEvent;
+	assert.equal(await createMessageEndHandler(state)(messageEvent, makeCtx([])), undefined);
+});
+
 test("tool_call handler: redacts arguments in place, notifies once per key", async () => {
 	const state = makeStateWithSecrets();
 	const notified: string[] = [];
@@ -513,6 +729,38 @@ test("collectSecrets: walks parent directories, dedupes, reports sources", async
 	}
 });
 
+test("collectSecrets: secret-named keys are tracked despite integer and url value shapes", async () => {
+	const root = await mkdtemp(join(tmpdir(), "env-guard-"));
+	try {
+		await writeFile(
+			join(root, ".env"),
+			"SOME_KEY=144888554\nVERY_SECRET_LINK=https://vega.domeno.sh/144888554/\nPORT=3000\nTIMEOUT=30\n",
+			"utf8",
+		);
+		const collected = await collectSecrets(root, { env: {} });
+		assert.deepEqual(collected.secrets, [
+			{ key: "SOME_KEY", value: "144888554" },
+			{ key: "VERY_SECRET_LINK", value: "https://vega.domeno.sh/144888554/" },
+		]);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("collectSecrets: degenerate secret-named values are not collected and never become patterns", async () => {
+	const root = await mkdtemp(join(tmpdir(), "env-guard-"));
+	try {
+		await writeFile(join(root, ".env"), "DEBUG_SECRET=true\nMY_SECRET=1\nNULL_KEY=null\nFLAG=false\n", "utf8");
+		const collected = await collectSecrets(root, { env: {} });
+		assert.deepEqual(collected.secrets, []);
+		const redactor = buildRedactor(collected.secrets);
+		assert.equal(redactor.regex, null);
+		assert.equal(redactText("it was true and 1 here", redactor).changed, false);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("collectSecrets: unreadable files are skipped, env names matched", async () => {
 	const collected = await collectSecrets("/nonexistent/env-guard", {
 		env: {
@@ -527,8 +775,9 @@ test("collectSecrets: unreadable files are skipped, env names matched", async ()
 	assert.deepEqual(collected.secrets, [
 		{ key: "LANGSEARCH_API_KEY", value: SECRET },
 		{ key: "GITHUB_TOKEN", value: "gh-test-12345678" },
+		{ key: "NUMBERS_TOKEN", value: "12345678" },
 	]);
-	assert.deepEqual(collected.sources.envNames, ["LANGSEARCH_API_KEY", "GITHUB_TOKEN"]);
+	assert.deepEqual(collected.sources.envNames, ["LANGSEARCH_API_KEY", "GITHUB_TOKEN", "NUMBERS_TOKEN"]);
 	assert.equal(collected.sources.files.length, 0);
 });
 

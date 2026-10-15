@@ -12,6 +12,7 @@ import {
 	mergeHits,
 	redactAssistantMessage,
 	redactDeep,
+	redactEnvLines,
 	redactText,
 	walkDeep,
 	type Redactor,
@@ -65,6 +66,12 @@ function notifyNewKeys(state: GuardState, hits: Map<string, number>, ctx: Notify
 	}
 }
 
+function redactEnvLineFallback(text: string, hits: Map<string, number>): string {
+	const result = redactEnvLines(text);
+	mergeHits(hits, result.hits);
+	return result.text;
+}
+
 export function createToolCallHandler(state: GuardState) {
 	return async (event: ToolCallEvent, ctx: NotifyContext): Promise<ToolCallEventResult | undefined> => {
 		const redactor = state.redactor;
@@ -80,20 +87,21 @@ export function createToolCallHandler(state: GuardState) {
 export function createToolResultHandler(state: GuardState) {
 	return async (event: ToolResultEvent, ctx: NotifyContext): Promise<ToolResultEventResult | undefined> => {
 		const redactor = state.redactor;
-		if (!redactor.regex) return undefined;
 		const hits = new Map<string, number>();
 
 		const content = event.content.map((item) => {
 			if (item.type !== "text") return item;
-			const result = redactText(item.text, redactor);
-			mergeHits(hits, result.hits);
-			if (!result.changed) return item;
-			return { ...item, text: result.text };
+			const valueResult = redactText(item.text, redactor);
+			const lineResult = redactEnvLines(valueResult.text);
+			mergeHits(hits, valueResult.hits);
+			mergeHits(hits, lineResult.hits);
+			if (!valueResult.changed && !lineResult.changed) return item;
+			return { ...item, text: lineResult.text };
 		});
 
 		let structuredContent = event.structuredContent;
 		if (structuredContent !== undefined) {
-			const result = redactDeep(structuredContent, redactor);
+			const result = redactDeep(structuredContent, redactor, redactEnvLineFallback);
 			mergeHits(hits, result.hits);
 			if (result.changed) structuredContent = result.value;
 		}
@@ -101,7 +109,7 @@ export function createToolResultHandler(state: GuardState) {
 		let details = event.details;
 		let detailsChanged = false;
 		if (details !== undefined && details !== null) {
-			const result = redactDeep(details, redactor);
+			const result = redactDeep(details, redactor, redactEnvLineFallback);
 			mergeHits(hits, result.hits);
 			if (result.changed) {
 				details = result.value;

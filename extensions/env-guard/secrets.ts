@@ -26,7 +26,8 @@ export interface CollectDeps {
 	env?: NodeJS.ProcessEnv;
 }
 
-export const SECRET_NAME_PATTERN = /(?:KEY|TOKEN|SECRET|PASSWD|PASSWORD|CREDENTIAL|PRIVATE)/i;
+export const SECRET_NAME_PATTERN =
+	/(?:^|[^A-Za-z])(?:KEY|TOKEN|SECRET|PASSWD|PASSWORD|CREDENTIAL|EMAIL|PRIVATE)(?![A-Za-z])/i;
 
 export const ENV_FILE_NAMES: readonly string[] = [".env", ".env.local"];
 
@@ -41,6 +42,13 @@ export function isTrackableValue(value: string): boolean {
 	if (/^[+-]?\d+$/.test(value)) return false;
 	if (/^https?:\/\//i.test(value)) return false;
 	return true;
+}
+
+export function isCollectableEntry(entry: SecretEntry): boolean {
+	if (isTrackableValue(entry.value)) return true;
+	if (!matchesSecretName(entry.key)) return false;
+	if (/^(?:true|false|none|null|undefined|0|1)$/i.test(entry.value)) return false;
+	return entry.value.length >= 8 && !/\s/.test(entry.value);
 }
 
 export function parseDotenv(text: string): SecretEntry[] {
@@ -88,7 +96,7 @@ export async function collectSecrets(startDir: string, deps: CollectDeps = {}): 
 			}
 			let count = 0;
 			for (const entry of parseDotenv(text)) {
-				if (!isTrackableValue(entry.value)) continue;
+				if (!isCollectableEntry(entry)) continue;
 				const id = `${entry.key}\u0000${entry.value}`;
 				if (seen.has(id)) continue;
 				seen.add(id);
@@ -106,7 +114,7 @@ export async function collectSecrets(startDir: string, deps: CollectDeps = {}): 
 	for (const [name, value] of Object.entries(env)) {
 		if (value === undefined) continue;
 		if (!matchesSecretName(name)) continue;
-		if (!isTrackableValue(value)) continue;
+		if (!isCollectableEntry({ key: name, value })) continue;
 		const id = `${name}\u0000${value}`;
 		if (seen.has(id)) continue;
 		seen.add(id);
