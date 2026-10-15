@@ -3,6 +3,16 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [Unreleased]
+
+### Fixed
+
+- **subagents**: ложный вердикт «pane closed» сразу после спавна панели —
+  снапшот списка панелей получил таймстамп завершения; панель объявляется
+  закрытой только по списку, обновлённому после старта записи, и два тика
+  подряд. Сентинел `__SUBAGENT_DONE_*__` больше не затирает середину строки
+  экрана (`CR` + очистка строки перед выводом).
+
 ## [0.8.0] — 2026-10-15
 
 ### Added

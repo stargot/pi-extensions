@@ -27,7 +27,7 @@ test("renderLauncherPs1: env, cd, pi invocation, sentinel, done sidecar", () => 
 	assert.match(ps1, /--model 'zai\/glm-5\.3-flash'/);
 	assert.match(ps1, /& 'C:\\Users\\tester\\AppData\\Roaming\\npm\\pi\.cmd' --session/);
 	assert.match(ps1, /'@C:\\artifacts\\context\\scout\.md'/);
-	assert.match(ps1, /Write-Host "__SUBAGENT_DONE_\$\{code\}__"/);
+	assert.match(ps1, /Write-Host "`r`e\[2K__SUBAGENT_DONE_\$\{code\}__"/);
 	assert.match(ps1, /Set-Content -LiteralPath '.*\.done' -Value \$code -NoNewline/);
 });
 

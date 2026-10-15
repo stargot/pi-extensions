@@ -68,6 +68,7 @@ interface PaneOpsFake {
 	listOk: boolean;
 	listInFlight: boolean;
 	completeList(ok: boolean, ids: string[]): void;
+	seedSnapshot(snapshot: PaneListSnapshot): void;
 	completeTail(paneId: string, text: string): void;
 	tailInFlight(paneId: string): boolean;
 }
@@ -88,7 +89,9 @@ function makePaneOpsFake(h: Harness): PaneOpsFake {
 					});
 					return;
 				}
-				latestSnapshot = fake.listOk ? { ok: true, ids: h.panes } : { ok: false };
+				latestSnapshot = fake.listOk
+					? { ok: true, ids: h.panes, completedAt: h.nowMs }
+					: { ok: false, completedAt: h.nowMs };
 			},
 			paneListSnapshot() {
 				return latestSnapshot;
@@ -121,7 +124,10 @@ function makePaneOpsFake(h: Harness): PaneOpsFake {
 		completeList(ok, ids) {
 			const next = pendingLists.shift();
 			assert.ok(next);
-			next(ok ? { ok: true, ids: new Set(ids) } : { ok: false });
+			next(ok ? { ok: true, ids: new Set(ids), completedAt: h.nowMs } : { ok: false, completedAt: h.nowMs });
+		},
+		seedSnapshot(snapshot) {
+			latestSnapshot = snapshot;
 		},
 		completeTail(paneId, text) {
 			const next = pendingTails.get(paneId)?.shift();
@@ -432,7 +438,10 @@ test("a failed pane-list refresh counts as no fresh result — no crash marking"
 	assert.equal(watcher.running.size, 1);
 	assert.equal(entry.activity.stalled, false);
 
+	h.nowMs += POLL_INTERVAL_MS;
 	h.paneOps.completeList(true, ["other-pane"]);
+	await flush();
+	oneTick(t);
 	await flush();
 	oneTick(t);
 	const steer = lastSteer(h);
@@ -456,13 +465,38 @@ test("no fresh pane-list snapshot skips the pane-vanished stage until a snapshot
 	assert.equal(h.steers.length, 0);
 	assert.equal(watcher.running.size, 1);
 
+	h.nowMs += POLL_INTERVAL_MS;
 	h.paneOps.completeList(true, ["other-pane"]);
+	await flush();
+	oneTick(t);
 	await flush();
 	oneTick(t);
 	const steer = lastSteer(h);
 	assert.equal(steer.message.details["errorMessage"], "pane closed");
 	assert.equal(steer.message.details["status"], "failed");
 	assert.deepEqual(h.forgottenPanes, ["pane-1"]);
+});
+
+test("pane closed is declared only by a snapshot newer than the entry and after two consecutive ticks", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.paneOps.deferred = true;
+	h.paneOps.seedSnapshot({ ok: true, ids: new Set(["other-pane"]), completedAt: START });
+	const watcher = createSubagentWatcher(makeDeps(h));
+	watcher.track(makeRunning());
+	watcher.ensureTicker();
+	oneTick(t);
+
+	assert.equal(h.steers.length, 0);
+	assert.equal(watcher.running.size, 1);
+
+	h.nowMs += POLL_INTERVAL_MS;
+	h.paneOps.completeList(true, ["other-pane"]);
+	await flush();
+	oneTick(t);
+	oneTick(t);
+	const steer = lastSteer(h);
+	assert.equal(steer.message.details["errorMessage"], "pane closed");
 });
 
 test("each tick kicks exactly one pane-list refresh even while a refresh is in flight", async (t) => {
@@ -590,6 +624,8 @@ test("pane missing from the alive set completes as crashed and is dropped from t
 	const watcher = createSubagentWatcher(makeDeps(h));
 	watcher.track(makeRunning());
 	watcher.ensureTicker();
+	h.nowMs += POLL_INTERVAL_MS;
+	oneTick(t);
 	oneTick(t);
 
 	const steer = lastSteer(h);

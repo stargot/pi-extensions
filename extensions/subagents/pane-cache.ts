@@ -28,10 +28,10 @@ export function createWatcherPaneOps(
 				.listPaneIds()
 				.then(
 					(ids) => {
-						listSnapshot = { ok: true, ids };
+						listSnapshot = { ok: true, ids, completedAt: now() };
 					},
 					() => {
-						listSnapshot = { ok: false };
+						listSnapshot = { ok: false, completedAt: now() };
 					},
 				)
 				.finally(() => {

@@ -81,6 +81,7 @@ export interface RunningSubagent {
 	labelPending?: boolean;
 	/** Last deferred re-label attempt (any outcome) — paces pollTick retries (R10). */
 	labelLastAttemptAt?: number;
+	vanishedSince?: number;
 }
 
 export interface TraceEntry {
@@ -91,7 +92,7 @@ export interface TraceEntry {
 	model?: string;
 }
 
-export type PaneListSnapshot = { ok: true; ids: Set<string> } | { ok: false };
+export type PaneListSnapshot = { ok: true; ids: Set<string>; completedAt: number } | { ok: false; completedAt: number };
 
 export interface WatcherPaneOps {
 	refreshPaneList(): void;
@@ -492,11 +493,17 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 			}
 
 			// 4. Pane vanished without finishing → crashed or closed by the user.
-			if (alive !== null && !alive.has(running.paneId)) {
+			const isFresh = paneSnapshot !== null && paneSnapshot.ok && paneSnapshot.completedAt > running.startTime;
+			if (alive !== null && !alive.has(running.paneId) && isFresh) {
+				if (running.vanishedSince === undefined) {
+					running.vanishedSince = now;
+					continue;
+				}
 				forgetPane(running.paneId);
 				completeSubagent(running, { exitCode: 1, crashed: true, errorMessage: "pane closed" });
 				continue;
 			}
+			running.vanishedSince = undefined;
 
 			// 5. Screen sentinel fallback (sidecars failed to write).
 			panes.requestScreenTail(running.paneId);
