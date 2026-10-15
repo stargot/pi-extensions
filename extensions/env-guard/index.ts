@@ -1,6 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type {
 	ExtensionAPI,
+	InputEvent,
+	InputEventResult,
 	MessageEndEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -15,9 +17,9 @@ import {
 	buildRedactor,
 	escapeRegExp,
 	mergeHits,
-	redactAssistantMessage,
 	redactDeep,
 	redactEnvLines,
+	redactMessage,
 	redactText,
 	walkDeep,
 	type Redactor,
@@ -140,6 +142,21 @@ export function createUserBashHandler(state: GuardState) {
 	};
 }
 
+export function createInputHandler(state: GuardState) {
+	return async (event: InputEvent, ctx: NotifyContext): Promise<InputEventResult | undefined> => {
+		const redactor = state.redactor;
+		const valueResult = redactText(event.text, redactor);
+		const lineResult = redactEnvLines(valueResult.text);
+		if (!valueResult.changed && !lineResult.changed) return undefined;
+		const hits = new Map<string, number>();
+		mergeHits(hits, valueResult.hits);
+		mergeHits(hits, lineResult.hits);
+		recordHits(state, hits);
+		notifyNewKeys(state, hits, ctx);
+		return { action: "transform", text: lineResult.text };
+	};
+}
+
 export function createToolCallHandler(state: GuardState) {
 	return async (event: ToolCallEvent, ctx: NotifyContext): Promise<ToolCallEventResult | undefined> => {
 		const redactor = state.redactor;
@@ -200,7 +217,7 @@ export function createToolResultHandler(state: GuardState) {
 export function createMessageEndHandler(state: GuardState) {
 	return async (event: MessageEndEvent, ctx: NotifyContext): Promise<{ message: AgentMessage } | undefined> => {
 		if (!state.redactor.regex) return undefined;
-		const result = redactAssistantMessage(event.message, state.redactor);
+		const result = redactMessage(event.message, state.redactor);
 		if (!result) return undefined;
 		recordHits(state, result.hits);
 		notifyNewKeys(state, result.hits, ctx);
@@ -248,6 +265,7 @@ export function createEnvGuard(pi: ExtensionAPI, deps: CollectDeps = {}): GuardS
 	pi.on("tool_call", createToolCallDenyHandler(state));
 	pi.on("tool_call", createToolCallHandler(state));
 	pi.on("user_bash", createUserBashHandler(state));
+	pi.on("input", createInputHandler(state));
 	pi.on("tool_result", createToolResultHandler(state));
 	pi.on("message_end", createMessageEndHandler(state));
 	pi.registerCommand("env-guard", {

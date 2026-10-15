@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import type {
+	InputEvent,
 	MessageEndEvent,
 	ToolCallEvent,
 	ToolResultEvent,
@@ -15,6 +16,7 @@ import {
 	redactAssistantMessage,
 	redactDeep,
 	redactEnvLines,
+	redactMessage,
 	redactText,
 	valueVariants,
 } from "../redact.ts";
@@ -28,6 +30,7 @@ import {
 	parseDotenv,
 } from "../secrets.ts";
 import {
+	createInputHandler,
 	createMessageEndHandler,
 	createState,
 	createToolCallDenyHandler,
@@ -724,14 +727,19 @@ test("message_end handler: redacts finalized assistant message preserving role",
 	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
 });
 
-test("message_end handler: skips user messages and empty state", async () => {
+test("message_end handler: redacts user messages and skips empty state", async () => {
 	const state = makeStateWithSecrets();
+	const notified: string[] = [];
 	const handler = createMessageEndHandler(state);
 	const userEvent = {
 		type: "message_end",
 		message: { role: "user", content: SECRET, timestamp: 0 },
 	} as unknown as MessageEndEvent;
-	assert.equal(await handler(userEvent, makeCtx([])), undefined);
+	const result = await handler(userEvent, makeCtx(notified));
+	assert.ok(result);
+	assert.equal(result.message.role, "user");
+	assert.equal((result.message.content as string).includes(SECRET), false);
+	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
 	const empty = createState();
 	assert.equal(await createMessageEndHandler(empty)(MESSAGE_END_EVENT, makeCtx([])), undefined);
 });
@@ -1226,4 +1234,120 @@ test("user_bash handler: tracked env var names in commands are denied", async ()
 		cwd: "/tmp/proj",
 	} as unknown as UserBashEvent;
 	assert.equal(await handler(clean, makeCtx(notified)), undefined);
+});
+
+test("input handler: transforms steer-delivered text containing secrets", async () => {
+	const state = makeStateWithSecrets();
+	const handler = createInputHandler(state);
+	const notified: string[] = [];
+	const event = {
+		type: "input",
+		text: `subagent result: LANGSEARCH_API_KEY=${SECRET}`,
+		source: "extension",
+		streamingBehavior: "steer",
+	} as unknown as InputEvent;
+	const result = await handler(event, makeCtx(notified));
+	assert.ok(result);
+	const transformed = result as { action: string; text: string };
+	assert.equal(transformed.action, "transform");
+	assert.equal(transformed.text, "subagent result: LANGSEARCH_API_KEY=[REDACTED:LANGSEARCH_API_KEY]");
+	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
+	assert.equal(state.counters.get("LANGSEARCH_API_KEY"), 1);
+	const clean = { type: "input", text: "nothing here", source: "interactive" } as unknown as InputEvent;
+	assert.equal(await handler(clean, makeCtx([])), undefined);
+	const bare = createState();
+	const dotenvEvent = {
+		type: "input",
+		text: "OTHER_TOKEN=hunter2123",
+		source: "interactive",
+	} as unknown as InputEvent;
+	const dotenvResult = await createInputHandler(bare)(dotenvEvent, makeCtx([]));
+	assert.ok(dotenvResult);
+	assert.equal((dotenvResult as { text: string }).text, "OTHER_TOKEN=[REDACTED:OTHER_TOKEN]");
+});
+
+test("input handler: masks values sourced from direnv .envrc", async () => {
+	const root = await mkdtemp(join(tmpdir(), "env-guard-"));
+	try {
+		await writeFile(join(root, ".envrc"), `export DIRENV_TOKEN=${SECRET}\n`, "utf8");
+		const state = createState();
+		await refresh(state, root, { env: {} });
+		const handler = createInputHandler(state);
+		const notified: string[] = [];
+		const event = {
+			type: "input",
+			text: `provider says ${SECRET}`,
+			source: "interactive",
+		} as unknown as InputEvent;
+		const result = await handler(event, makeCtx(notified));
+		assert.ok(result);
+		assert.equal((result as { action: string; text: string }).action, "transform");
+		assert.equal((result as { text: string }).text, "provider says [REDACTED:DIRENV_TOKEN]");
+		assert.deepEqual(notified, ["env-guard: redacted DIRENV_TOKEN"]);
+		assert.equal(state.counters.get("DIRENV_TOKEN"), 1);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("redactMessage: user string, user blocks, toolResult and system contents", () => {
+	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const userString = redactMessage({ role: "user", content: `paste ${SECRET}`, timestamp: 0 } as never, redactor);
+	assert.ok(userString);
+	assert.equal(userString.message.role, "user");
+	assert.equal((userString.message as { content: unknown }).content, "paste [REDACTED:LANGSEARCH_API_KEY]");
+	const userBlocks = redactMessage(
+		{
+			role: "user",
+			content: [
+				{ type: "text", text: SECRET },
+				{ type: "image", data: "AA==", mimeType: "image/png" },
+			],
+			timestamp: 0,
+		} as never,
+		redactor,
+	);
+	assert.ok(userBlocks);
+	assert.deepEqual((userBlocks.message as { content: unknown }).content, [
+		{ type: "text", text: "[REDACTED:LANGSEARCH_API_KEY]" },
+		{ type: "image", data: "AA==", mimeType: "image/png" },
+	]);
+	const toolResult = redactMessage(
+		{
+			role: "toolResult",
+			toolCallId: "t1",
+			toolName: "bash",
+			content: [{ type: "text", text: SECRET }],
+			isError: false,
+			timestamp: 0,
+		} as never,
+		redactor,
+	);
+	assert.ok(toolResult);
+	assert.deepEqual((toolResult.message as { content: unknown }).content, [
+		{ type: "text", text: "[REDACTED:LANGSEARCH_API_KEY]" },
+	]);
+	const system = redactMessage({ role: "system", content: `rules ${SECRET}` } as never, redactor);
+	assert.ok(system);
+	assert.equal((system.message as { content: unknown }).content, "rules [REDACTED:LANGSEARCH_API_KEY]");
+	const clean = { role: "user", content: "nothing here", timestamp: 0 } as never;
+	assert.equal(redactMessage(clean, redactor), undefined);
+});
+
+test("redactMessage: system non-text blocks are preserved", () => {
+	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const message = {
+		role: "system",
+		content: [
+			{ type: "text", text: `rules ${SECRET}` },
+			{ type: "image", data: "AA==", mimeType: "image/png" },
+		],
+	} as never;
+	const result = redactMessage(message, redactor);
+	assert.ok(result);
+	assert.equal(result.message.role, "system");
+	assert.deepEqual(result.message.content, [
+		{ type: "text", text: "rules [REDACTED:LANGSEARCH_API_KEY]" },
+		{ type: "image", data: "AA==", mimeType: "image/png" },
+	]);
 });

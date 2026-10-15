@@ -169,6 +169,60 @@ export function redactDeep<T>(
 	return { value: walked as T, hits, changed: true };
 }
 
+function redactTextBlocks<T extends { type: string; text?: unknown }>(
+	blocks: T[],
+	redactor: Redactor,
+	hits: Map<string, number>,
+): { content: T[]; changed: boolean } {
+	let changed = false;
+	const content = blocks.map((block): T => {
+		const text = block.text;
+		if (block.type !== "text" || typeof text !== "string") return block;
+		const result = redactText(text, redactor);
+		if (!result.changed) return block;
+		changed = true;
+		mergeHits(hits, result.hits);
+		return { ...block, text: result.text } as T;
+	});
+	return { content, changed };
+}
+
+export function redactMessage(
+	message: AgentMessage,
+	redactor: Redactor,
+): { message: AgentMessage; hits: Map<string, number> } | undefined {
+	if (message.role === "assistant") return redactAssistantMessage(message, redactor);
+	if (message.role === "user") {
+		const hits = new Map<string, number>();
+		if (typeof message.content === "string") {
+			const result = redactText(message.content, redactor);
+			if (!result.changed) return undefined;
+			return { message: { ...message, content: result.text }, hits: result.hits };
+		}
+		const mapped = redactTextBlocks(message.content, redactor, hits);
+		if (!mapped.changed) return undefined;
+		return { message: { ...message, content: mapped.content }, hits };
+	}
+	if (message.role === "toolResult") {
+		const hits = new Map<string, number>();
+		const mapped = redactTextBlocks(message.content, redactor, hits);
+		if (!mapped.changed) return undefined;
+		return { message: { ...message, content: mapped.content }, hits };
+	}
+	if (message.role === "system") {
+		const hits = new Map<string, number>();
+		if (typeof message.content === "string") {
+			const result = redactText(message.content, redactor);
+			if (!result.changed) return undefined;
+			return { message: { ...message, content: result.text }, hits: result.hits };
+		}
+		const mapped = redactTextBlocks(message.content, redactor, hits);
+		if (!mapped.changed) return undefined;
+		return { message: { ...message, content: mapped.content }, hits };
+	}
+	return undefined;
+}
+
 export function redactAssistantMessage(
 	message: AgentMessage,
 	redactor: Redactor,
