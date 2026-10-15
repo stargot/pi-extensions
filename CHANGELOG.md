@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ## [Unreleased]
 
+### Added
+
+- **env-guard**: deny-слой на `tool_call` — `read`/`edit`/`write` на файлы `.env`-семейства (`.env`,
+  `.env.local`, `.env.*`, `.envrc`) и `bash`/`powershell` с отслеживаемым `.env`-путём или именем-токеном в
+  командной строке блокируются (`env-guard: access to <path> is denied`), одним правилом закрывая
+  `cat`, `base64`, `od`, `xxd`, `hexdump`, `strings`; `!`-команды перехватываются тем же правилом
+  на `user_bash`.
+- **env-guard**: хук `input` — весь входящий текст сессии, включая результаты субагентов,
+  доставленные через steer, маскируется до входа в контекст (`action: "transform"`).
+
 ### Changed
 
 - **subagents**: спавн детей унифицирован в `ChildLaunchPlan` — одна схема
@@ -25,9 +35,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   (`isCollectableEntry`); `SECRET_NAME_PATTERN` получил граничное
   сопоставление (нет ложных срабатываний в середине слова: `EMAILS_SENT`,
   `XKEY`) и ключевое слово `EMAIL`.
+- **env-guard**: direnv `.envrc` покрыт всеми эшелонами — сбор секретов
+  (`KEY=value` и `export KEY=value`; прочие директивы direnv пропускаются, код
+  не исполняется) с честным `FileSource`, deny-слой (`.envrc` в
+  `.env`-семействе для `read`/`edit`/`write`/`grep`/`find` и как токен в
+  `bash`/`powershell`/`user_bash`) и маскировка собранных значений в
+  транскрипте.
 
 ### Fixed
 
+- **env-guard**: прекращена перередактация обычных значений `process.env` и
+  env-файлов — shape-ветка сбора дополнительно требует `isPlausibleSecretValue`
+  (не короче 8 символов, не чистое число/версия вроде `10.0.19045`, не
+  стоп-лист общих не-секретных слов: булевы/`yes`/`no`/`on`/`off`, окружения
+  `production`/`development`/`staging`/`test`/`dev`/`prod`, уровни логов
+  `debug`/`info`/`warn`/`error`, провайдеры `ddg`/`duckduckgo`/`langsearch`,
+  маркерные значения `[REDACTED:…]`): значение вроде
+  `PI_WEB_SEARCH_PROVIDER=langsearch` больше не трекается и не маскирует слово
+  по всей сессии; имена при этом остаются в envNames-deny полностью (гвард на
+  `printenv` защищает от эксфильтрации по имени — фильтруются только значения),
+  сбор чисел и URL под секрет-именованными ключами сохранён.
 - **subagents**: hotfix гонок вотчера — done-waiter пропускает ещё спавнящихся
   агентов, guard на пустой список панелей, приоритет `.exit`-маркера над
   сайдкарами, повторные проверки сайдкаров при steer/cancel, живой статус
@@ -37,6 +64,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   tool-результатов, `structuredContent` и `details` маскируются по имени
   ключа, даже если значение не собиралось; закрывает утечку `.env`
   соседнего проекта.
+- **env-guard**: результаты субагентов, доставленные как steer-сообщения,
+  больше не проходят мимо маскировки — они перехватываются хуком `input`;
+  на `message_end` маскируются сообщения всех ролей с текстом (раньше —
+  только assistant).
 
 ### Removed
 
