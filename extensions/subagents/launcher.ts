@@ -117,7 +117,7 @@ export function renderLauncherPs1(spec: LauncherSpec): string {
 	// flags to 0, and clear bracketed-paste / alt-screen / hidden-cursor /
 	// SGR state. All no-ops after a clean exit.
 	lines.push('[Console]::Write("`e[<u`e[=0;1u`e[?2004l`e[?1049l`e[?25h`e[0m")');
-	lines.push(`Write-Host "__SUBAGENT_DONE_\${code}__"`);
+	lines.push(`Write-Host "\`r\`e[2K__SUBAGENT_DONE_\${code}__"`);
 	lines.push(`Set-Content -LiteralPath ${ps1Literal(spec.doneFile)} -Value $code -NoNewline`);
 	lines.push("");
 	return lines.join("\r\n");

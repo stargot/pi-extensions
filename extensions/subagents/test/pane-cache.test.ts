@@ -119,6 +119,30 @@ test("pane list: a failed refresh stores a failed snapshot, not an empty live se
 	assert.equal(snapshot?.ok, false);
 });
 
+test("pane list: snapshot carries the completion timestamp (ok and failed)", async () => {
+	let clock = 1000;
+	const okSource = makeSource();
+	const okOps = createWatcherPaneOps(okSource.source, { now: () => clock });
+	okOps.refreshPaneList();
+	clock = 1500;
+	okSource.resolveList(["p1", "p2"]);
+	await flush();
+	const settled = okOps.paneListSnapshot();
+	assert.ok(settled?.ok);
+	assert.equal(settled.completedAt, 1500);
+
+	clock = 2000;
+	const failedSource = makeSource();
+	const failedOps = createWatcherPaneOps(failedSource.source, { now: () => clock });
+	failedOps.refreshPaneList();
+	clock = 2500;
+	failedSource.rejectList();
+	await flush();
+	const failed = failedOps.paneListSnapshot();
+	assert.equal(failed?.ok, false);
+	assert.equal(failed?.completedAt, 2500);
+});
+
 test("screen tail: throttled — a request inside the throttle window does not re-read", async () => {
 	const src = makeSource();
 	let nowMs = 0;
