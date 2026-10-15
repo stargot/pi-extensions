@@ -13,7 +13,15 @@ import {
 	redactText,
 	valueVariants,
 } from "../redact.ts";
-import { collectSecrets, isCollectableEntry, isTrackableValue, matchesSecretName, parseDotenv } from "../secrets.ts";
+import {
+	collectSecrets,
+	isCollectableEntry,
+	isPlausibleSecretValue,
+	isStopListedSecretValue,
+	isTrackableValue,
+	matchesSecretName,
+	parseDotenv,
+} from "../secrets.ts";
 import {
 	createMessageEndHandler,
 	createState,
@@ -113,6 +121,50 @@ test("isCollectableEntry: trackable shape or secret-named key with sane value", 
 	assert.equal(isCollectableEntry({ key: "PLAIN_VALUE", value: "short" }), false);
 	assert.equal(isCollectableEntry({ key: "SECRET_PIN", value: "" }), false);
 	assert.equal(isCollectableEntry({ key: "SECRET_PHRASE", value: "has space inside" }), false);
+});
+
+test("isPlausibleSecretValue: length, numbers, stop-list words and redaction markers", () => {
+	assert.equal(isPlausibleSecretValue("short"), false);
+	assert.equal(isPlausibleSecretValue("seven777"), true);
+	assert.equal(isPlausibleSecretValue("12345678"), false);
+	assert.equal(isPlausibleSecretValue("+12345678"), false);
+	assert.equal(isPlausibleSecretValue("1234.5678"), false);
+	assert.equal(isPlausibleSecretValue("10.0.19045"), false);
+	assert.equal(isPlausibleSecretValue("Production"), false);
+	assert.equal(isPlausibleSecretValue("DEVELOPMENT"), false);
+	assert.equal(isPlausibleSecretValue("Staging123"), true);
+	assert.equal(isPlausibleSecretValue("DEBUG"), false);
+	assert.equal(isPlausibleSecretValue("warnings"), true);
+	assert.equal(isPlausibleSecretValue("DDG"), false);
+	assert.equal(isPlausibleSecretValue("duckduckgo"), false);
+	assert.equal(isPlausibleSecretValue("LangSearch"), false);
+	assert.equal(isPlausibleSecretValue("YES"), false);
+	assert.equal(isPlausibleSecretValue("Off"), false);
+	assert.equal(isPlausibleSecretValue("p@ssw0rd!123"), true);
+	assert.equal(isPlausibleSecretValue(SECRET), true);
+	assert.equal(isPlausibleSecretValue("[REDACTED:PI_WEB_SEARCH_PROVIDER]"), false);
+	assert.equal(isPlausibleSecretValue("[REDACTED:OTHER_KEY]"), false);
+	assert.equal(isPlausibleSecretValue("[UNCLOSED:MARKER"), true);
+});
+
+test("isStopListedSecretValue: common words and markers, case-insensitive", () => {
+	assert.equal(isStopListedSecretValue("production"), true);
+	assert.equal(isStopListedSecretValue("Test"), true);
+	assert.equal(isStopListedSecretValue("DDG"), true);
+	assert.equal(isStopListedSecretValue("[REDACTED:PI_WEB_SEARCH_PROVIDER]"), true);
+	assert.equal(isStopListedSecretValue("144888554"), false);
+	assert.equal(isStopListedSecretValue("p@ssw0rd!123"), false);
+});
+
+test("isCollectableEntry: implausible common words are dropped, secret-named numbers and urls stay", () => {
+	assert.equal(isCollectableEntry({ key: "PI_WEB_SEARCH_PROVIDER", value: "langsearch" }), false);
+	assert.equal(isCollectableEntry({ key: "PI_WEB_SEARCH_PROVIDER", value: "duckduckgo" }), false);
+	assert.equal(isCollectableEntry({ key: "PI_WEB_SEARCH_PROVIDER", value: "production" }), false);
+	assert.equal(isCollectableEntry({ key: "DEBUG_TOKEN", value: "production" }), false);
+	assert.equal(isCollectableEntry({ key: "MY_TOKEN", value: "[REDACTED:MY_TOKEN]" }), false);
+	assert.equal(isCollectableEntry({ key: "SOME_KEY", value: "144888554" }), true);
+	assert.equal(isCollectableEntry({ key: "VERY_SECRET_LINK", value: "https://vega.domeno.sh/144888554/" }), true);
+	assert.equal(isCollectableEntry({ key: "OTHER_TOKEN", value: "gh-test-12345678" }), true);
 });
 
 test("escapeRegExp: special characters become literal", () => {
@@ -745,6 +797,19 @@ test("collectSecrets: secret-named keys are tracked despite integer and url valu
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test("collectSecrets: envNames stay complete while implausible values are not tracked", async () => {
+	const collected = await collectSecrets("/nonexistent/env-guard", {
+		env: {
+			LANGSEARCH_API_KEY: "ddg",
+			DEBUG_TOKEN: "production",
+			PROVIDER_TOKEN: "duckduckgo",
+			GITHUB_TOKEN: "gh-test-12345678",
+		},
+	});
+	assert.deepEqual(collected.secrets, [{ key: "GITHUB_TOKEN", value: "gh-test-12345678" }]);
+	assert.deepEqual(collected.sources.envNames, ["LANGSEARCH_API_KEY", "DEBUG_TOKEN", "PROVIDER_TOKEN", "GITHUB_TOKEN"]);
 });
 
 test("collectSecrets: degenerate secret-named values are not collected and never become patterns", async () => {
