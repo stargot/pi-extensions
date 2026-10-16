@@ -11,10 +11,10 @@
 | [prompt-snippets](extensions/prompt-snippets/) | `alt+s`, `/snippets` | Сменные правила промпта: чекбоксы-сниппеты, вклеиваются до/после сообщения на один ход. На основе расширения Eero Alvar (amosblomqvist) |
 | [prime-protocol](extensions/prime-protocol/) | `/solo` | Протокол оркестратора для основных сессий: инжект prime-промпта (тело agents/prime.md + бюджетная строка из констант + dispatch-таблица, генерируемая сканом agents/*.md, опт-аут `dispatch: false`), виджет prime-status, принудительный solo-кап на лукапы и правки (лимиты — константы расширения, +бюджет за каждого отправленного агента) с детьми-детектом |
 | [quiz](extensions/quiz/) | — | Градируемый вопрос с вариантами: правильный ответ по value, мгновенная оценка ✓/✗ с пояснением, шаффл, авто-вариант «I don't know», поле note (Tab или n). На основе расширения Eero Alvar (amosblomqvist) |
-| [session-handoff](extensions/session-handoff/) | `/handoff` | Автодамп состояния сессии при выходе (последний запрос/ответ, git-статус) и подхват на следующем старте: просмотр, продолжение с промптом, очистка |
-| [session-ledger](extensions/session-ledger/) | `/stats` | Расходы и активность по всем сессиям на машине: стоимость, токены, кэш, вызовы и ошибки инструментов, компакции |
-| [session-recall](extensions/session-recall/) | `/recall` | Полнотекстовый поиск по всем сессиям всех проектов с переходом в найденную сессию |
-| [session-trace](extensions/session-trace/) | `/trace`, `/trace-web` | Живой flow-граф сессии: карточки ходов, чипы инструментов, маркеры на таймлайне; плюс CLI и веб-вьюер |
+| [handoff](extensions/handoff/) | `/handoff` | Автодамп состояния сессии при выходе (последний запрос/ответ, git-статус) и подхват на следующем старте: просмотр, продолжение с промптом, очистка |
+| [usage](extensions/usage/) | `/stats` | Расходы и активность по всем сессиям на машине: стоимость, токены, кэш, вызовы и ошибки инструментов, компакции |
+| [recall](extensions/recall/) | `/recall` | Полнотекстовый поиск по всем сессиям всех проектов с переходом в найденную сессию |
+| [trace](extensions/trace/) | `/trace`, `/trace-web` | Живой flow-граф сессии: карточки ходов, чипы инструментов, маркеры на таймлайне; плюс CLI и веб-вьюер |
 | [skill-auditor](extensions/skill-auditor/) | `/audit` | Read-only аудит скиллов: валидность frontmatter (зеркало фактического поведения pi), роутинг description, битые ссылки и сироты, карта скоупов user vs project; `/audit go` отправляет отчёт модели на семантический разбор (только рекомендации) |
 | [subagents](extensions/subagents/) | `subagent`, `task_batch`, `/subagent`, `/workers` | Субагенты: интерактивные в терминальных панелях — WezTerm или herdr (спавн/steer+interrupt/resume/cancel, живой статус) + headless-батчи single/parallel/chain (Windows + pwsh); глобальный индекс живых воркеров |
 | [web](extensions/web/) | `web_search`, `web_fetch`, `/bridge` | Веб-поиск DuckDuckGo без API-ключей: структурированные запросы (точные фразы/исключения/сайт), таймаут и ретрай; плюс fetch страницы → markdown (Readability/Turndown, PDF, текст, браузерный мост pi-web-companion для JS-rendered, SSRF-гард). На основе расширения Eero Alvar (amosblomqvist) |
@@ -51,11 +51,11 @@ pi install git:github.com/stargot/pi-extensions
 Каждое расширение работает и без pi — через CLI:
 
 ```bash
-npm run stats        # session-ledger
-npm run recall       # session-recall
+npm run stats        # usage
+npm run recall       # recall
 npm run audit        # skill-auditor
-npm run trace        # session-trace, терминальный вьюер
-npm run trace:web    # session-trace, веб-вьюер
+npm run trace        # trace, терминальный вьюер
+npm run trace:web    # trace, веб-вьюер
 ```
 
 Подробнее — README внутри каждой папки в `extensions/`.

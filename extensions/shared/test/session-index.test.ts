@@ -12,8 +12,8 @@ import { test } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractUnits } from "../../session-recall/search.ts";
-import { parseSessionText } from "../../session-ledger/ledger.ts";
+import { extractUnits } from "../../recall/search.ts";
+import { parseSessionText } from "../../usage/ledger.ts";
 import {
 	INDEX_VERSION,
 	isNestedSessionFile,

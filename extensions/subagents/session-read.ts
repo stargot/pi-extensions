@@ -3,7 +3,7 @@
  *
  * The parent never talks to the child's process graph — it reads the transcript
  * the child left behind: the last assistant message becomes the reported
- * summary, usage is totaled across assistant messages (same shape session-ledger
+ * summary, usage is totaled across assistant messages (same shape usage
  * consumes: usage.input / usage.output / usage.cost.total).
  *
  * Deliberately dependency-free so tests can run standalone.

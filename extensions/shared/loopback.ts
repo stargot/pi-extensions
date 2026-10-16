@@ -5,7 +5,7 @@
  * перерезолвленный в 127.0.0.1, приходит со своим Host — и тогда сверка
  * Origin с Host ничего не ловит, а локальные эндпоинты читаются кросс-доменно.
  *
- * Вынесено из session-trace/web/serve.ts (0.3.x); единственный потребитель —
+ * Вынесено из trace/web/serve.ts (0.3.x); единственный потребитель —
  * session-trace (quiz раньше переиспользовал гард, но веб-режим у него выведен).
  */
 export function isLoopbackHost(host: string | undefined): boolean {

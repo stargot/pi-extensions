@@ -4,7 +4,7 @@
  * Состояние скролла принадлежит pi-tui ScrollView; проверяем вьюпорт-нарезку,
  * клампы, help-строку с позицией, инвалидацию кэша ширины и wheel через
  * handleMouse. Терминал и тема мокаются duck-typed объектами
- * (как TuiLike в session-trace/graph.ts).
+ * (как TuiLike в trace/graph.ts).
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";

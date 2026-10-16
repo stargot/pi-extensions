@@ -6,7 +6,7 @@
  * - плоский результат `diffLines`: спаренные delete/insert сливаются в строки `modify` с inline-сегментами;
  *   типы `equal | insert | delete | modify` вместо `same | added | removed | note`;
  * - раскраска не захардкожена: рендер принимает инъекционный `DiffStyler`
- *   (структурно совместим с `Styler` из session-ledger/report.ts);
+ *   (структурно совместим с `Styler` из usage/report.ts);
  * - бюджет LCS-клеток настраивается через `opts.maxLcsCells` (по умолчанию 500_000).
  *
  * Алгоритм: тримминг общего префикса/суффикса строк → LCS-матрица над срединой (при превышении
@@ -156,7 +156,7 @@ export type DiffColor =
 	| "toolTitle"
 	| "borderMuted";
 
-/** Узкий интерфейс раскраски, структурно совместим с `Styler` из session-ledger/report.ts. */
+/** Узкий интерфейс раскраски, структурно совместим с `Styler` из usage/report.ts. */
 export interface DiffStyler {
 	fg(color: DiffColor, text: string): string;
 	bold(text: string): string;

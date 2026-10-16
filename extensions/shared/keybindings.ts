@@ -65,9 +65,9 @@ export const EXT_KEYBINDINGS: Record<ExtAction, KeybindingDefinition> = {
 	// shared/scroll-report.ts
 	"ext.report.refresh": { defaultKeys: "r", description: "Refresh report" },
 	"ext.report.close": { defaultKeys: ["q", "escape"], description: "Close report" },
-	// session-recall/view.ts
+	// recall/view.ts
 	"ext.recall.close": { defaultKeys: ["q", "escape"], description: "Close results" },
-	// session-trace/graph.ts — лента
+	// trace/graph.ts — лента
 	"ext.trace.filter": { defaultKeys: "/", description: "Filter feed" },
 	"ext.trace.errors": { defaultKeys: "e", description: "Toggle errors-only" },
 	"ext.trace.models": { defaultKeys: "m", description: "Model summary" },
@@ -75,7 +75,7 @@ export const EXT_KEYBINDINGS: Record<ExtAction, KeybindingDefinition> = {
 	"ext.trace.jumpMatch": { defaultKeys: ["n", "shift+n"], description: "Jump to match" },
 	"ext.trace.follow": { defaultKeys: "f", description: "Follow tail" },
 	"ext.trace.close": { defaultKeys: "q", description: "Close trace" },
-	// session-trace/graph.ts — replay
+	// trace/graph.ts — replay
 	"ext.trace.pause": { defaultKeys: "space", description: "Pause/resume replay" },
 	"ext.trace.faster": { defaultKeys: ["+", "="], description: "Replay faster" },
 	"ext.trace.slower": { defaultKeys: ["-", "_"], description: "Replay slower" },

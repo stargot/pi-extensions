@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Changed
 
+- **recall, trace, handoff, usage** (бывшие session-recall / session-trace /
+  session-handoff / session-ledger): каталоги, entry points pi.extensions и
+  npm-скрипты переименованы; подписи UI (заголовок TUI, /ping, веб-вьюер) — под
+  новым именем.
 - **prime-protocol**: статус-строка виджета сжата — голова `⚡ Prime · <model>` без
   размера пула, сегмент бюджета хода `lookup X/N · files X/3` (только при armed),
   хвост `sent N: scout×4, fixer` вместо `dispatched N` (`sent 0` — пустое

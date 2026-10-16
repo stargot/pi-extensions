@@ -106,8 +106,8 @@ async function shutdownBridge(): Promise<void> {
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
-		// Repo-wide notify-or-stdout pattern (cf. quiz, session-trace,
-		// session-ledger): while pi runs, the TUI owns the terminal — any
+		// Repo-wide notify-or-stdout pattern (cf. quiz, trace,
+		// usage): while pi runs, the TUI owns the terminal — any
 		// direct write garbles the UI, so diagnostics go through ctx.ui,
 		// falling back to stdout only when there is no UI (headless).
 		const report = (message: string, level: "warning" | "error") => {

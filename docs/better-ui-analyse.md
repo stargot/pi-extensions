@@ -8,7 +8,7 @@
 «Красота» pi-forge — **не терминальный UI**. Его терминальная сторона сознательно тонкая
 (только `ctx.ui.notify/setStatus/editor` + `theme.fg`). Вся тяжёлая UI — **локальный веб-редактор**:
 Node-сервер (`web-host.ts`, 893 стр., REST + token-auth) + Vue 3/Vite SPA (~17 компонентов, polling).
-Т.е. наш `session-trace` с его веб-вьюером (`web/app.js`, canvas-граф, зум, плейхед, live-polling)
+Т.е. наш `trace` с его веб-вьюером (`web/app.js`, canvas-граф, зум, плейхед, live-polling)
 уже играет в той же лиге — сопоставление «pi-forge vs наш TUI» это apples-to-oranges.
 
 Ценность pi-forge для нас — **модель данных и информационный дизайн**, а не компоненты
@@ -50,5 +50,5 @@ Node-сервер (`web-host.ts`, 893 стр., REST + token-auth) + Vue 3/Vite S
 
 ## Start here
 
-`extensions/session-trace/graph.ts` (637 стр.) — главный кандидат на перевод на примитивы;
+`extensions/trace/graph.ts` (637 стр.) — главный кандидат на перевод на примитивы;
 `extensions/shared/scroll-report.ts` — точка замены, обновляющая три расширения сразу.

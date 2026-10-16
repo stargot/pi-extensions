@@ -305,7 +305,7 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 					: "Sub-agent exited without output";
 		const { summary, usage, model } = summarizeSessionFile(running.sessionFile, fallback);
 		const elapsedSec = Math.floor((deps.now() - running.startTime) / 1000);
-		// session-trace integration: child card in /trace (TUI) and web viewer.
+		// trace integration: child card in /trace (TUI) and web viewer.
 		appendTraceCard({
 			agent: running.agentName || running.name,
 			task: running.task,

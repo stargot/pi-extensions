@@ -115,7 +115,7 @@ export type BridgeMessage =
  * Default port range, in the same "from-to" string form as the
  * PI_WEB_BRIDGE_PORTS env var so config code (readBridgeConfig, task B2)
  * can treat env value and default uniformly. Ten ports leave room for
- * parallel pi sessions; 8787 is taken by the session-trace precedent.
+ * parallel pi sessions; 8787 is taken by the trace precedent.
  */
 export const DEFAULT_PORT_RANGE = "8790-8799";
 

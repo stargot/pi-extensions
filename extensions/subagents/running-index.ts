@@ -8,7 +8,7 @@
  * the subagent sessions, removed on exit (best effort). Readers stale-reap by
  * PID liveness so a crashed spawner never leaves ghosts behind.
  *
- * Pure logic, no pi runtime imports — shared with session-trace (read-only).
+ * Pure logic, no pi runtime imports — shared with trace (read-only).
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
