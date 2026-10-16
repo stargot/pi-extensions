@@ -197,7 +197,7 @@ test("bg_run happy path: registry row, terminal steer delivery, trace card", { s
 		assert.equal(record.exitCode, 0);
 		assert.ok(record.endedAt);
 
-		const trace = fake.entries.find((e) => e.type === "session-trace:bg-jobs");
+		const trace = fake.entries.find((e) => e.type === "trace:bg-jobs");
 		assert.ok(trace, "trace card written");
 		assert.equal(trace.data.id, id);
 		assert.equal(trace.data.status, "completed");

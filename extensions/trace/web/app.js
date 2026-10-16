@@ -122,11 +122,7 @@
 				if (e.label) m.items.push({ kind: "marker", ts: ts, icon: "⚑", text: oneLine(e.label, 80) });
 				break;
 			case "custom":
-				if (
-					(e.customType === "session-trace:subagents" || e.customType === "pitrace:subagents") &&
-					e.data &&
-					e.data.session
-				) {
+				if ((e.customType === "trace:subagents" || e.customType === "pitrace:subagents") && e.data && e.data.session) {
 					m.items.push({
 						kind: "child",
 						ts: ts,

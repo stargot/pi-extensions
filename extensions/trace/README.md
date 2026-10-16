@@ -109,7 +109,7 @@ node extensions/trace/test/render.ts <session.jsonl> [rows] [--keys=...]
 
 ## Субагенты
 
-session-trace умеет показывать субагентов: дочерние карточки строятся из custom-записей `session-trace:subagents`, которые автоматически пишет наше расширение [subagents](../subagents/) — оба его инструмента (панельный `subagent` и headless `task_batch`). Транскрипты детей лежат в `~/.pi/agent/sessions/subagents/`, карточки ведут на `/trace <child-session>`. Записи под старым именем `pitrace:subagents` тоже распознаются. Подробности — в [docs/subagents.md](docs/subagents.md).
+trace умеет показывать субагентов: дочерние карточки строятся из custom-записей `trace:subagents`, которые автоматически пишет наше расширение [subagents](../subagents/) — оба его инструмента (панельный `subagent` и headless `task_batch`). Транскрипты детей лежат в `~/.pi/agent/sessions/subagents/`, карточки ведут на `/trace <child-session>`. Записи под старым именем `pitrace:subagents` тоже распознаются. Подробности — в [docs/subagents.md](docs/subagents.md).
 
 ## Как устроено
 

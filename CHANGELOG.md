@@ -11,6 +11,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   session-handoff / session-ledger): каталоги, entry points pi.extensions и
   npm-скрипты переименованы; подписи UI (заголовок TUI, /ping, веб-вьюер) — под
   новым именем.
+- **trace**: типы custom-записей переименованы: session-trace:subagents →
+  trace:subagents, session-trace:bg-jobs → trace:bg-jobs (писатели
+  subagents/bg-jobs, читатели TUI и web). Легаси pitrace:subagents распознаётся;
+  логи с session-trace:* новые фильтры не подхватят.
 - **prime-protocol**: статус-строка виджета сжата — голова `⚡ Prime · <model>` без
   размера пула, сегмент бюджета хода `lookup X/N · files X/3` (только при armed),
   хвост `sent N: scout×4, fixer` вместо `dispatched N` (`sent 0` — пустое

@@ -115,7 +115,7 @@ herdr распознаёт pi нативно (`herdr agent list`) — панел
    исчезновение панели (краш/закрыли руками), сентинел на экране (fallback).
 4. **Результат.** Родитель извлекает из JSONL-сессии ребёнка последнее
    assistant-сообщение + usage (input/output/cost), пишет артефакт для
-   `/trace` (`session-trace:subagents`) и доставляет итог steer-сообщением,
+   `/trace` (`trace:subagents`) и доставляет итог steer-сообщением,
    запускающим новый ход родителя.
 5. **Steer / resume.** `subagent_message` по имени: работающей панели —
    bracketed-paste в живой редактор pi; завершившейся — resume: тот же

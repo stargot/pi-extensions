@@ -1,13 +1,13 @@
 # Subagent integration
 
-session-trace renders subagent activity as child cards linked to the parent
+trace renders subagent activity as child cards linked to the parent
 session — in the TUI timeline and as child tags in the web viewer.
 
-A child card appears for every custom entry of type `session-trace:subagents`
+A child card appears for every custom entry of type `trace:subagents`
 in the parent session:
 
 ```json
-{"type":"custom","customType":"session-trace:subagents",
+{"type":"custom","customType":"trace:subagents",
  "data":{"agent":"scout","task":"…","session":"<path>","usage":{"input":8312,"output":7,"cost":0.0006},"model":"glm-5.3-flash"}}
 ```
 
@@ -29,7 +29,7 @@ Child transcripts live under `~/.pi/agent/sessions/subagents/`: pane-based
 children get an explicit `--session <file>` chosen by the parent at spawn;
 batch children get a pre-created session file before the process starts.
 
-Payload fields consumed by session-trace:
+Payload fields consumed by trace:
 
 | Field | Meaning |
 |---|---|

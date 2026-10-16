@@ -86,7 +86,7 @@ function sessionEntries(): unknown[] {
 			type: "custom",
 			id: "ch1",
 			timestamp: iso(3, 1),
-			customType: "session-trace:subagents",
+			customType: "trace:subagents",
 			data: {
 				agent: "scout",
 				task: "поищи в коде",

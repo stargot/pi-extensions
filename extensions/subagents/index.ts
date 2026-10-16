@@ -206,7 +206,7 @@ function appendTraceCard(
 	entry: { agent: string; task: string; session?: string; usage?: unknown; model?: string },
 ): void {
 	try {
-		api?.appendEntry("session-trace:subagents", entry);
+		api?.appendEntry("trace:subagents", entry);
 	} catch {
 		// Optional integration.
 	}

@@ -188,9 +188,9 @@ export class GraphModel {
 				if (e.label) this.marker(ts, "⚑", oneLine(e.label, 60));
 				break;
 			case "custom":
-				// session-trace:subagents — связка «главная сессия → сессии субагентов».
+				// trace:subagents — связка «главная сессия → сессии субагентов».
 				// Старое имя pitrace:subagents принято для сессий, записанных до переименования.
-				if ((e.customType === "session-trace:subagents" || e.customType === "pitrace:subagents") && e.data?.session) {
+				if ((e.customType === "trace:subagents" || e.customType === "pitrace:subagents") && e.data?.session) {
 					this.items.push({
 						kind: "child",
 						ts,

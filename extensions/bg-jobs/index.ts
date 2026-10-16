@@ -849,10 +849,10 @@ export default function bgJobsExtension(pi: ExtensionAPI) {
 	}
 
 	function appendTraceCard(record: JobRecord): void {
-		// session-trace integration — по образцу session-trace:subagents.
+		// trace integration — по образцу trace:subagents.
 		// Best effort by design: сломанная интеграция не роняет джобу.
 		try {
-			latestPi?.appendEntry("session-trace:bg-jobs", {
+			latestPi?.appendEntry("trace:bg-jobs", {
 				id: record.id,
 				name: record.name,
 				command: record.command,
