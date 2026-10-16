@@ -6,8 +6,8 @@
  * ./report.ts — this file is the thin pi wiring.
  *
  * `/audit` runs the pipeline for the session cwd and shows the markdown
- * report: in a TUI session in a scrollable viewer (ScrollReport, like
- * /handoff), elsewhere as a brief notify (severity counters + hint).
+ * report: in a TUI session in a scrollable viewer (ScrollReport), elsewhere as
+ * a brief notify (severity counters + hint).
  * `/audit go` runs the same pipeline and, after a confirm, injects the report
  * into the model as a semantic review prompt (buildSemanticPrompt) via
  * pi.sendUserMessage — recommendations only, skill files stay untouched.
@@ -39,7 +39,7 @@ export default function (pi: ExtensionAPI) {
 				const audit = auditSkills(discovery, { username: currentUsername() });
 				const report = buildReport(audit, { now: new Date(), cwd: ctx.cwd });
 
-				// Same verb extraction as /handoff: "go" or anything starting with "go ".
+				// Verb extraction: "go" or anything starting with "go ".
 				const verb = args.trim().split(/\s+/)[0] ?? "";
 				if (verb === "go") {
 					const ok = await ctx.ui.confirm(

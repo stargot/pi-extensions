@@ -3,6 +3,15 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [Unreleased]
+
+### Removed
+
+- **handoff**: расширение удалено из пакета — автодамп состояния сессии при
+  выходе и подхват на следующем старте больше не входят в поставку; сняты
+  каталог `extensions/handoff/` с тестами, запись в `pi.extensions` и
+  упоминания в README и skill-auditor.
+
 ## [0.9.0] — 2026-10-16
 
 ### Changed
