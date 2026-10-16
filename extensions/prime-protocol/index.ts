@@ -20,9 +20,9 @@
  * Part 2 — dashboard (TUI only). Makes the orchestrator's decisions visible:
  *   - when the first user message of a session arrives, a notification
  *     banner greets the user (model, pool size);
- *   - a status widget below the editor tracks the session live: solo
- *     lookups/edits vs dispatched agents by name and count, with the
- *     remaining enforcement budget. Pure facts for the human.
+ *   - a status widget below the editor tracks the session live: the
+ *     per-turn enforcement budget (lookups/files) while armed, plus
+ *     dispatched agents by name and count. Pure facts for the human.
  *
  * Part 3 — solo enforcement (code, not prompt). Prompt-only limits proved
  * unenforceable: live sessions ran 40+ solo lookups with the protocol
@@ -94,10 +94,10 @@ function readSessionModel(): string {
 	}
 }
 
-type Stats = { lookups: number; edits: number; spawned: number; agentUse: Map<string, number> };
+type Stats = { spawned: number; agentUse: Map<string, number> };
 
 function emptyStats(): Stats {
-	return { lookups: 0, edits: 0, spawned: 0, agentUse: new Map() };
+	return { spawned: 0, agentUse: new Map() };
 }
 
 type Turn = {
@@ -136,23 +136,21 @@ export default function primeProtocol(pi: ExtensionAPI) {
 	};
 
 	const statusLine = (): string => {
-		const head = `⚡ Prime · ${modelShort || "?"} · ${poolSize} agents`;
-		const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-		const solo = `solo: ${plural(stats.lookups, "lookup")}, ${plural(stats.edits, "edit")}`;
+		const head = `⚡ Prime · ${modelShort || "?"}`;
 		const capLabel =
 			turn.override === null
 				? String(lookupAllowance())
 				: turn.override === Number.POSITIVE_INFINITY
 					? "off"
 					: `cap ${turn.override}`;
-		const budget = armed ? ` · turn ${turn.lookups}/${capLabel}, files ${turn.files.size}/${FILE_TURN_LIMIT}` : "";
-		if (stats.spawned === 0) return `${head} │ ${solo}${budget} │ dispatched: none`;
+		const budget = armed ? ` │ lookup ${turn.lookups}/${capLabel} · files ${turn.files.size}/${FILE_TURN_LIMIT}` : "";
+		if (stats.spawned === 0) return `${head}${budget} │ sent 0`;
 		const agents = [...stats.agentUse.entries()]
 			.sort((a, b) => b[1] - a[1])
 			.map(([name, count]) => (count > 1 ? `${name}×${count}` : name));
 		const shown = agents.slice(0, 4).join(", ");
 		const rest = agents.length > 4 ? ` +${agents.length - 4}` : "";
-		return `${head} │ ${solo}${budget} │ dispatched ${stats.spawned}: ${shown}${rest}`;
+		return `${head}${budget} │ sent ${stats.spawned}: ${shown}${rest}`;
 	};
 
 	const drawWidget = (ctx: ExtensionContext): void => {
@@ -268,11 +266,7 @@ export default function primeProtocol(pi: ExtensionAPI) {
 	pi.on("tool_result", (event, ctx) => {
 		try {
 			if (isChild() || event.parentToolCallId) return;
-			const tool = event.toolName;
-			if (tool === "read" || tool === "grep" || tool === "find" || tool === "ls" || tool === "glob") stats.lookups += 1;
-			else if (tool === "bash" || tool === "powershell") stats.lookups += 1;
-			else if (EDIT_TOOLS.has(tool)) stats.edits += 1;
-			for (const agent of spawnAgents(tool, event.input)) {
+			for (const agent of spawnAgents(event.toolName, event.input)) {
 				stats.spawned += 1;
 				stats.agentUse.set(agent, (stats.agentUse.get(agent) ?? 0) + 1);
 			}

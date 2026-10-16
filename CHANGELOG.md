@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ## [Unreleased]
 
+### Changed
+
+- **prime-protocol**: статус-строка виджета сжата — голова `⚡ Prime · <model>` без
+  размера пула, сегмент бюджета хода `lookup X/N · files X/3` (только при armed),
+  хвост `sent N: scout×4, fixer` вместо `dispatched N` (`sent 0` — пустое
+  состояние); кумулятивный сегмент `solo:` и мёртвый учёт stats.lookups/stats.edits
+  удалены.
+
 ### Fixed
 
 - **subagents**: ложный вердикт «pane closed» сразу после спавна панели —
