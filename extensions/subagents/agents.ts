@@ -13,7 +13,8 @@
  *   name, description, model, thinking, tools (comma list),
  *   subagents (comma list — agents this agent may spawn; `*` = every
  *   known definition), auto-exit (bool),
- *   dispatch (bool — prime-protocol: opt out of the generated dispatch table)
+ *   dispatch (bool — prime-protocol: opt out of the generated dispatch table),
+ *   readonly (bool — block file/git/package mutations via readonly-guard.ts)
  *
  * Anything after the frontmatter is the agent identity and is appended to the
  * child's system prompt via --append-system-prompt.
@@ -30,6 +31,8 @@ export interface AgentDef {
 	thinking?: string;
 	tools?: string[];
 	subagents?: string[];
+	/** `readonly: true` — the child runs under readonly-guard.ts. */
+	readonly?: boolean;
 	/** Default true — autonomous agents report back via steer messages. */
 	autoExit: boolean;
 	/** Markdown body: the agent identity appended to the system prompt. */
@@ -46,7 +49,17 @@ export interface AgentDef {
  * comma-separated values become lists. `\r\n` normalized to `\n` first.
  */
 /** Frontmatter keys this extension understands; anything else is a warning. */
-const KNOWN_KEYS = new Set(["name", "description", "model", "thinking", "tools", "subagents", "auto-exit", "dispatch"]);
+const KNOWN_KEYS = new Set([
+	"name",
+	"description",
+	"model",
+	"thinking",
+	"tools",
+	"subagents",
+	"auto-exit",
+	"dispatch",
+	"readonly",
+]);
 
 const AUTO_EXIT_TRUE = new Set(["true", "yes", "1", "on"]);
 const AUTO_EXIT_FALSE = new Set(["false", "no", "0", "off"]);
@@ -107,6 +120,7 @@ export function parseAgentMarkdown(raw: string, fallbackName: string): AgentDef 
 		thinking: attrs["thinking"]?.trim() || undefined,
 		tools: list("tools"),
 		subagents: list("subagents"),
+		readonly: AUTO_EXIT_TRUE.has(attrs["readonly"]?.trim().toLowerCase() ?? ""),
 		autoExit: autoExitRaw === undefined || autoExitRaw === "" || !AUTO_EXIT_FALSE.has(autoExitRaw),
 		body: body.trim(),
 		warnings,

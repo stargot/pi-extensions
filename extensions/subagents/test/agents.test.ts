@@ -124,3 +124,10 @@ test("parseAgentMarkdown: known keys produce no warnings", () => {
 	const def = parseAgentMarkdown(raw, "fallback");
 	assert.deepEqual(def.warnings, []);
 });
+
+test("parseAgentMarkdown: readonly is a known boolean key, default false", () => {
+	const on = parseAgentMarkdown("---\nreadonly: true\n---\nBody.", "x");
+	assert.equal(on.readonly, true);
+	assert.deepEqual(on.warnings, []);
+	assert.equal(parseAgentMarkdown("---\nname: x\n---\nBody.", "x").readonly, false);
+});

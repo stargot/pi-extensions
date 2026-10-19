@@ -57,6 +57,7 @@ import {
 	subagentId,
 } from "./launch-plan.ts";
 import { killProcessTree } from "../shared/proctree.ts";
+import { READONLY_ENV } from "./readonly-guard.ts";
 import { activityLabel, readActivityState } from "./activity.ts";
 import {
 	emptyResult,
@@ -127,6 +128,7 @@ import { createSubagentWatcher, type RunningSubagent } from "./watcher.ts";
 const INTERRUPT_SETTLE_MS = 1200;
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DONE_EXTENSION_PATH = join(MODULE_DIR, "subagent-done.ts");
+const READONLY_GUARD_PATH = join(MODULE_DIR, "readonly-guard.ts");
 
 /** Where `-ne` pane children find the extensions they must attach explicitly. */
 function extensionRoots(): ExtensionRoots {
@@ -363,6 +365,7 @@ function buildLauncherSpec(opts: {
 		env["PI_SUBAGENT_AGENT"] = def.name;
 		if (def.autoExit) env["PI_SUBAGENT_AUTO_EXIT"] = "1";
 		if (def.subagents && def.subagents.length > 0) env["PI_SUBAGENT_ALLOWED"] = def.subagents.join(",");
+		env[READONLY_ENV] = def.readonly ? "1" : "";
 	}
 	env[BATCH_DEPTH_ENV] = String(batchDepthFromEnv() + 1);
 
@@ -374,6 +377,7 @@ function buildLauncherSpec(opts: {
 		extensionPaths: [
 			DONE_EXTENSION_PATH,
 			...childExtensionPaths(def?.tools, extensionRoots(), existsSync),
+			...(def?.readonly ? [READONLY_GUARD_PATH] : []),
 			...(opts.grantSpawning ? [join(MODULE_DIR, "index.ts")] : []),
 		],
 		noExtensions: !!(tools && tools.length > 0),
@@ -1148,6 +1152,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					sessionFile: plan.sessionFile,
 					taskFile: plan.taskFile!,
 					promptFile: plan.identityFile,
+					extensions: def.readonly ? [READONLY_GUARD_PATH] : [],
+					env: { [READONLY_ENV]: def.readonly ? "1" : "" },
 					cwd: cwd?.trim() || ctx.cwd,
 					model: plan.model,
 					thinking: resolveHeadlessThinking(def, dispatchDefaults.thinking),

@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ## [Unreleased]
 
+### Added
+
+- **subagents**: ключ frontmatter `readonly: true` — ребёнок запускается с
+  `readonly-guard.ts`, который блокирует `edit`/`write` и shell-команды,
+  пишущие файлы или меняющие git, пакеты и удалённое состояние (эвристики в
+  новом `shared/shell.ts`, общем с prime-protocol).
+
 ### Fixed
 
 - **subagents**: pane-дети с `tools:` (запуск с `-ne`) больше не теряют

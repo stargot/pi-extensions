@@ -529,6 +529,10 @@ export interface HeadlessChildOptions {
 	sessionFile: string;
 	taskFile: string;
 	promptFile?: string;
+	/** Extra extension entry points (-e), on top of discovery. */
+	extensions?: string[];
+	/** Extra environment for the child (e.g. the read-only guard switch). */
+	env?: Record<string, string>;
 	cwd: string;
 	model?: string;
 	thinking?: string;
@@ -587,6 +591,7 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 		// never honored by pi). Keeps task_batch itself available for nesting.
 		args.push("-xt", opts.denyTools.join(","));
 	}
+	for (const ext of opts.extensions ?? []) args.push("-e", ext);
 	if (opts.promptFile) {
 		args.push("--append-system-prompt", opts.promptFile);
 	}
@@ -637,7 +642,7 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 					shell: false,
 					stdio: ["ignore", "pipe", "pipe"],
 					windowsHide: true,
-					env: { ...process.env, [BATCH_DEPTH_ENV]: String((opts.depth ?? 0) + 1) },
+					env: { ...process.env, ...opts.env, [BATCH_DEPTH_ENV]: String((opts.depth ?? 0) + 1) },
 				});
 				// Registered only after a successful spawn: a PID-less record is
 				// unusable for liveness checks.

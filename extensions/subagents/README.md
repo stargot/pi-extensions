@@ -220,9 +220,14 @@ heartbeat, поэтому здоровая долгая генерация мо�
   сужается — ребенок резолвит против собственной discovery); пока дети не
   отчитались, auto-exit родителя-агента подавлен (`runningChildrenCount`).
 - Frontmatter агентов: `name`, `description`, `model`, `thinking`, `tools`
-  (allowlist → `--tools` + `-ne` в ребёнке), `subagents`, `auto-exit`;
-  тело файла — identity, добавляется через `--append-system-prompt`.
+  (allowlist → `--tools` + `-ne` в ребёнке), `subagents`, `auto-exit`,
+  `readonly`; тело файла — identity, добавляется через `--append-system-prompt`.
   Приоритет: `.pi/agents/` проекта > `~/.pi/agent/agents/` глобальных.
+- `readonly: true` — ребёнок получает `PI_SUBAGENT_READONLY=1` и
+  `-e readonly-guard.ts` (оба пути запуска): `edit`/`write` и shell-команды,
+  которые пишут файлы или меняют git, пакеты или удалённое состояние
+  (`shared/shell.ts`), блокируются. Это растяжка для модели, а не песочница:
+  `python -c`/`node -e` проходят.
 - Ребёнок с `tools:` (`child-tools.ts`): `--tools` pi фильтрует и
   инструменты расширений, а `-ne` отключает их discovery, поэтому pane-ребёнку
   явно подключаются guard'ы (`env-guard`, `edit-guard`) и расширения его
