@@ -66,6 +66,16 @@ export function paneChildTools(tools: string[] | undefined, grantSpawning: boole
 	return [...tools, ...PANE_TOOLS.filter((tool) => !tools.includes(tool))];
 }
 
+/**
+ * Environment a child needs for its extension tools to be usable. The
+ * browser extension starts every session with its tools switched off
+ * (`/browser on` enables them), which a child cannot type — an allowlist
+ * naming browser_* turns them on through PI_BROWSER_ENABLED instead.
+ */
+export function childToolEnv(tools: string[] | undefined): Record<string, string> {
+	return tools?.some((tool) => tool.startsWith("browser_")) ? { PI_BROWSER_ENABLED: "1" } : {};
+}
+
 /** Headless allowlist: the definition's list minus the pane tools. May come back empty. */
 export function headlessChildTools(tools: string[] | undefined): string[] | undefined {
 	if (!tools) return undefined;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
-import { childExtensionPaths, headlessChildTools, PANE_TOOLS, paneChildTools } from "../child-tools.ts";
+import { childExtensionPaths, childToolEnv, headlessChildTools, PANE_TOOLS, paneChildTools } from "../child-tools.ts";
 
 const roots = { packageDir: join("C:", "pkg", "extensions"), agentExtDir: join("C:", "agent", "extensions") };
 const envGuard = join(roots.packageDir, "env-guard", "index.ts");
@@ -50,4 +50,10 @@ test("headlessChildTools: strips pane tools, keeps the rest", () => {
 
 test("headlessChildTools: a pane-only allowlist becomes empty, not unrestricted", () => {
 	assert.deepEqual(headlessChildTools(["subagent"]), []);
+});
+
+test("childToolEnv: browser tools in the allowlist switch the browser extension on", () => {
+	assert.deepEqual(childToolEnv(["browser_goto", "read"]), { PI_BROWSER_ENABLED: "1" });
+	assert.deepEqual(childToolEnv(["read", "web_search"]), {});
+	assert.deepEqual(childToolEnv(undefined), {});
 });

@@ -39,6 +39,7 @@ import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.ts";
 import {
 	childExtensionPaths,
+	childToolEnv,
 	type ExtensionRoots,
 	headlessChildTools,
 	PANE_TOOLS,
@@ -367,6 +368,7 @@ function buildLauncherSpec(opts: {
 		if (def.autoExit) env["PI_SUBAGENT_AUTO_EXIT"] = "1";
 		if (def.subagents && def.subagents.length > 0) env["PI_SUBAGENT_ALLOWED"] = def.subagents.join(",");
 		env[READONLY_ENV] = def.readonly ? "1" : "";
+		Object.assign(env, childToolEnv(def.tools));
 	}
 	env[BATCH_DEPTH_ENV] = String(batchDepthFromEnv() + 1);
 
@@ -1156,7 +1158,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					promptFile: plan.identityFile,
 					basePromptFile: resolveSubagentAppendFile(cwd?.trim() || ctx.cwd, getAgentDir(), existsSync),
 					extensions: def.readonly ? [READONLY_GUARD_PATH] : [],
-					env: { [READONLY_ENV]: def.readonly ? "1" : "" },
+					env: { [READONLY_ENV]: def.readonly ? "1" : "", ...childToolEnv(def.tools) },
 					cwd: cwd?.trim() || ctx.cwd,
 					model: plan.model,
 					thinking: resolveHeadlessThinking(def, dispatchDefaults.thinking),

@@ -25,6 +25,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Fixed
 
+- **subagents**: ребёнок с `browser_*` в `tools:` получает
+  `PI_BROWSER_ENABLED=1` — расширение browser по умолчанию выключает свои
+  инструменты в каждой новой сессии (`/browser on`), и web-verifier оставался
+  без инструментов даже с подключённым расширением.
 - **subagents**: pane-дети с `tools:` (запуск с `-ne`) больше не теряют
   `env-guard` и `edit-guard` — guard'ы подключаются явно, `.env` снова
   блокируется, а секреты вырезаются из транскрипта.
