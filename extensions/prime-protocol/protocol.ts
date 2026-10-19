@@ -6,6 +6,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { shellPipelines, shellWriteTargets as writeTargets } from "../shared/shell.ts";
 
 export function readIfExists(path: string): string {
 	if (!existsSync(path)) return "";
@@ -133,7 +134,11 @@ export function spawnAgents(toolName: string, input: Record<string, unknown> | u
 		const agent = typeof input.agent === "string" ? input.agent.trim() : "";
 		return agent ? [agent] : [];
 	}
-	const tasks = Array.isArray(input.tasks) ? input.tasks : [];
+	// task_batch: parallel `tasks` and sequential `chain` both dispatch one agent per entry.
+	const tasks = [
+		...(Array.isArray(input.tasks) ? input.tasks : []),
+		...(Array.isArray(input.chain) ? input.chain : []),
+	];
 	const names = tasks
 		.map((task) =>
 			task && typeof task === "object" && typeof (task as { agent?: unknown }).agent === "string"
@@ -149,11 +154,28 @@ export function spawnAgents(toolName: string, input: Record<string, unknown> | u
 const SPAWN_TOOLS = new Set(["subagent", "task_batch"]);
 
 const SHELL_READERS =
-	/(^|[\s;|&])(cat|head|tail|less|more|type|rg|grep|find|ls|dir|file|wc|stat|tree|du|df|where|which|gc|gci|cat|Get-Content|Get-ChildItem|Get-Item|Select-String)(\s|$)/;
+	/^(cat|head|tail|less|more|type|rg|grep|find|ls|dir|file|wc|stat|tree|du|df|where|which|gc|gci|sed|awk|bat|nl|od|xxd|findstr|Get-Content|Get-ChildItem|Get-Item|Select-String)(\s|$)/i;
 
+/** git subcommands that only read history or the tree. */
+const GIT_READERS = /^git\s+(show|log|diff|grep|blame|ls-files|ls-tree|cat-file)(\s|$)/i;
+
+/**
+ * Every command in a `;` / `&&` / `||` sequence is checked — `echo x; cat f`
+ * reads a file however it starts. Pipe consumers are not: `npm test | tail`
+ * filters a test run, it does not look anything up.
+ */
 export function shellLooksLikeLookup(input: Record<string, unknown>): boolean {
 	const command = typeof input.command === "string" ? input.command : "";
-	const segments = command.split(/(?:&&|\|\||;|\|)/);
-	const first = segments.find((segment) => !/^\s*(cd|pushd)\s/.test(segment)) ?? segments[0] ?? "";
-	return SHELL_READERS.test(first.trim().slice(0, 120));
+	return shellPipelines(command)
+		.map((stages) => stages[0] ?? "")
+		.filter((head) => !/^(cd|pushd|Set-Location)(\s|$)/i.test(head))
+		.some((head) => SHELL_READERS.test(head) || GIT_READERS.test(head));
+}
+
+/**
+ * Files a shell command writes — counted against the per-turn edit cap like
+ * edit/write, so a `cat > f` heredoc is not a way around it.
+ */
+export function shellWriteTargets(input: Record<string, unknown>): string[] {
+	return writeTargets(typeof input.command === "string" ? input.command : "");
 }

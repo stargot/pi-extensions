@@ -9,6 +9,7 @@ import {
 	dispatchTargets,
 	knownAgentBodies,
 	shellLooksLikeLookup,
+	shellWriteTargets,
 	spawnAgents,
 } from "../protocol.ts";
 
@@ -199,4 +200,40 @@ test("shellLooksLikeLookup: reader commands count, cd-prefixed real work does no
 	assert.equal(shellLooksLikeLookup({ command: "cd other && npm test" }), false);
 	assert.equal(shellLooksLikeLookup({ command: "npm run build" }), false);
 	assert.equal(shellLooksLikeLookup({ command: "" }), false);
+});
+
+test("spawnAgents: task_batch chain steps count as dispatches", () => {
+	assert.deepEqual(spawnAgents("task_batch", { chain: [{ agent: "planner" }, { agent: "worker" }] }), [
+		"planner",
+		"worker",
+	]);
+});
+
+test("shellLooksLikeLookup: every sequenced command counts, pipe consumers do not", () => {
+	assert.equal(shellLooksLikeLookup({ command: "echo start; cat secrets.txt" }), true);
+	assert.equal(shellLooksLikeLookup({ command: "npm test || sed -n 1,40p log.txt" }), true);
+	assert.equal(shellLooksLikeLookup({ command: "npm test | tail -20" }), false);
+	assert.equal(shellLooksLikeLookup({ command: "Set-Location pkg; npm run build" }), false);
+});
+
+test("shellLooksLikeLookup: read-only git and extra readers count, git writes do not", () => {
+	assert.equal(shellLooksLikeLookup({ command: "git show HEAD:src/a.ts" }), true);
+	assert.equal(shellLooksLikeLookup({ command: "git log --oneline -5" }), true);
+	assert.equal(shellLooksLikeLookup({ command: "awk '{print $1}' a.txt" }), true);
+	assert.equal(shellLooksLikeLookup({ command: "findstr /n foo a.txt" }), true);
+	assert.equal(shellLooksLikeLookup({ command: "git commit -m x" }), false);
+});
+
+test("shellWriteTargets: redirects and writer cmdlets, null sinks ignored", () => {
+	assert.deepEqual(shellWriteTargets({ command: "cat > notes.md <<'EOF'" }), ["notes.md"]);
+	assert.deepEqual(shellWriteTargets({ command: "echo a >> 'log.txt'" }), ["log.txt"]);
+	assert.deepEqual(shellWriteTargets({ command: "Set-Content -Path out.txt -Value 1" }), ["out.txt"]);
+	assert.deepEqual(shellWriteTargets({ command: "npm test | tee run.log" }), ["run.log"]);
+	assert.deepEqual(shellWriteTargets({ command: "npm test 2>&1 > /dev/null" }), []);
+	assert.deepEqual(shellWriteTargets({ command: "cmd 2> err.txt; echo x > $null" }), []);
+});
+
+test("shellWriteTargets: arrows and comparisons are not redirects", () => {
+	assert.deepEqual(shellWriteTargets({ command: `node -e "[1].map((x) => x)"` }), []);
+	assert.deepEqual(shellWriteTargets({ command: "if ($a -gt 1) { git status }" }), []);
 });

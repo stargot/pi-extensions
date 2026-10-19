@@ -32,7 +32,10 @@
  *     for each dispatched agent (verification of child results);
  *   - re-reading an already-read file (pagination) never spends budget;
  *   - edits/writes beyond 3 distinct files per user turn are blocked —
- *     bulk file work belongs to a worker;
+ *     bulk file work belongs to a worker; shell writes (redirects,
+ *     Set-Content/Out-File/tee) count against the same cap;
+ *   - the allowance grows only after a dispatch succeeds (tool_result),
+ *     and `task_batch` chain steps count like parallel tasks;
  *   - /solo <N> raises the lookup allowance for the turn, /solo off
  *     disables enforcement until the next user message;
  *   - counters reset on every user message; children (PI_SUBAGENT_SESSION)
@@ -64,6 +67,7 @@ import {
 	knownAgentBodies,
 	readIfExists,
 	shellLooksLikeLookup,
+	shellWriteTargets,
 	splitFrontmatter,
 	spawnAgents,
 } from "./protocol.ts";
@@ -216,20 +220,42 @@ export default function primeProtocol(pi: ExtensionAPI) {
 		}
 	});
 
+	/** Claim edit-cap slots for new paths; a block result once the cap is spent. /solo off lifts it. */
+	const claimFiles = (paths: unknown[]): { block: true; reason: string } | undefined => {
+		if (turn.override === Number.POSITIVE_INFINITY) return undefined;
+		for (const path of paths) {
+			if (typeof path !== "string" || !path || turn.files.has(path)) continue;
+			if (turn.files.size >= FILE_TURN_LIMIT) {
+				return {
+					block: true,
+					reason: `Prime solo enforcement: ${turn.files.size} files already edited this user turn (limit ${FILE_TURN_LIMIT}). Bulk file work belongs to a worker: dispatch it (subagent/task_batch) with an exact task, then verify the diff. The user can relax this with /solo off.`,
+				};
+			}
+			turn.files.add(path);
+		}
+		return undefined;
+	};
+
 	pi.on("tool_call", (event) => {
 		try {
 			if (!armed || isChild()) return;
 			const tool = event.toolName;
 			const input = asInput(event);
 
-			const spawned = spawnAgents(tool, input);
-			if (spawned.length > 0) {
-				turn.dispatches += spawned.length;
-				return;
-			}
+			// Dispatches raise the allowance only once they succeed (tool_result):
+			// a spawn of an unknown agent must not buy lookup budget.
+			if (spawnAgents(tool, input).length > 0) return;
+
+			const isShell = tool === "bash" || tool === "powershell";
+			// Shell writes (redirects, Set-Content, tee) share the edit cap with
+			// edit/write — checked before the lookup branch, since `cat > f` is both.
+			const shellTargets = isShell ? shellWriteTargets(input) : [];
+			const capped = claimFiles(EDIT_TOOLS.has(tool) ? [input.path] : shellTargets);
+			if (capped) return capped;
+			if (shellTargets.length > 0) return;
 
 			const isRead = tool === "read";
-			const isShellReader = (tool === "bash" || tool === "powershell") && shellLooksLikeLookup(input);
+			const isShellReader = isShell && shellLooksLikeLookup(input);
 			if (LOOKUP_TOOLS.has(tool) || isRead || isShellReader) {
 				if (isRead) {
 					const path = typeof input.path === "string" ? input.path : "";
@@ -243,20 +269,6 @@ export default function primeProtocol(pi: ExtensionAPI) {
 					};
 				}
 				turn.lookups += 1;
-				return;
-			}
-
-			if (EDIT_TOOLS.has(tool)) {
-				const path = typeof input.path === "string" ? input.path : "";
-				if (path && !turn.files.has(path)) {
-					if (turn.files.size >= FILE_TURN_LIMIT) {
-						return {
-							block: true,
-							reason: `Prime solo enforcement: ${turn.files.size} files already edited this user turn (limit ${FILE_TURN_LIMIT}). Bulk file work belongs to a worker: dispatch it (subagent/task_batch) with an exact task, then verify the diff. The user can relax this with /solo off.`,
-						};
-					}
-					turn.files.add(path);
-				}
 			}
 		} catch {
 			/* fail-safe */
@@ -266,7 +278,9 @@ export default function primeProtocol(pi: ExtensionAPI) {
 	pi.on("tool_result", (event, ctx) => {
 		try {
 			if (isChild() || event.parentToolCallId) return;
-			for (const agent of spawnAgents(event.toolName, event.input)) {
+			const spawned = event.isError ? [] : spawnAgents(event.toolName, event.input);
+			if (armed) turn.dispatches += spawned.length;
+			for (const agent of spawned) {
 				stats.spawned += 1;
 				stats.agentUse.set(agent, (stats.agentUse.get(agent) ?? 0) + 1);
 			}
