@@ -11,6 +11,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   `readonly-guard.ts`, который блокирует `edit`/`write` и shell-команды,
   пишущие файлы или меняющие git, пакеты и удалённое состояние (эвристики в
   новом `shared/shell.ts`, общем с prime-protocol).
+- **subagents**: общий промпт детей `APPEND_SUBAGENT.md` (проектный
+  `.pi/APPEND_SUBAGENT.md` или глобальный `~/.pi/agent/APPEND_SUBAGENT.md`)
+  добавляется перед identity в обоих путях запуска — `APPEND_SYSTEM.md` до
+  детей не доходит (pi отключает его discovery при явном
+  `--append-system-prompt`) и детям не подходит.
+
+### Changed
+
+- **prime-protocol**: child-detect по append сравнивает его окончание с телом
+  агента, а не точное совпадение — общий промпт детей перед identity его не
+  ломает.
 
 ### Fixed
 

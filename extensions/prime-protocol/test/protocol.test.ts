@@ -7,6 +7,7 @@ import {
 	buildBudgetRule,
 	buildDispatchTable,
 	dispatchTargets,
+	isChildAppend,
 	knownAgentBodies,
 	shellLooksLikeLookup,
 	shellWriteTargets,
@@ -236,4 +237,13 @@ test("shellWriteTargets: redirects and writer cmdlets, null sinks ignored", () =
 test("shellWriteTargets: arrows and comparisons are not redirects", () => {
 	assert.deepEqual(shellWriteTargets({ command: `node -e "[1].map((x) => x)"` }), []);
 	assert.deepEqual(shellWriteTargets({ command: "if ($a -gt 1) { git status }" }), []);
+});
+
+test("isChildAppend: identity alone or after a shared prompt; other appends are not children", () => {
+	const bodies = new Set(["You are scout."]);
+	assert.equal(isChildAppend("You are scout.", bodies), true);
+	assert.equal(isChildAppend("Shared rules.\n\nYou are scout.\n", bodies), true);
+	assert.equal(isChildAppend("## Основные принципы\n- brevity", bodies), false);
+	assert.equal(isChildAppend(undefined, bodies), false);
+	assert.equal(isChildAppend("  ", bodies), false);
 });

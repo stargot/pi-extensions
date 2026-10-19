@@ -529,6 +529,8 @@ export interface HeadlessChildOptions {
 	sessionFile: string;
 	taskFile: string;
 	promptFile?: string;
+	/** Shared subagent prompt (APPEND_SUBAGENT.md), appended before the identity. */
+	basePromptFile?: string;
 	/** Extra extension entry points (-e), on top of discovery. */
 	extensions?: string[];
 	/** Extra environment for the child (e.g. the read-only guard switch). */
@@ -592,6 +594,7 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 		args.push("-xt", opts.denyTools.join(","));
 	}
 	for (const ext of opts.extensions ?? []) args.push("-e", ext);
+	if (opts.basePromptFile) args.push("--append-system-prompt", opts.basePromptFile);
 	if (opts.promptFile) {
 		args.push("--append-system-prompt", opts.promptFile);
 	}

@@ -46,6 +46,8 @@ export interface LauncherSpec {
 	 * amputates every argument after it (the task file included).
 	 */
 	appendSystemPromptFile?: string;
+	/** Shared subagent prompt (APPEND_SUBAGENT.md), appended before the identity. */
+	baseAppendFile?: string;
 	/** Task file handed to the child as @file. */
 	taskFile: string;
 	/** Sidecar written by the launcher when pi exits: its content is the exit code. */
@@ -74,6 +76,9 @@ function buildPiArgs(spec: LauncherSpec): Token[] {
 	}
 	if (spec.excludeTools && spec.excludeTools.length > 0) {
 		tokens.push({ value: "-xt", bare: true }, { value: spec.excludeTools.join(","), bare: false });
+	}
+	if (spec.baseAppendFile) {
+		tokens.push({ value: "--append-system-prompt", bare: true }, { value: spec.baseAppendFile, bare: false });
 	}
 	if (spec.appendSystemPromptFile) {
 		tokens.push({ value: "--append-system-prompt", bare: true }, { value: spec.appendSystemPromptFile, bare: false });

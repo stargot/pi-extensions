@@ -53,6 +53,7 @@ import {
 	resolveAgentDef,
 	resolveHeadlessThinking,
 	resolveLaunchCwd,
+	resolveSubagentAppendFile,
 	safeFilePart,
 	subagentId,
 } from "./launch-plan.ts";
@@ -386,6 +387,7 @@ function buildLauncherSpec(opts: {
 		thinking: def?.thinking,
 		tools,
 		appendSystemPromptFile: opts.identityFile,
+		baseAppendFile: resolveSubagentAppendFile(opts.cwd ?? process.cwd(), getAgentDir(), existsSync),
 		taskFile: opts.taskFile,
 		doneFile: opts.doneFile,
 		env,
@@ -1152,6 +1154,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					sessionFile: plan.sessionFile,
 					taskFile: plan.taskFile!,
 					promptFile: plan.identityFile,
+					basePromptFile: resolveSubagentAppendFile(cwd?.trim() || ctx.cwd, getAgentDir(), existsSync),
 					extensions: def.readonly ? [READONLY_GUARD_PATH] : [],
 					env: { [READONLY_ENV]: def.readonly ? "1" : "" },
 					cwd: cwd?.trim() || ctx.cwd,

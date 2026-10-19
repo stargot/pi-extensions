@@ -14,6 +14,7 @@ import {
 	resolveHeadlessThinking,
 	resolveLaunchCwd,
 	resolveLaunchModel,
+	resolveSubagentAppendFile,
 	safeFilePart,
 	sessionFilePath,
 	subagentId,
@@ -91,6 +92,25 @@ test("headless thinking: agent definition level wins, even with its own model", 
 test("headless thinking: parent level applies only when the parent model is inherited too", () => {
 	assert.equal(resolveHeadlessThinking(makeDef({ model: undefined }), "high"), "high");
 	assert.equal(resolveHeadlessThinking(makeDef({ model: "def/model" }), "high"), undefined);
+});
+
+test("resolveSubagentAppendFile: project file wins, then global, else none", () => {
+	const project = join("C:", "repo", ".pi", "APPEND_SUBAGENT.md");
+	const global = join("C:", "agent", "APPEND_SUBAGENT.md");
+	const cwd = join("C:", "repo");
+	const agentDir = join("C:", "agent");
+	assert.equal(
+		resolveSubagentAppendFile(cwd, agentDir, () => true),
+		project,
+	);
+	assert.equal(
+		resolveSubagentAppendFile(cwd, agentDir, (p) => p === global),
+		global,
+	);
+	assert.equal(
+		resolveSubagentAppendFile(cwd, agentDir, () => false),
+		undefined,
+	);
 });
 
 test("dispatchParentModel: provider/id string, or undefined without a model", () => {

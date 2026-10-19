@@ -223,6 +223,11 @@ heartbeat, поэтому здоровая долгая генерация мо�
   (allowlist → `--tools` + `-ne` в ребёнке), `subagents`, `auto-exit`,
   `readonly`; тело файла — identity, добавляется через `--append-system-prompt`.
   Приоритет: `.pi/agents/` проекта > `~/.pi/agent/agents/` глобальных.
+- Общий промпт детей: `<cwd>/.pi/APPEND_SUBAGENT.md`, иначе
+  `~/.pi/agent/APPEND_SUBAGENT.md` — добавляется первым `--append-system-prompt`,
+  перед identity. Явный `--append-system-prompt` отключает в pi discovery
+  `APPEND_SYSTEM.md`, а тот написан для основной сессии (делает оркестратором
+  любую сессию с инструментом `subagent`), поэтому у детей свой файл.
 - `readonly: true` — ребёнок получает `PI_SUBAGENT_READONLY=1` и
   `-e readonly-guard.ts` (оба пути запуска): `edit`/`write` и shell-команды,
   которые пишут файлы или меняют git, пакеты или удалённое состояние

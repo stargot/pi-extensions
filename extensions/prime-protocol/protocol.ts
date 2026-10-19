@@ -123,6 +123,19 @@ export function knownAgentBodies(agentsDir: string): Set<string> {
 	return bodies;
 }
 
+/**
+ * True when a session's appended system prompt carries a child identity.
+ * The identity is the LAST append (a shared APPEND_SUBAGENT.md may precede
+ * it), so the append ends with a known agent body. Any other append — the
+ * user's APPEND_SYSTEM.md in a main session — is not a child signal.
+ */
+export function isChildAppend(append: string | undefined, bodies: Set<string>): boolean {
+	const appended = append?.trim() ?? "";
+	if (!appended) return false;
+	for (const body of bodies) if (appended.endsWith(body)) return true;
+	return false;
+}
+
 export function asInput(event: unknown): Record<string, unknown> {
 	const input = (event as { input?: unknown }).input;
 	return input && typeof input === "object" ? (input as Record<string, unknown>) : {};

@@ -98,6 +98,21 @@ export function resolveLaunchModel(
 }
 
 /**
+ * Shared prompt for every subagent: `<cwd>/.pi/APPEND_SUBAGENT.md`, else
+ * `<agentDir>/APPEND_SUBAGENT.md`, else none. Children need their own file:
+ * an explicit --append-system-prompt turns off pi's APPEND_SYSTEM.md
+ * discovery, and APPEND_SYSTEM.md is written for the main session (it makes
+ * any session holding the subagent tool an orchestrator).
+ */
+export function resolveSubagentAppendFile(
+	cwd: string,
+	agentDir: string,
+	exists: (path: string) => boolean,
+): string | undefined {
+	return [join(cwd, ".pi", "APPEND_SUBAGENT.md"), join(agentDir, "APPEND_SUBAGENT.md")].find(exists);
+}
+
+/**
  * Headless thinking precedence: agent definition → parent's level, but the
  * parent's level only when the child also inherits the parent's model — a
  * level tuned for one model is not carried onto another. Undefined lets pi

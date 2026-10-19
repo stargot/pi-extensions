@@ -68,3 +68,13 @@ test("renderLauncherPs1: exclude tools", () => {
 	const ps1 = renderLauncherPs1(baseSpec({ excludeTools: ["bash", "write"] }));
 	assert.match(ps1, /-xt 'bash,write'/);
 });
+
+test("renderLauncherPs1: shared subagent prompt is appended before the identity", () => {
+	const ps1 = renderLauncherPs1(
+		baseSpec({ baseAppendFile: "C:\\agent\\APPEND_SUBAGENT.md", appendSystemPromptFile: "C:\\ctx\\scout-identity.md" }),
+	);
+	assert.match(
+		ps1,
+		/--append-system-prompt 'C:\\agent\\APPEND_SUBAGENT\.md' --append-system-prompt 'C:\\ctx\\scout-identity\.md'/,
+	);
+});

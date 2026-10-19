@@ -46,8 +46,8 @@
  *   1. pane children run with PI_SUBAGENT_SESSION set by the subagents launcher;
  *   2. headless (task_batch) children receive an agent identity via
  *      --append-system-prompt → systemPromptOptions.appendSystemPrompt.
- *      That append is compared against the bodies of agents/*.md — a match
- *      means child identity → skip. Any OTHER append (e.g. the user's global
+ *      An append ending with the body of an agents/*.md file means child
+ *      identity → skip (a shared APPEND_SUBAGENT.md may come first). Any OTHER append (e.g. the user's global
  *      APPEND_SYSTEM.md) is not a child signal: the session stays armed and
  *      the protocol is injected alongside it. Comparing for "any non-empty
  *      append" silently disarmed every main session with APPEND_SYSTEM.md;
@@ -64,6 +64,7 @@ import {
 	buildBudgetRule,
 	buildDispatchTable,
 	dispatchTargets,
+	isChildAppend,
 	knownAgentBodies,
 	readIfExists,
 	shellLooksLikeLookup,
@@ -297,7 +298,7 @@ export default function primeProtocol(pi: ExtensionAPI) {
 		}
 
 		const append = event.systemPromptOptions?.appendSystemPrompt;
-		if (append && append.trim().length > 0 && knownAgentBodies(AGENTS_DIR).has(append.trim())) {
+		if (isChildAppend(append, knownAgentBodies(AGENTS_DIR))) {
 			armed = false;
 			return;
 		}
