@@ -25,6 +25,29 @@
 - pi 1.0.0 по умолчанию использует fullscreen TUI и тему «system» — расширения пакета
   проверены в этом режиме (ручной чеклист — финальный гейт релиза).
 
+## Environment variables
+
+Расширения читают переменные окружения напрямую; `web` при старте подхватывает `.env` из
+рабочего каталога и вверх по дереву (уже установленные переменные не перезаписывает;
+`.env` в gitignored). `env-guard` сканирует весь `process.env` на секреты — именованных
+переменных не читает.
+
+| Переменная | Назначение |
+|---|---|
+| `PI_CODING_AGENT_DIR` | Каталог агента вместо `~/.pi/agent` — sessions, recall, usage, trace, skill-auditor |
+| `PI_SNIPPETS_DIR` | Каталог сниппетов prompt-snippets вместо `~/.pi/agent/snippets` |
+| `PI_SUBAGENT_ALLOWED` | subagents: allowlist имён агентов для спавна |
+| `PI_TASK_BATCH_DEPTH` | subagents: глубина вложенных батчей — задаётся самим расширением дочерним процессам |
+| `PI_SUBAGENT_NAME` / `PI_SUBAGENT_AGENT` / `PI_SUBAGENT_ID` / `PI_SUBAGENT_SESSION` / `PI_SUBAGENT_AUTO_EXIT` / `PI_SUBAGENT_ACTIVITY_FILE` | subagents: контекст ребёнка — задаётся расширением при спавне |
+| `HERDR_ENV` / `HERDR_PANE_ID` / `HERDR_WORKSPACE_ID` | subagents: детект запуска под herdr — задаёт сам herdr |
+| `WEZTERM_PANE` | subagents: детект запуска в панели WezTerm — задаёт WezTerm |
+| `PI_WEB_SEARCH_PROVIDER` | web: провайдер поиска (`langsearch`), по умолчанию DuckDuckGo |
+| `LANGSEARCH_API_KEY` | web: API-ключ LangSearch |
+| `PI_WEB_BRIDGE_PORT` / `PI_WEB_BRIDGE_PORTS` | web bridge: порт или диапазон портов (по умолчанию 8790–8799) |
+| `PI_WEB_BRIDGE_TOKEN` / `PI_WEB_BRIDGE_TOKEN_FILE` | web bridge: токен аутентификации или файл с ним |
+| `HOME` / `USERPROFILE` | Домашний каталог (нативные) — context-inspector, subagents |
+| `PI_TRACE_MODE` | Только тесты trace: `live` / `replay` |
+
 ## Запуск
 
 Требования к pi и Node — в разделе «Совместимость».
