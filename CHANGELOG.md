@@ -3,6 +3,23 @@
 All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
+## [Unreleased]
+
+### Fixed
+
+- **subagents**: pane-дети с `tools:` (запуск с `-ne`) больше не теряют
+  `env-guard` и `edit-guard` — guard'ы подключаются явно, `.env` снова
+  блокируется, а секреты вырезаются из транскрипта.
+- **subagents**: `web_search`/`web_fetch` у pane-детей резолвятся в `web`
+  пакета, а не в несуществующий `~/.pi/agent/extensions/web`; `browser_*`
+  подключают `~/.pi/agent/extensions/browser` — researcher, security-auditor
+  и web-verifier в панели получают свои инструменты; resume восстанавливает их
+  тоже.
+- **subagents**: `subagents:` в frontmatter агента с `tools:` снова даёт
+  спавн — pane-инструменты добавляются в allowlist ребёнка (раньше `--tools`
+  отфильтровывал `subagent`); headless-дети pane-инструменты не получают, а
+  опустевший allowlist даёт `--no-tools`.
+
 ## [0.10.0] — 2026-10-16
 
 ### Removed

@@ -38,6 +38,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.ts";
 import {
+	childExtensionPaths,
+	type ExtensionRoots,
+	headlessChildTools,
+	PANE_TOOLS,
+	paneChildTools,
+} from "./child-tools.ts";
+import {
 	buildIdentityFile,
 	buildLaunchPlan,
 	buildTaskFile,
@@ -120,29 +127,9 @@ const INTERRUPT_SETTLE_MS = 1200;
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DONE_EXTENSION_PATH = join(MODULE_DIR, "subagent-done.ts");
 
-/**
- * Tool names that live in other extensions. Pane children with a `tools:`
- * list run with `-ne` (only done/identity extensions), so an extension tool
- * in the list (web_search/web_fetch for the researcher) would silently not
- * exist. Map them to their extension entry so we can attach it explicitly.
- */
-const EXTENSION_TOOL_PATHS: Record<string, string> = {
-	web_search: "web/index.ts",
-	web_fetch: "web/index.ts",
-};
-
-function extensionPathsForTools(tools: string[] | undefined): string[] {
-	if (!tools) return [];
-	const extRoot = join(getAgentDir(), "extensions");
-	const paths = new Set<string>();
-	for (const tool of tools) {
-		const rel = EXTENSION_TOOL_PATHS[tool];
-		if (rel) {
-			const full = join(extRoot, rel);
-			if (existsSync(full)) paths.add(full);
-		}
-	}
-	return [...paths];
+/** Where `-ne` pane children find the extensions they must attach explicitly. */
+function extensionRoots(): ExtensionRoots {
+	return { packageDir: join(MODULE_DIR, ".."), agentExtDir: join(getAgentDir(), "extensions") };
 }
 
 // ── Types ──
@@ -360,11 +347,11 @@ function buildLauncherSpec(opts: {
 	cwd?: string;
 	model?: string;
 	grantSpawning: boolean;
-	/** Extra extension entrypoints to load in the child (e.g. web for web tools). */
-	extraExtensions?: string[];
 }): LauncherSpec {
 	const def = opts.def;
-	const tools = def?.tools;
+	// Allowlisted children run with -ne: guards and extension tools are
+	// attached explicitly, pane tools are added when the agent may spawn.
+	const tools = paneChildTools(def?.tools, opts.grantSpawning);
 	const env: Record<string, string> = {
 		PI_SUBAGENT_NAME: opts.name,
 		PI_SUBAGENT_ID: opts.id,
@@ -385,7 +372,7 @@ function buildLauncherSpec(opts: {
 		sessionFile: opts.sessionFile,
 		extensionPaths: [
 			DONE_EXTENSION_PATH,
-			...(opts.extraExtensions ?? []),
+			...childExtensionPaths(def?.tools, extensionRoots(), existsSync),
 			...(opts.grantSpawning ? [join(MODULE_DIR, "index.ts")] : []),
 		],
 		noExtensions: !!(tools && tools.length > 0),
@@ -453,7 +440,6 @@ function doSpawn(
 		cwd,
 		model,
 		grantSpawning,
-		extraExtensions: extensionPathsForTools(def.tools),
 	});
 	writeFileSync(scriptPath, renderLauncherPs1(spec), "utf8");
 
@@ -502,7 +488,7 @@ function doSpawn(
 		cwd,
 		model,
 		thinking: def.thinking,
-		tools: def.tools,
+		tools: spec.tools,
 		noExtensions: spec.noExtensions,
 		autoExit: def.autoExit,
 		registeredAt: startTime,
@@ -1032,8 +1018,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	// ── Tool: task_batch ──
 
-	const PANE_TOOLS_DENYLIST = ["subagent", "subagent_message", "subagent_cancel", "subagents_list"];
-
 	/** Re-render cadence for the live batch UI (spinner frames, running elapsed). */
 	const BATCH_TICK_MS = 150;
 
@@ -1166,8 +1150,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					cwd: cwd?.trim() || ctx.cwd,
 					model: plan.model,
 					thinking: def.model ? undefined : dispatchDefaults.thinking,
-					tools: def.tools,
-					denyTools: PANE_TOOLS_DENYLIST,
+					tools: headlessChildTools(def.tools),
+					denyTools: PANE_TOOLS,
 					defaultCwd: ctx.cwd,
 					sessionsRoot,
 					batchMode: batchModeLabel,

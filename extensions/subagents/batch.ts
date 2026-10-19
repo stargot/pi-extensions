@@ -578,8 +578,10 @@ export async function runHeadlessChild(opts: HeadlessChildOptions): Promise<Batc
 	const args: string[] = ["--mode", "json", "-p", "--session", childSession];
 	if (opts.model) args.push("--model", opts.model);
 	if (opts.thinking) args.push("--thinking", opts.thinking);
-	if (opts.tools && opts.tools.length > 0) {
-		args.push("--tools", opts.tools.join(","));
+	if (opts.tools) {
+		// An allowlist emptied by filtering means no tools, never all of them.
+		if (opts.tools.length > 0) args.push("--tools", opts.tools.join(","));
+		else args.push("--no-tools");
 	} else if (opts.denyTools && opts.denyTools.length > 0) {
 		// Native denylist — actually removes the tools (env-based attempts were
 		// never honored by pi). Keeps task_batch itself available for nesting.

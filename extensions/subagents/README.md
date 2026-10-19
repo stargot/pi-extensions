@@ -223,6 +223,15 @@ heartbeat, поэтому здоровая долгая генерация мо�
   (allowlist → `--tools` + `-ne` в ребёнке), `subagents`, `auto-exit`;
   тело файла — identity, добавляется через `--append-system-prompt`.
   Приоритет: `.pi/agents/` проекта > `~/.pi/agent/agents/` глобальных.
+- Ребёнок с `tools:` (`child-tools.ts`): `--tools` pi фильтрует и
+  инструменты расширений, а `-ne` отключает их discovery, поэтому pane-ребёнку
+  явно подключаются guard'ы (`env-guard`, `edit-guard`) и расширения его
+  инструментов (`web_search`/`web_fetch` → `web` пакета, `browser_*` →
+  `~/.pi/agent/extensions/browser`); агенту с `subagents:` в allowlist
+  добавляются pane-инструменты (`subagent`, `subagent_message`,
+  `subagent_cancel`, `subagents_list`). Headless-ребёнку (`task_batch`)
+  pane-инструменты вычитаются из allowlist — фоновый процесс панели не
+  открывает; опустевший allowlist даёт `--no-tools`, а не все инструменты.
 
 ## Отличия от tmux-оригинала
 
