@@ -1,3 +1,16 @@
+/**
+ * env-guard extension: keep collected secret values out of the session
+ * transcript. Secrets are collected once per session (secrets.ts) and every
+ * channel is then guarded: tool calls reading .env-family files or naming
+ * secret env vars are blocked outright; user bash commands get the same
+ * check; model input, tool_call arguments, tool results and finished
+ * messages are redacted by exact value (redact.ts) so a secret that slips
+ * into any payload never reaches the model or the session log.
+ *
+ * Handlers are thin closures over a shared GuardState, built by the
+ * create*Handler factories — that shape keeps each hook testable in
+ * isolation with a fake NotifyContext.
+ */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type {
 	ExtensionAPI,
@@ -26,12 +39,20 @@ import {
 } from "./redact.ts";
 import { collectSecrets, type CollectDeps, type FileSource, type SecretEntry } from "./secrets.ts";
 
+/** What each handler needs besides the event: project cwd for path checks
+ *  and a notify channel that only exists when a UI does (headless hosts). */
 export interface NotifyContext {
 	hasUI: boolean;
 	cwd: string;
 	ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
 }
 
+/**
+ * Shared mutable guard state: the current secret inventory, the matcher
+ * compiled from it, the sources it came from, and the /env-guard
+ * bookkeeping (per-key redaction counters, keys already notified about).
+ * refresh() swaps the inventory in place; handlers only read the matcher.
+ */
 export interface GuardState {
 	secrets: SecretEntry[];
 	redactor: Redactor;
@@ -41,6 +62,8 @@ export interface GuardState {
 	reported: Set<string>;
 }
 
+/** Empty state: no secrets, inert redactor (regex null). Kept separate
+ *  from the handlers so tests can start from a known baseline. */
 export function createState(): GuardState {
 	return {
 		secrets: [],
@@ -52,6 +75,12 @@ export function createState(): GuardState {
 	};
 }
 
+/**
+ * Re-collect secrets and swap them into the state. Reported keys that no
+ * longer resolve (source file edited, env changed) are forgotten so a
+ * removed secret gets re-notified if it ever reappears; hit counters are
+ * deliberately kept — past redactions still happened.
+ */
 export async function refresh(state: GuardState, startDir: string, deps: CollectDeps = {}): Promise<void> {
 	const collected = await collectSecrets(startDir, deps);
 	state.secrets = collected.secrets;
@@ -82,11 +111,20 @@ function redactEnvLineFallback(text: string, hits: Map<string, number>): string 
 
 const ENV_BASENAME_PATTERN = /(?:^|[^\w.])(\.env(?:\.[A-Za-z0-9_-]+)?|\.envrc)(?![\w-])/i;
 
+/** True for `.env`, `.env.local`, any `.env.*` and `.envrc`, resolved
+ *  against cwd and case-insensitive. The check is on the basename, so env
+ *  files in any directory are caught, not just the project root. */
 export function isEnvFamilyPath(path: string, cwd: string): boolean {
 	const name = basename(resolve(cwd, path)).toLowerCase();
 	return name === ".env" || name === ".env.local" || name.startsWith(".env.") || name === ".envrc";
 }
 
+/**
+ * Detect a command touching a known env file: verbatim path of any tracked
+ * file first, else a bare .env-family basename (catches variants like
+ * `.env.production` that exist on disk but were never collected). Returns
+ * the file path to report in the refusal.
+ */
 export function findEnvReference(command: string, files: FileSource[]): string | undefined {
 	for (const file of files) {
 		if (command.includes(file.path)) return file.path;
@@ -95,6 +133,9 @@ export function findEnvReference(command: string, files: FileSource[]): string |
 	return match?.[1];
 }
 
+/** First secret-named env var whose NAME the command references (word-
+ *  bounded, e.g. `echo $OPENAI_API_KEY`). Name-only by design: blocking
+ *  needs no value, and the value must never appear in a command. */
 export function findEnvNameReference(command: string, names: string[]): string | undefined {
 	for (const name of names) {
 		if (new RegExp(`\\b${escapeRegExp(name)}\\b`).test(command)) return name;
@@ -102,6 +143,13 @@ export function findEnvNameReference(command: string, names: string[]): string |
 	return undefined;
 }
 
+/**
+ * tool_call hook factory: hard-block env access — read/edit/write/grep/find
+ * on any .env-family path, and bash/powershell commands mentioning a
+ * tracked env file or a secret env var name. Blocked rather than redacted:
+ * the tool would read the raw file and the secret would land in the result
+ * before any redaction could catch it.
+ */
 export function createToolCallDenyHandler(state: GuardState) {
 	return async (event: ToolCallEvent, ctx: NotifyContext): Promise<ToolCallEventResult | undefined> => {
 		let reason: string | undefined;
@@ -129,6 +177,9 @@ export function createToolCallDenyHandler(state: GuardState) {
 	};
 }
 
+/** user_bash hook factory: same file/name detection as the deny handler
+ *  for commands the user runs directly, returned as a failed result so the
+ *  refusal shows up in the shell output slot. */
 export function createUserBashHandler(state: GuardState) {
 	return async (event: UserBashEvent, ctx: NotifyContext): Promise<UserBashEventResult | undefined> => {
 		const file = findEnvReference(event.command, state.files);
@@ -142,6 +193,12 @@ export function createUserBashHandler(state: GuardState) {
 	};
 }
 
+/**
+ * input hook factory: the one channel where raw secrets legitimately
+ * appear — the user typing or pasting them. Redact values and secret-keyed
+ * KEY=value lines from the typed text before it becomes a message, then
+ * tally and notify the keys hit.
+ */
 export function createInputHandler(state: GuardState) {
 	return async (event: InputEvent, ctx: NotifyContext): Promise<InputEventResult | undefined> => {
 		const redactor = state.redactor;
@@ -157,6 +214,12 @@ export function createInputHandler(state: GuardState) {
 	};
 }
 
+/**
+ * tool_call hook factory: scrub secret values found anywhere in the
+ * arguments (in place — a model echoing a secret back into a tool call
+ * must not pass it on). Values only; access control lives in
+ * createToolCallDenyHandler. No-op while the redactor has no patterns.
+ */
 export function createToolCallHandler(state: GuardState) {
 	return async (event: ToolCallEvent, ctx: NotifyContext): Promise<ToolCallEventResult | undefined> => {
 		const redactor = state.redactor;
@@ -169,6 +232,12 @@ export function createToolCallHandler(state: GuardState) {
 	};
 }
 
+/**
+ * tool_result hook factory: redact secret values in text blocks, and (via
+ * the env-line fallback) `KEY=<value>` lines under secret-named keys inside
+ * structuredContent/details — output the model is about to see. Returns a
+ * patch containing only the fields that changed; no hits → no patch.
+ */
 export function createToolResultHandler(state: GuardState) {
 	return async (event: ToolResultEvent, ctx: NotifyContext): Promise<ToolResultEventResult | undefined> => {
 		const redactor = state.redactor;
@@ -214,6 +283,8 @@ export function createToolResultHandler(state: GuardState) {
 	};
 }
 
+/** message_end hook factory: last-chance scrub of a finished message (all
+ *  roles with text, plus thinking) before it is stored or sent. */
 export function createMessageEndHandler(state: GuardState) {
 	return async (event: MessageEndEvent, ctx: NotifyContext): Promise<{ message: AgentMessage } | undefined> => {
 		if (!state.redactor.regex) return undefined;
@@ -225,6 +296,8 @@ export function createMessageEndHandler(state: GuardState) {
 	};
 }
 
+/** Multi-line /env-guard status: tracked secret count, per-file counts,
+ *  secret-named process.env vars, per-key redaction tallies sorted by key. */
 export function formatStatus(state: GuardState): string {
 	const lines: string[] = [];
 	lines.push(`env-guard: ${state.secrets.length} secret${state.secrets.length === 1 ? "" : "s"} tracked`);
@@ -242,6 +315,9 @@ export function formatStatus(state: GuardState): string {
 	return lines.join("\n");
 }
 
+/** Re-run collection and describe the delta (added/removed/unchanged
+ *  keys) as the /env-guard rescan report. Unlike refresh, the output is
+ *  for the user, not silent state repair. */
 export async function rescan(state: GuardState, cwd: string, deps: CollectDeps = {}): Promise<string> {
 	const before = new Set(state.secrets.map((secret) => secret.key));
 	await refresh(state, cwd, deps);
@@ -257,6 +333,12 @@ export async function rescan(state: GuardState, cwd: string, deps: CollectDeps =
 	return lines.join("\n");
 }
 
+/**
+ * Wire the guard onto an ExtensionAPI: collect on session_start, register
+ * every hook handler and the /env-guard command (`rescan` re-reads
+ * sources, a bare call prints formatStatus). Returns the state so hosts
+ * and tests can inspect counters or force a refresh.
+ */
 export function createEnvGuard(pi: ExtensionAPI, deps: CollectDeps = {}): GuardState {
 	const state = createState();
 	pi.on("session_start", async (_event, ctx) => {
@@ -287,6 +369,7 @@ export function createEnvGuard(pi: ExtensionAPI, deps: CollectDeps = {}): GuardS
 	return state;
 }
 
+/** Extension entry point: install env-guard with default collection deps. */
 export default function (pi: ExtensionAPI) {
 	createEnvGuard(pi);
 }

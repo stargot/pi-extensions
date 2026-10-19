@@ -1,15 +1,40 @@
+/**
+ * Redaction engine for env-guard. Two mechanisms: exact-value matching (a
+ * single alternation regex over each secret's raw/JSON-escaped/percent-
+ * encoded/base64 variants, compiled by buildRedactor) and a name-based
+ * KEY=value line pass (redactEnvLines) that masks assignments under
+ * secret-named keys even when the value was never collected.
+ *
+ * Pure functions throughout: they return new text/objects and per-key hit
+ * counts; walkDeep chooses between copying and in-place rewriting via its
+ * `copy` flag. Nothing here touches the guard state or the filesystem.
+ */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { SECRET_NAME_PATTERN, type SecretEntry } from "./secrets.ts";
 
+/**
+ * Compiled matcher: `regex` alternates all secret variants, longest first
+ * (null = nothing collected — every pass short-circuits on it); `lookup`
+ * maps each matched variant back to the key owning it, for the marker and
+ * the per-key hit counters.
+ */
 export interface Redactor {
 	regex: RegExp | null;
 	lookup: Map<string, string>;
 }
 
+/** Escape a string for literal embedding in a RegExp; applied to every
+ *  variant — one unescaped metacharacter would corrupt the whole alternation. */
 export function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Encodings in which a secret value may surface: raw, JSON-escaped (string
+ * literals), percent-encoded (URLs/commands) and base64 (only when ≥ 12
+ * chars — shorter encodings of short values would over-match ordinary
+ * text). Deduped; one value under several keys resolves in buildRedactor.
+ */
 export function valueVariants(value: string): string[] {
 	const variants = new Set<string>();
 	variants.add(value);
@@ -26,6 +51,13 @@ const ENV_ASSIGNMENT_PATTERN = /^([+\-<>]?)([ \t]*(?:export[ \t]+)?)([A-Za-z_][A
 const REDACTED_MARKER_VALUE = /^["']?\[REDACTED:[^\]]*\]["']?$/;
 const EMPTY_QUOTED_VALUE = /^["']{2}$/;
 
+/**
+ * Name-based line pass: rewrites start-of-line `KEY=value` assignments
+ * (optional `export`, leading `[+-<>]` diff prefix) under secret-named keys
+ * to `KEY=[REDACTED:KEY]`, keeping CRLF. Empty, `''`/`""` and already
+ * redacted values are skipped, so repeated passes are idempotent. Works
+ * even with an empty secret list — matching by name needs no values.
+ */
 export function redactEnvLines(text: string): { text: string; hits: Map<string, number>; changed: boolean } {
 	const hits = new Map<string, number>();
 	const replaced = text.replace(
@@ -42,6 +74,14 @@ export function redactEnvLines(text: string): { text: string; hits: Map<string, 
 	return { text: replaced, hits, changed: replaced !== text };
 }
 
+/**
+ * Compile collected secrets into a Redactor. Variants are deduped with the
+ * shortest key winning (one value under several keys redacts to the
+ * shortest name); variants occurring inside a `[REDACTED:…]` marker are
+ * dropped so a second pass can never chew up the redactor's own output;
+ * alternatives are sorted longest-first so a value beats its own prefix.
+ * No viable variants → `regex: null`, the universal "nothing to do".
+ */
 export function buildRedactor(secrets: SecretEntry[]): Redactor {
 	const candidates: Array<{ variant: string; key: string }> = [];
 	for (const secret of secrets) {
@@ -72,6 +112,11 @@ export function buildRedactor(secrets: SecretEntry[]): Redactor {
 	return { regex: new RegExp(alternatives.join("|"), "g"), lookup };
 }
 
+/**
+ * One value-based pass: every regex match becomes `[REDACTED:key]`; returns
+ * per-key hit counts and whether anything changed. Untouched when the
+ * redactor has no regex.
+ */
 export function redactText(
 	text: string,
 	redactor: Redactor,
@@ -87,15 +132,28 @@ export function redactText(
 	return { text: replaced, hits, changed: replaced !== text };
 }
 
+/** Add `source`'s per-key hit counts into `target` (mutates target) — the
+ *  standard way handlers combine counts from several passes. */
 export function mergeHits(target: Map<string, number>, source: Map<string, number>): void {
 	for (const [key, count] of source) target.set(key, (target.get(key) ?? 0) + count);
 }
 
+/** True for `{}`- or null-prototype objects; walkDeep recurses only into
+ *  these, so class instances (Date, Map, Buffer…) pass through untouched. */
 export const isPlainObject = (input: object): boolean => {
 	const prototype = Object.getPrototypeOf(input);
 	return prototype === Object.prototype || prototype === null;
 };
 
+/**
+ * Depth-first redaction over strings, arrays and plain objects, with an
+ * optional extra string transform per node (e.g. the env-line fallback).
+ * `copy: false` rewrites containers in place — for payloads we own for the
+ * event's lifetime (tool_call input); `copy: true` clones every container
+ * visited and never mutates the input (tool results may be aliased).
+ * Cycles are survived via WeakMap/WeakSet bookkeeping; hits aggregate
+ * across the whole tree.
+ */
 export function walkDeep(
 	input: unknown,
 	redactor: Redactor,
@@ -159,6 +217,8 @@ export function walkDeep(
 	return { value, hits };
 }
 
+/** copy=true walk plus a `changed` flag — the wrapper for payloads that
+ *  must not be mutated; the original reference comes back when nothing hit. */
 export function redactDeep<T>(
 	value: T,
 	redactor: Redactor,
@@ -187,6 +247,12 @@ function redactTextBlocks<T extends { type: string; text?: unknown }>(
 	return { content, changed };
 }
 
+/**
+ * Redact one finished message of any handled role (assistant, user, system,
+ * toolResult) — text content, plus thinking blocks on assistant messages.
+ * Returns undefined when the role is out of scope or nothing changed, so
+ * callers can skip the patch.
+ */
 export function redactMessage(
 	message: AgentMessage,
 	redactor: Redactor,
@@ -223,6 +289,11 @@ export function redactMessage(
 	return undefined;
 }
 
+/**
+ * Assistant slice of redactMessage: text and thinking blocks redacted, all
+ * other block types pass through. Delegated to by redactMessage and kept
+ * exportable so tests can exercise the assistant path directly.
+ */
 export function redactAssistantMessage(
 	message: AgentMessage,
 	redactor: Redactor,

@@ -122,6 +122,13 @@ const QuizParams = Type.Object({
 	),
 });
 
+/**
+ * Trim and normalize tool-call options: value defaults to the label,
+ * empty labels are dropped. Throws on duplicate values — grading resolves
+ * `correctAnswer` by value, so a duplicate would make the correct answer
+ * ambiguous; better a loud "unavailable" result than a silently wrong
+ * grade.
+ */
 export function normalizeOptions(
 	options: Array<{ label: string; value?: string; description?: string }> | undefined,
 ): QuizOption[] {
@@ -143,6 +150,8 @@ export function normalizeOptions(
 // Fisher-Yates shuffle over a copy. Safe to reorder for display because
 // correctAnswer is keyed by value, not position — indices are resolved AFTER
 // shuffling, so grading always matches what the user actually sees.
+/** Random reordering for display; grading stays correct because indices
+ *  are resolved after shuffling (see the note above). */
 export function shuffleOptions(options: QuizOption[]): QuizOption[] {
 	const out = [...options];
 	for (let i = out.length - 1; i > 0; i--) {
@@ -161,6 +170,8 @@ export function shuffleOptions(options: QuizOption[]): QuizOption[] {
 // the schema union lists String first. Detect that case and parse it back into
 // an array so grading resolves against real option values. A plain single value
 // is wrapped as-is.
+/** Normalize `correctAnswer` to a string array, unwrapping the
+ *  JSON-stringified-array quirk described above. */
 export function coerceCorrectAnswer(correctAnswer: string | string[]): string[] {
 	if (Array.isArray(correctAnswer)) return correctAnswer;
 	const trimmed = correctAnswer.trim();
@@ -175,6 +186,13 @@ export function coerceCorrectAnswer(correctAnswer: string | string[]): string[] 
 	return [correctAnswer];
 }
 
+/**
+ * Resolve author-supplied option value(s) to 1-based indices in the final
+ * display order. An unknown value is a hard error listing the valid ones —
+ * keying by value (not position) turns a typo'd correctAnswer into a
+ * call-time failure instead of a quiz nobody can answer correctly.
+ * Duplicates collapse; indices come back sorted ascending.
+ */
 export function resolveCorrect(
 	correctAnswer: string | string[] | undefined,
 	options: QuizOption[],
@@ -225,10 +243,14 @@ function addWrapped(lines: string[], text: string, width: number, indent = ""): 
 // arrive in the same live environment (ask-user-question free-text typing
 // works), so 'n' is the reliable fallback. Tab keeps working wherever it
 // arrives unmangled. Deliberate deviation from upstream amosblomqvist/learn.
+/** True when the keypress should move focus to the note field ('n'; see
+ *  below for why not Tab). */
 export function isNoteToggleKey(data: string): boolean {
 	return matchesKey(data, "n");
 }
 
+/** Exact-set match, order-insensitive: multi-select is all-or-nothing, so
+ *  a partially-right selection grades as wrong rather than "mostly right". */
 export function isCorrect(selectedIndices: number[], correctIndices: number[]): boolean {
 	if (selectedIndices.length !== correctIndices.length) return false;
 	const a = [...selectedIndices].sort((x, y) => x - y);
@@ -236,6 +258,9 @@ export function isCorrect(selectedIndices: number[], correctIndices: number[]): 
 	return a.every((v, i) => v === b[i]);
 }
 
+/** Assemble the details payload attached to every quiz tool result; one
+ *  constructor keeps the shape identical across answered/cancelled/
+ *  unavailable so renderResult and log listeners can rely on the fields. */
 export function buildStructuredResult(
 	status: QuizStatus,
 	question: string,
@@ -266,6 +291,9 @@ export function buildStructuredResult(
 	};
 }
 
+/** Tool result for a quiz abandoned before answering (Esc / abort):
+ *  distinct status, no grade attempted — a cancellation must not look
+ *  like a wrong answer. */
 export function cancelledResult(question: string, mode: QuizMode, correctIndices: number[], context?: string) {
 	const message = "User cancelled the quiz";
 	return {
@@ -284,6 +312,9 @@ export function cancelledResult(question: string, mode: QuizMode, correctIndices
 	};
 }
 
+/** Tool result when the quiz cannot run at all (bad options, bad
+ *  correctAnswer, no UI): surfaces the reason as text plus structured
+ *  details instead of throwing into the model's turn. */
 export function unavailableResult(
 	question: string,
 	mode: QuizMode,
@@ -307,11 +338,20 @@ export function unavailableResult(
 	};
 }
 
+/** `N. label` for a 1-based option index; `(unknown)` keeps rendering
+ *  total if indices and options ever drift (e.g. stale cached results). */
 export function formatOptionRef(options: QuizOption[], index: number): string {
 	const opt = options.find((_o, i) => i + 1 === index);
 	return `${index}. ${opt ? opt.label : "(unknown)"}`;
 }
 
+/**
+ * Build the answered tool result: verdict text for the transcript (✓/✗ or
+ * the explicit "I don't know" framing) plus full structured details.
+ * dontKnow is never graded correct — an honest gap must stay
+ * distinguishable from a lucky guess, for the user and for the agent
+ * reading the result.
+ */
 export function buildResult(
 	question: string,
 	context: string | undefined,
@@ -907,6 +947,8 @@ async function askMultiChoice(
 	});
 }
 
+/** Ascending by display index — the order the user saw, for stable
+ *  rendering of multi-select answers. */
 export function sortAnswers(answers: OptionAnswer[]): OptionAnswer[] {
 	return [...answers].sort((a, b) => a.index - b.index);
 }
@@ -940,6 +982,10 @@ function withUILock<T>(fn: () => Promise<T>): Promise<T> {
 	return sharedUiLock.withLock(fn);
 }
 
+/** Extension entry point: register the graded `quiz` tool — params schema,
+ *  prompt guidance, the single/multi-choice popup flow under the shared UI
+ *  lock, and transcript renderers that never leak correctAnswer/explanation
+ *  before the user has answered. */
 export default function quiz(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "quiz",
