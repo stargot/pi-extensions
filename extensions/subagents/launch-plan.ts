@@ -97,6 +97,22 @@ export function resolveLaunchModel(
 	return modelOverride?.trim() || def.model || parentModel || undefined;
 }
 
+/**
+ * Headless thinking precedence: agent definition → parent's level, but the
+ * parent's level only when the child also inherits the parent's model — a
+ * level tuned for one model is not carried onto another. Undefined lets pi
+ * apply its defaultThinkingLevel.
+ */
+export function resolveHeadlessThinking(
+	def: Pick<AgentDef, "model" | "thinking">,
+	parentThinking?: string,
+): string | undefined {
+	return def.thinking || (def.model ? undefined : parentThinking) || undefined;
+}
+
+/** Look up an agent definition or throw the canonical unknown-agent error,
+ *  listing available names (and pointing at the agent dirs when none exist
+ *  at all) so the model can self-correct on its next call. */
 export function resolveAgentDef(defs: Map<string, AgentDef>, agent: string): AgentDef {
 	const def = defs.get(agent);
 	if (def) return def;

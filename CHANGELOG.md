@@ -19,6 +19,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   спавн — pane-инструменты добавляются в allowlist ребёнка (раньше `--tools`
   отфильтровывал `subagent`); headless-дети pane-инструменты не получают, а
   опустевший allowlist даёт `--no-tools`.
+- **subagents**: `task_batch` передаёт ребёнку `thinking` из определения
+  агента — раньше он игнорировался, и дети с собственной `model` работали на
+  `defaultThinkingLevel` pi; уровень родителя по-прежнему наследуется только
+  вместе с его моделью.
 
 ## [0.10.0] — 2026-10-16
 

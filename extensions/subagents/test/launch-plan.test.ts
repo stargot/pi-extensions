@@ -11,6 +11,7 @@ import {
 	cwdProblemMessage,
 	dispatchParentModel,
 	resolveAgentDef,
+	resolveHeadlessThinking,
 	resolveLaunchCwd,
 	resolveLaunchModel,
 	safeFilePart,
@@ -80,6 +81,16 @@ test("model precedence: parent fallback covers batch dispatch (task_batch has no
 test("model precedence: nothing set anywhere resolves to undefined (pi default)", () => {
 	assert.equal(resolveLaunchModel(undefined, makeDef({ model: undefined }), undefined), undefined);
 	assert.equal(resolveLaunchModel(undefined, makeDef({ model: undefined }), ""), undefined);
+});
+
+test("headless thinking: agent definition level wins, even with its own model", () => {
+	assert.equal(resolveHeadlessThinking(makeDef({ model: "def/model", thinking: "low" }), "max"), "low");
+	assert.equal(resolveHeadlessThinking(makeDef({ thinking: "low" }), "max"), "low");
+});
+
+test("headless thinking: parent level applies only when the parent model is inherited too", () => {
+	assert.equal(resolveHeadlessThinking(makeDef({ model: undefined }), "high"), "high");
+	assert.equal(resolveHeadlessThinking(makeDef({ model: "def/model" }), "high"), undefined);
 });
 
 test("dispatchParentModel: provider/id string, or undefined without a model", () => {
