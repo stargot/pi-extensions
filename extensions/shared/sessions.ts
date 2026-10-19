@@ -4,7 +4,7 @@
  * the CLIs (ledger / recall / trace) and tests run without the pi runtime.
  *
  * Дедупликация: до 0.3.0 discoverSessionFiles жил копиями в session-recall и
- * session-ledger, а каталог сессий резолвился в четырёх местах — и trace CLI
+ * usage, а каталог сессий резолвился в четырёх местах — и trace CLI
  * успел отъехать от остальных (хардкод ~/.pi/agent/sessions без env).
  */
 import { readdirSync, statSync } from "node:fs";
