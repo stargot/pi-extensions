@@ -131,3 +131,15 @@ test("parseAgentMarkdown: readonly is a known boolean key, default false", () =>
 	assert.deepEqual(on.warnings, []);
 	assert.equal(parseAgentMarkdown("---\nname: x\n---\nBody.", "x").readonly, false);
 });
+
+test("parseAgentMarkdown: dispatch is a known boolean key, default true, only false opts out", () => {
+	const off = parseAgentMarkdown("---\ndispatch: false\n---\nBody.", "x");
+	assert.equal(off.dispatch, false);
+	assert.deepEqual(off.warnings, []);
+	const quoted = parseAgentMarkdown('---\ndispatch: "false"\n---\nBody.', "x");
+	assert.equal(quoted.dispatch, false);
+	assert.equal(parseAgentMarkdown("---\nname: x\n---\nBody.", "x").dispatch, true);
+	const on = parseAgentMarkdown("---\ndispatch: true\n---\nBody.", "x");
+	assert.equal(on.dispatch, true);
+	assert.deepEqual(on.warnings, []);
+});

@@ -33,6 +33,8 @@ export interface AgentDef {
 	subagents?: string[];
 	/** `readonly: true` — the child runs under readonly-guard.ts. */
 	readonly?: boolean;
+	/** `dispatch: false` — the role is left out of the prime dispatch table. */
+	dispatch?: boolean;
 	/** Default true — autonomous agents report back via steer messages. */
 	autoExit: boolean;
 	/** Markdown body: the agent identity appended to the system prompt. */
@@ -121,6 +123,7 @@ export function parseAgentMarkdown(raw: string, fallbackName: string): AgentDef 
 		tools: list("tools"),
 		subagents: list("subagents"),
 		readonly: AUTO_EXIT_TRUE.has(attrs["readonly"]?.trim().toLowerCase() ?? ""),
+		dispatch: !AUTO_EXIT_FALSE.has(attrs["dispatch"]?.trim().toLowerCase() ?? ""),
 		autoExit: autoExitRaw === undefined || autoExitRaw === "" || !AUTO_EXIT_FALSE.has(autoExitRaw),
 		body: body.trim(),
 		warnings,
