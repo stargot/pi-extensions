@@ -9,6 +9,7 @@
  */
 import { openSync, readSync, closeSync, fstatSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { resolveSessionsDir } from "../shared/sessions.ts";
 import { TraceView } from "./graph.ts";
@@ -134,12 +135,12 @@ function openViewer(file: string, mode: "live" | "replay"): void {
  *  (90–97) резолвит сам терминал, так что цвета следуют пользовательской палитре;
  *  перевод на pi-tui styleText/mixColors потребовал бы фикс. RGB-цветов (Color-объектов)
  *  и убил бы это свойство при большем диффе. */
-function fallbackTheme() {
+export function fallbackTheme() {
 	const wrap =
 		(code: string) =>
 		(s: string): string =>
 			s ? `\x1b[${code}m${s}\x1b[0m` : s;
-	const bright = (n: number) => wrap(`${n}1`); // bold-версия базового цвета
+	const bright = (n: number) => wrap(`1;${n}`); // bold-версия базового цвета
 	return {
 		bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
 		fg: (color: string, s: string) => {
@@ -218,4 +219,6 @@ async function main(): Promise<void> {
 	openViewer(file, mode);
 }
 
-void main();
+// Импорт из тестов не запускает вьюер (тот же приём, что в web/serve.ts).
+const isMain = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) void main();
