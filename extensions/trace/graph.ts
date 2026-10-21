@@ -659,7 +659,8 @@ export class TraceView {
 		const inner = Math.max(8, width - 2);
 		const running = t.chips.some((c: any) => c.status === "running");
 		const ends = t.chips.map((c: any) => c.endMs).filter((x: any) => x !== undefined) as number[];
-		const dur = ends.length > 0 ? fmtDur(Math.max(...ends) - t.startMs) : "";
+		const end = Math.max(t.endMs ?? t.startMs, ...ends);
+		const dur = end > t.startMs ? fmtDur(end - t.startMs) : "";
 		const title =
 			`T${t.index} · ${fmtClock(t.startMs)}` +
 			(dur ? ` · ${dur}` : "") +

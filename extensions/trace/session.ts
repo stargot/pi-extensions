@@ -17,7 +17,10 @@ export interface Chip {
 export interface TurnItem {
 	kind: "turn";
 	index: number;
+	/** Начало генерации ответа (message.timestamp). */
 	startMs: number;
+	/** Конец генерации (entry.timestamp: pi пишет запись по message_end). */
+	endMs: number;
 	model?: string;
 	tokensOut?: number;
 	/** Полный usage хода: для контекст-диффа (cacheRead/cacheWrite) и шапок. */
@@ -103,6 +106,12 @@ function entryMs(e: any): number {
 	if (typeof t === "number") return t;
 	const p = Date.parse(e?.timestamp ?? "");
 	return Number.isFinite(p) ? p : 0;
+}
+
+/** Время записи entry в файл; для assistant это конец стрима. Не раньше fallback. */
+function entryEndMs(e: any, fallback: number): number {
+	const p = Date.parse(e?.timestamp ?? "");
+	return Number.isFinite(p) && p > fallback ? p : fallback;
 }
 
 function contentText(content: unknown): string {
@@ -236,7 +245,7 @@ export class GraphModel {
 				break;
 			}
 			case "assistant":
-				this.feedAssistant(m, ts);
+				this.feedAssistant(m, ts, entryEndMs(e, ts));
 				break;
 			case "toolResult":
 				// Подпись результата — часть контекста следующего хода, даже если чип не нашёлся.
@@ -250,7 +259,7 @@ export class GraphModel {
 		}
 	}
 
-	private feedAssistant(m: any, ts: number): void {
+	private feedAssistant(m: any, ts: number, endMs: number): void {
 		this.turnNo++;
 		const usage = m.usage ?? {};
 		const tokens: TurnTokens = {
@@ -263,6 +272,7 @@ export class GraphModel {
 			kind: "turn",
 			index: this.turnNo,
 			startMs: ts,
+			endMs,
 			model: m.model,
 			tokensOut: usage.output,
 			tokens,
@@ -306,7 +316,9 @@ export class GraphModel {
 						name: b.name ?? "?",
 						label: chipLabel(b.arguments),
 						status: "running",
-						startMs: ts,
+						// Инструмент стартует после конца стрима, не с его начала:
+						// иначе длительность чипа включает генерацию модели.
+						startMs: endMs,
 					};
 					turn.chips.push(chip);
 					this.byCallId.set(b.id, { turn, chip });

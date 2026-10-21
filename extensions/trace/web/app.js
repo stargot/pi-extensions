@@ -151,10 +151,14 @@
 			m.items.push({ kind: "bash", ts: ts, command: oneLine(msg.command, 120), exitCode: msg.exitCode });
 		} else if (msg.role === "assistant") {
 			m.turnNo++;
+			// entry.timestamp пишется по концу стрима: с него стартуют инструменты
+			var genEnd = Date.parse(e.timestamp || "");
+			if (!Number.isFinite(genEnd) || genEnd < ts) genEnd = ts;
 			var turn = {
 				kind: "turn",
 				index: m.turnNo,
 				startMs: ts,
+				endMs: genEnd,
 				model: msg.model,
 				tokensOut: msg.usage && msg.usage.output,
 				cost: msg.usage && msg.usage.cost && msg.usage.cost.total,
@@ -174,7 +178,7 @@
 						name: b.name || "?",
 						label: chipLabel(b.arguments),
 						status: "running",
-						startMs: ts,
+						startMs: genEnd,
 						endMs: undefined,
 					};
 					turn.chips.push(chip);

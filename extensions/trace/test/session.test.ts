@@ -297,3 +297,59 @@ test("formatting helpers", () => {
 	assert.equal(oneLine("a\n  b".repeat(50), 10).length, 10);
 	assert.ok(oneLine("a\n  b".repeat(50), 10).endsWith("…"));
 });
+
+test("tool chip timing starts at the end of generation, not at message start", () => {
+	// Форма реальных записей pi: message.timestamp — начало стрима (число, мс),
+	// entry.timestamp — момент записи по message_end. Генерация 55 с, инструмент 2.2 с.
+	const genStart = Date.parse("2026-09-22T07:56:17.052Z");
+	const m = feed(new GraphModel(), [
+		{
+			type: "message",
+			id: "a1",
+			timestamp: "2026-09-22T07:57:12.234Z",
+			message: {
+				role: "assistant",
+				timestamp: genStart,
+				content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "npm test" } }],
+			},
+		},
+		{
+			type: "message",
+			id: "r1",
+			timestamp: "2026-09-22T07:57:14.394Z",
+			message: {
+				role: "toolResult",
+				timestamp: Date.parse("2026-09-22T07:57:14.393Z"),
+				toolCallId: "c1",
+				content: [],
+				isError: false,
+			},
+		},
+	]);
+	const turn = m.items.find((i) => i.kind === "turn");
+	assert.ok(turn && turn.kind === "turn");
+	assert.equal(turn.startMs, genStart);
+	assert.equal(turn.endMs - turn.startMs, 55_182, "генерация модели");
+	const chip = turn.chips[0];
+	assert.equal(chip.endMs! - chip.startMs, 2_159, "выполнение инструмента без генерации");
+});
+
+test("turn end falls back to message start when entry timestamp is missing or earlier", () => {
+	const m = feed(new GraphModel(), [
+		{ type: "message", id: "a1", message: { role: "assistant", timestamp: 5000, content: [] } },
+		{
+			type: "message",
+			id: "a2",
+			timestamp: "1970-01-01T00:00:01.000Z",
+			message: { role: "assistant", timestamp: 9000, content: [] },
+		},
+	]);
+	const turns = m.items.filter((i) => i.kind === "turn");
+	assert.deepEqual(
+		turns.map((t) => (t.kind === "turn" ? [t.startMs, t.endMs] : [])),
+		[
+			[5000, 5000],
+			[9000, 9000],
+		],
+	);
+});
