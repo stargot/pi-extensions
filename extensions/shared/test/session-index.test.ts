@@ -1,11 +1,9 @@
 /**
- * Equivalence + cache tests for the shared session index.
+ * Cache + integration tests for the shared session index.
  *
- * The unified parser (parseSessionCombined) must produce results identical
- * to the legacy per-consumer parsers (ledger.parseSessionText and
- * recall.extractUnits) on the same fixtures — the golden expectations live
- * in ledger.test.ts and search.test.ts; here we compare the two paths
- * directly against each other.
+ * recall.extractUnits is a thin adapter over parseSessionCombined — comparing
+ * the two paths keeps the adapter in sync; the golden expectations live in
+ * recall's search.test.ts.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -13,7 +11,6 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractUnits } from "../../recall/search.ts";
-import { parseSessionText } from "../../usage/ledger.ts";
 import {
 	INDEX_VERSION,
 	isNestedSessionFile,
@@ -78,14 +75,6 @@ function sessionText(opts: { cwd?: string; name?: string } = {}): string {
 	if (opts.name) lines.push({ type: "session_info", id: "n1", timestamp: "2026-09-05T12:00:06.000Z", name: opts.name });
 	return `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
 }
-
-test("parseSessionCombined: summary equivalent to ledger.parseSessionText", () => {
-	const text = sessionText({ name: "WezTerm fix" });
-	const combined = parseSessionCombined(text, "/x/s1.jsonl");
-	const legacy = parseSessionText(text, "/x/s1.jsonl");
-	assert.ok(combined && legacy);
-	assert.deepEqual(combined.summary, legacy);
-});
 
 test("parseSessionCombined: units equivalent to recall.extractUnits", () => {
 	const text = sessionText({ name: "WezTerm fix" });
@@ -367,8 +356,7 @@ test("pi 1.0.0: context_edit пропускается, retain-none компак�
 	// endedAt дотягивается до последней записи (context_edit/compaction не мешают).
 	assert.equal(summary.endedAt, Date.parse("2026-09-06T10:00:06.000Z"));
 
-	// Единый парсер согласован с legacy-обёртками на новых типах записей.
-	assert.deepEqual(parseSessionText(text, "/x/s10.jsonl"), summary);
+	// Адаптер recall согласован с единым парсером на новых типах записей.
 	assert.deepEqual(extractUnits(text, "/x/s10.jsonl"), units);
 });
 

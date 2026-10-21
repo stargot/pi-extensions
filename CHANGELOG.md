@@ -40,6 +40,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   фабрика `prime.ts`, hook-слой и команды `/prime`/`/solo` в `index.ts`);
   сняты каталог `extensions/prime-protocol/` с тестами, запись в
   `pi.extensions` и упоминания в README.
+- **context-inspector, quiz, usage**: расширения удалены из пакета — не
+  используются (context-inspector дублирует футер pi, quiz не использовался,
+  usage — кандидат на удаление по итогам фидбека); сняты каталоги
+  `extensions/<name>/` с тестами, записи в `pi.extensions`, npm-скрипт
+  `stats` и упоминания в README и THIRD_PARTY_NOTICES.
 
 ### Fixed
 

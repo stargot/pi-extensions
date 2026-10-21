@@ -6,11 +6,8 @@
 |---|---|---|
 | [ask-user-question](extensions/ask-user-question/) | — | Инструмент структурированного вопроса к пользователю: опции с описаниями, multiSelect, свободный ввод |
 | [bg-jobs](extensions/bg-jobs/) | `bg_run`, `bg_status`, `bg_logs`, `bg_kill`, `/bg`, `/jobs`, `/logs`, `/kill` | Фоновые shell-джобы без блокировки хода: durable-лог в `.pi/jobs/`, wake-ход модели с итогом (exit code + хвост), kill дерева процессов, переживание /reload, виджет running/done (Windows + pwsh; БЕЗ песочницы) |
-| [context-inspector](extensions/context-inspector/) | `/context` | Что реально видит модель: занятость окна, доля кэша, состав system prompt, вес схем инструментов, самые тяжёлые сообщения |
 | [edit-guard](extensions/edit-guard/) | — | Страховка инструмента edit: спасает правки от несовпадений BOM/CRLF/пробелов/отступов и лёгкого дрейфа текста, блокирует ненадёжные с перечнем строк и сниппетами |
 | [prompt-snippets](extensions/prompt-snippets/) | `alt+s`, `/snippets` | Сменные правила промпта: чекбоксы-сниппеты, вклеиваются до/после сообщения на один ход. На основе расширения Eero Alvar (amosblomqvist) |
-| [quiz](extensions/quiz/) | — | Градируемый вопрос с вариантами: правильный ответ по value, мгновенная оценка ✓/✗ с пояснением, шаффл, авто-вариант «I don't know», поле note (Tab или n). На основе расширения Eero Alvar (amosblomqvist) |
-| [usage](extensions/usage/) | `/stats` | Расходы и активность по всем сессиям на машине: стоимость, токены, кэш, вызовы и ошибки инструментов, компакции |
 | [recall](extensions/recall/) | `/recall` | Полнотекстовый поиск по всем сессиям всех проектов с переходом в найденную сессию |
 | [trace](extensions/trace/) | `/trace`, `/trace-web` | Живой flow-граф сессии: карточки ходов, чипы инструментов, маркеры на таймлайне; плюс CLI и веб-вьюер |
 | [skill-auditor](extensions/skill-auditor/) | `/audit` | Read-only аудит скиллов: валидность frontmatter (зеркало фактического поведения pi), роутинг description, битые ссылки и сироты, карта скоупов user vs project; `/audit go` отправляет отчёт модели на семантический разбор (только рекомендации) |
@@ -33,7 +30,7 @@
 
 | Переменная | Назначение |
 |---|---|
-| `PI_CODING_AGENT_DIR` | Каталог агента вместо `~/.pi/agent` — sessions, recall, usage, trace, skill-auditor |
+| `PI_CODING_AGENT_DIR` | Каталог агента вместо `~/.pi/agent` — sessions, recall, trace, skill-auditor |
 | `PI_SNIPPETS_DIR` | Каталог сниппетов prompt-snippets вместо `~/.pi/agent/snippets` |
 | `PI_SUBAGENT_ALLOWED` | subagents: allowlist имён агентов для спавна |
 | `PI_TASK_BATCH_DEPTH` | subagents: глубина вложенных батчей — задаётся самим расширением дочерним процессам |
@@ -44,7 +41,7 @@
 | `LANGSEARCH_API_KEY` | web: API-ключ LangSearch |
 | `PI_WEB_BRIDGE_PORT` / `PI_WEB_BRIDGE_PORTS` | web bridge: порт или диапазон портов (по умолчанию 8790–8799) |
 | `PI_WEB_BRIDGE_TOKEN` / `PI_WEB_BRIDGE_TOKEN_FILE` | web bridge: токен аутентификации или файл с ним |
-| `HOME` / `USERPROFILE` | Домашний каталог (нативные) — context-inspector, subagents |
+| `HOME` / `USERPROFILE` | Домашний каталог (нативные) — subagents |
 | `PI_TRACE_MODE` | Только тесты trace: `live` / `replay` |
 
 ## Запуск
@@ -72,7 +69,6 @@ pi install git:github.com/stargot/pi-extensions
 Каждое расширение работает и без pi — через CLI:
 
 ```bash
-npm run stats        # usage
 npm run recall       # recall
 npm run audit        # skill-auditor
 npm run trace        # trace, терминальный вьюер

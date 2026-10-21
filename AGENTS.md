@@ -4,7 +4,7 @@ pi-extensions — personal pi package: extensions for the pi coding agent.
 TypeScript, ESM, Node >= 22.19.0 (`engines`). Peer dependencies:
 `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` (`^1.0.0`),
 `typebox`. pi loads every file listed under the `"pi".extensions` key in
-package.json (14 entry points).
+package.json (11 entry points).
 
 ## Layout
 
@@ -22,7 +22,7 @@ package.json (14 entry points).
 - `npm run type` — `tsc --noEmit`
 - `npm run smoke` — loads the package's extensions in pi (`scripts/smoke.mjs`)
 - `npm run coverage` — per-file coverage, outside the gate
-- Extension CLIs without pi: `npm run audit`, `npm run stats`, `npm run recall`, `npm run trace`, `npm run trace:web`
+- Extension CLIs without pi: `npm run audit`, `npm run recall`, `npm run trace`, `npm run trace:web`
 
 ## Conventions
 
