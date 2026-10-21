@@ -5,7 +5,7 @@
  * test/render.ts); сессия — временный JSONL с user-сообщениями.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { mock, test } from "node:test";
@@ -283,6 +283,36 @@ test("live: spinner of a running tool chip animates between renders", () => {
 	} finally {
 		view.dispose();
 		mock.timers.reset();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("live: a UTF-8 character split across two reads is decoded intact", () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-graph-test-"));
+	const file = join(dir, "session.jsonl");
+	const entry = {
+		type: "message",
+		timestamp: "2026-01-01T00:00:00.000Z",
+		message: { role: "user", content: "привет" },
+	};
+	const line = Buffer.from(`${JSON.stringify(entry)}\n`);
+	const cut = line.indexOf(Buffer.from("п")) + 1; // посреди двухбайтовой «п»
+	writeFileSync(file, line.subarray(0, cut));
+	const view = new TraceView({
+		tui: mockTui(24) as any,
+		theme: mockTheme() as any,
+		file,
+		mode: "live",
+		onClose: () => {},
+	});
+	try {
+		appendFileSync(file, line.subarray(cut));
+		(view as any).tick(); // дочитать хвост, как таймер
+		const out = view.render(100).join("\n");
+		assert.ok(out.includes("привет"), out);
+		assert.ok(!out.includes("�"), "без replacement-символов");
+	} finally {
+		view.dispose();
 		rmSync(dir, { recursive: true, force: true });
 	}
 });

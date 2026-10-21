@@ -17,6 +17,7 @@
  */
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { basename } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
 	Box,
 	type Component,
@@ -94,6 +95,8 @@ export class TraceView {
 	private fedCount = 0;
 	private byteOffset = 0;
 	private pending = "";
+	/** Держит неполный UTF-8-символ на границе чтения до следующего poll. */
+	private decoder = new StringDecoder("utf8");
 
 	private playheadMs = 0;
 	private speed = 8;
@@ -227,13 +230,14 @@ export class TraceView {
 				// файл пересоздали — начинаем заново
 				this.byteOffset = 0;
 				this.pending = "";
+				this.decoder = new StringDecoder("utf8");
 				this.resetModel();
 			}
 			if (size === this.byteOffset) return false;
 			const buf = Buffer.alloc(size - this.byteOffset);
 			readSync(fd, buf, 0, buf.length, this.byteOffset);
 			this.byteOffset = size;
-			const lines = (this.pending + buf.toString("utf8")).split("\n");
+			const lines = (this.pending + this.decoder.write(buf)).split("\n");
 			this.pending = lines.pop() ?? "";
 			let added = 0;
 			for (const line of lines) {
