@@ -225,3 +225,34 @@ for (const mode of ["live", "replay"] as const) {
 		}
 	});
 }
+
+test("replay: → seeks across a gap longer than 5s instead of sticking", () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-graph-test-"));
+	const file = join(dir, "session.jsonl");
+	const base = Date.parse("2026-01-01T00:00:00Z");
+	const user = (text: string, ms: number) =>
+		JSON.stringify({
+			type: "message",
+			message: { role: "user", content: text },
+			timestamp: new Date(ms).toISOString(),
+		});
+	writeFileSync(file, `${user("first", base)}\n${user("after the gap", base + 60_000)}\n`);
+	const view = new TraceView({
+		tui: mockTui(24) as any,
+		theme: mockTheme() as any,
+		file,
+		mode: "replay",
+		onClose: () => {},
+	});
+	try {
+		const RIGHT = "\x1b[C";
+		for (let i = 0; i < 12; i++) view.handleInput(RIGHT); // 12 × 5с = 60с
+		assert.ok(
+			view.render(100).some((l) => l.includes("after the gap")),
+			"запись через 60с скормлена после 12 перемоток",
+		);
+	} finally {
+		view.dispose();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

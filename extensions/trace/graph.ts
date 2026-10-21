@@ -273,7 +273,11 @@ export class TraceView {
 		}
 		this.resetModel();
 		for (let i = 0; i < lo; i++) this.feedOne();
-		this.playheadMs = this.entries[Math.max(0, lo - 1)]?.ms ?? ms;
+		// Плейхед — ровно в цель (в границах сессии), а не на последнюю скормленную
+		// запись: иначе при паузе >5с между записями → откатывал его назад и залипал.
+		const first = this.entries[0]?.ms ?? ms;
+		const last = this.entries[this.entries.length - 1]?.ms ?? ms;
+		this.playheadMs = Math.min(last, Math.max(first, ms));
 	}
 
 	private tick(): void {
