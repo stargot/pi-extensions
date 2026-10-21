@@ -1,7 +1,7 @@
 /**
  * Prime policy: protocol injection, orchestrator dashboard, solo
- * enforcement and the /prime toggle — the behavior of the former
- * prime-protocol extension, rebuilt as a pure factory.
+ * enforcement and the /prime toggle — the behavior of the former standalone
+ * prime extension, rebuilt as a pure factory.
  *
  * Part 1 — protocol. Every main session runs as "prime", an orchestrator
  * working through the subagent swarm: the body of the pool's `prime`

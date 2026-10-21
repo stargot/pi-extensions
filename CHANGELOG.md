@@ -16,12 +16,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   добавляется перед identity в обоих путях запуска — `APPEND_SYSTEM.md` до
   детей не доходит (pi отключает его discovery при явном
   `--append-system-prompt`) и детям не подходит.
+- **subagents**: `/prime on|off|status` — переключатель prime-политики
+  (бывшее расширение prime-protocol, слилось в subagents): on|off пишет
+  `<cwd>/.pi/prime.json` (контракт `{ "enabled": boolean }`; файла нет → on
+  молча, нечитаемый/невалидный → last-known-good сессии, разовый notify и
+  виджет `unknown`); в off-режиме протокол не инжектится, блокировок и
+  счётчиков нет, `/solo` подсказывает сначала включить prime.
+- **subagents**: dispatch-таблица протокола — из объединённого пула агентов
+  (проектные `.pi/agents/*.md` видны, опт-аут `dispatch: false`) и без
+  колонки Model: `| Role | Purpose |`; раньше таблица сканировала только
+  глобальный каталог и показывала модель.
 
 ### Changed
 
 - **prime-protocol**: child-detect по append сравнивает его окончание с телом
   агента, а не точное совпадение — общий промпт детей перед identity его не
   ломает.
+
+### Removed
+
+- **prime-protocol**: расширение удалено из пакета — протокол оркестратора
+  слился в subagents как внутренний policy-модуль (pure `prime-protocol.ts`,
+  фабрика `prime.ts`, hook-слой и команды `/prime`/`/solo` в `index.ts`);
+  сняты каталог `extensions/prime-protocol/` с тестами, запись в
+  `pi.extensions` и упоминания в README.
 
 ### Fixed
 

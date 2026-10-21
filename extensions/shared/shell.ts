@@ -1,6 +1,6 @@
 /**
- * Shell command classification shared by prime-protocol (solo budget) and the
- * subagents read-only guard: which commands in a line read files, which write
+ * Shell command classification shared by the subagents prime policy (solo
+ * budget) and the read-only guard: which commands in a line read files, which write
  * them, which mutate state. Heuristics over the command text — a tripwire for
  * a cooperating model, not a sandbox: `python -c`/`node -e` can still do
  * anything.

@@ -72,7 +72,7 @@
 Сейчас три реализации скролл-UI (ScrollReport ↔ context-inspector/view.ts ↔ prompt-snippets viewport) и два парсера frontmatter (prompt-snippets ≈ subagents/agents.ts). Свести к: `scroll-report.ts`, `frontmatter.ts`, + новый `session-index.ts` (§1.3).
 
 ### 2.3. Убрать хардкоды знаний о соседях
-`EXTENSION_TOOL_PATHS` (пути между расширениями), `knownToolNames` (дубль встроенных), конвенция `PI_SUBAGENT_SESSION` (prime-protocol ↔ subagents). Заменить шиной `pi.events` / явным реестром — расширения объявляют себя, потребители слушают.
+`EXTENSION_TOOL_PATHS` (пути между расширениями), `knownToolNames` (дубль встроенных). Конвенция `PI_SUBAGENT_SESSION` (была: prime-protocol ↔ subagents) закрыта слиянием prime в subagents (2026-10-21): теперь это внутренний env-маркер расширения (родитель → ребёнок), child-detect между двумя расширениями больше не существует — см. §8 «расхождение child-detect» в docs/specs/2026-10-21-prime-subagents-merge-adr.md. Оставшиеся хардкоды заменить шиной `pi.events` / явным реестром — расширения объявляют себя, потребители слушают.
 
 ### 2.4. Тесты UI
 graph.ts (607 строк — самый большой UI), ResultsView, ReportView, меню snippets — без тестов. Минимум: smoke-рендер компонентов в headless-режиме.

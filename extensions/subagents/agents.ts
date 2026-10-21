@@ -13,7 +13,7 @@
  *   name, description, model, thinking, tools (comma list),
  *   subagents (comma list — agents this agent may spawn; `*` = every
  *   known definition), auto-exit (bool),
- *   dispatch (bool — prime-protocol: opt out of the generated dispatch table),
+ *   dispatch (bool — prime policy: opt out of the generated dispatch table),
  *   readonly (bool — block file/git/package mutations via readonly-guard.ts)
  *
  * Anything after the frontmatter is the agent identity and is appended to the
