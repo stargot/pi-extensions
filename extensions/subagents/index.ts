@@ -33,10 +33,11 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.ts";
+import { createPrimePolicy, type PrimeStateRead } from "./prime.ts";
 import {
 	childExtensionPaths,
 	childToolEnv,
@@ -641,6 +642,58 @@ async function doResume(
 	};
 }
 
+// ── Prime toggle persistence (<cwd>/.pi/prime.json) ──
+
+/**
+ * Short model label for the prime banner/widget — `defaultModel` from the
+ * global settings.json, last path segment. "" = default model.
+ */
+export function readSessionModel(): string {
+	try {
+		const raw = readFileSync(join(getAgentDir(), "settings.json"), "utf8").trim();
+		if (!raw) return "";
+		const parsed = JSON.parse(raw) as { defaultModel?: string };
+		const model = parsed.defaultModel?.trim();
+		return model ? (model.split("/").pop() ?? "") : "";
+	} catch {
+		return "";
+	}
+}
+
+/**
+ * Read the prime toggle file, classified: absent → the policy defaults to
+ * on; a valid `{ "enabled": boolean }` carries the mode (missing key counts
+ * as on — fail-open; unknown keys ignored); unreadable or invalid JSON →
+ * error, the policy keeps its last-known-good mode.
+ */
+export function readPrimeState(path: string): PrimeStateRead {
+	let raw: string;
+	try {
+		raw = readFileSync(path, "utf8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
+		return { kind: "error" };
+	}
+	try {
+		const parsed = JSON.parse(raw) as { enabled?: unknown };
+		return { kind: "ok", enabled: parsed.enabled !== false };
+	} catch {
+		return { kind: "error" };
+	}
+}
+
+/**
+ * Persist the prime toggle atomically: write a uniquely named tmp file next
+ * to the target, then rename over it. Throws to the caller — /prime reports
+ * the failure and keeps the current mode.
+ */
+export function writePrimeState(path: string, value: { enabled: boolean }): void {
+	mkdirSync(dirname(path), { recursive: true });
+	const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(value, null, "\t")}\n`, "utf8");
+	renameSync(tmp, path);
+}
+
 // ── Extension entry point ──
 
 export default function subagentsExtension(pi: ExtensionAPI) {
@@ -658,11 +711,22 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	latestPi = pi;
 
+	// Prime policy (protocol injection + solo enforcement + /prime toggle).
+	// Real pool/settings/fs dependencies live here; prime.ts stays pure.
+	const prime = createPrimePolicy({
+		agents: () => discoverAgents(latestCtx?.cwd ?? process.cwd(), getAgentDir()),
+		stateFile: join(process.cwd(), ".pi", "prime.json"),
+		model: readSessionModel(),
+		readState: readPrimeState,
+		writeState: writePrimeState,
+	});
+
 	pi.on("session_start", (_event, ctx) => {
 		latestCtx = ctx;
 		watcher.reset();
 		columnPanes = [];
 		updateWidget();
+		prime.onSessionStart(ctx);
 	});
 
 	pi.on("session_shutdown", () => {
@@ -674,6 +738,22 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		columnPanes = [];
 		latestCtx = null;
 	});
+
+	// ── Prime policy events (delegated to prime.ts) ──
+	// The only subscriptions of these events in the main session: one
+	// handler per event, all in this block.
+
+	pi.on("message_start", (event, ctx) => {
+		prime.onUserMessageStart(event, ctx);
+	});
+
+	pi.on("tool_call", (event) => prime.onToolCall(event));
+
+	pi.on("tool_result", (event, ctx) => {
+		prime.onToolResult(event, ctx);
+	});
+
+	pi.on("before_agent_start", (event) => prime.onBeforeAgentStart(event));
 
 	// ── Tool: subagent ──
 
@@ -1523,6 +1603,22 @@ ${lines.join("\n\n")}\n
 /workers kill <id|pid> to terminate.`,
 				"info",
 			);
+		},
+	});
+
+	// ── Commands: /prime toggle, /solo turn cap ──
+
+	pi.registerCommand("prime", {
+		description: "Prime protocol toggle: on | off | status",
+		handler: async (args, ctx) => {
+			prime.onPrimeCommand(args, ctx);
+		},
+	});
+
+	pi.registerCommand("solo", {
+		description: "Prime solo enforcement for this turn: <N> lookup cap | off",
+		handler: async (args, ctx) => {
+			prime.onSoloCommand(args, ctx);
 		},
 	});
 

@@ -42,7 +42,6 @@
 			"./extensions/env-guard/index.ts",
 			"./extensions/payload-capture/index.ts",
 			"./extensions/prompt-snippets/index.ts",
-			"./extensions/prime-protocol/index.ts",
 			"./extensions/quiz/index.ts",
 			"./extensions/usage/index.ts",
 			"./extensions/recall/index.ts",
