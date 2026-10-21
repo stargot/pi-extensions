@@ -117,8 +117,18 @@ export class TraceView {
 	private diffCache: { width: number; rev: number; lines: string[]; kinds: string[] } | undefined;
 	private followBeforeDiff?: boolean;
 	private cache:
-		| { width: number; version: number; lines: string[]; kinds: string[]; matchStarts: number[] }
+		| {
+				width: number;
+				version: number;
+				lines: string[];
+				kinds: string[];
+				matchStarts: number[];
+				/** Кадр спиннера, с которым собраны строки; null — в ленте нет running-чипов. */
+				spinFrame: string | null;
+		  }
 		| undefined;
+	/** buildLines отрисовал хотя бы один running-чип (спиннер нужно анимировать). */
+	private builtRunning = false;
 	/** Клавиши ext.*: свой менеджер с definitions расширений (см. shared/keybindings.ts). */
 	private readonly kb = getExtKeybindings();
 
@@ -531,7 +541,14 @@ export class TraceView {
 					kinds: built.kinds,
 				};
 			}
-		} else if (!this.cache || this.cache.width !== contentW || this.cache.version !== this.model.version) {
+		} else if (
+			!this.cache ||
+			this.cache.width !== contentW ||
+			this.cache.version !== this.model.version ||
+			(this.cache.spinFrame !== null && this.cache.spinFrame !== this.spin())
+		) {
+			// Кадр берём до сборки: buildLines рисует running-чипы им же.
+			const frame = this.spin();
 			const lines = this.buildLines(contentW).map((l) => truncateToWidth(l, contentW));
 			this.cache = {
 				width: contentW,
@@ -539,6 +556,7 @@ export class TraceView {
 				lines,
 				kinds: this.lineKinds,
 				matchStarts: this.matchStarts,
+				spinFrame: this.builtRunning ? frame : null,
 			};
 		}
 		const active = this.diffMode ? this.diffCache : this.cache;
@@ -684,6 +702,7 @@ export class TraceView {
 					: c.status === "error"
 						? th.fg("error", "✗")
 						: th.fg("accent", `${this.spin()} running`);
+			if (c.status === "running") this.builtRunning = true;
 			const chipDur = c.endMs !== undefined ? fmtDur(c.endMs - c.startMs) : "";
 			// B8: имя инструмента — чип с подложкой по статусу (ThemeBg: toolSuccessBg /
 			// toolErrorBg / toolPendingBg). Guard: темы без bg-токена и duck-typed темы без
@@ -947,6 +966,7 @@ export class TraceView {
 		const out: string[] = [];
 		const kinds: string[] = [];
 		const m = this.model;
+		this.builtRunning = false;
 		if (this.summary) {
 			this.matchStarts = [];
 			this.lineKinds = kinds;

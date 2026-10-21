@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
 import { TraceView } from "../graph.ts";
 import { loadAuditThemes } from "../../shared/theme-contrast.ts";
@@ -253,6 +253,36 @@ test("replay: → seeks across a gap longer than 5s instead of sticking", () => 
 		);
 	} finally {
 		view.dispose();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("live: spinner of a running tool chip animates between renders", () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-graph-test-"));
+	const file = join(dir, "session.jsonl");
+	const call = { type: "toolCall", id: "c1", name: "bash", arguments: { command: "sleep 10" } };
+	writeFileSync(
+		file,
+		`${JSON.stringify({ type: "message", timestamp: "2026-01-01T00:00:00.000Z", message: { role: "assistant", content: [call] } })}
+`,
+	);
+	mock.timers.enable({ apis: ["Date"], now: 0 });
+	const view = new TraceView({
+		tui: mockTui(24) as any,
+		theme: mockTheme() as any,
+		file,
+		mode: "live",
+		onClose: () => {},
+	});
+	try {
+		const runningLine = () => view.render(100).find((l) => l.includes("running")) ?? "";
+		const before = runningLine();
+		assert.ok(before, "running-чип в ленте");
+		mock.timers.tick(90); // следующий кадр SPIN
+		assert.notEqual(runningLine(), before, "кадр спиннера сменился без новых записей");
+	} finally {
+		view.dispose();
+		mock.timers.reset();
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
