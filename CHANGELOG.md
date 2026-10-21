@@ -53,6 +53,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Fixed
 
+- **trace**: РІРµР±-РІСЊСЋРµСЂ СЃРЅРѕРІР° СЂРёСЃСѓРµС‚ Р»РµРЅС‚Сѓ вЂ” `selectedTurn` Р±С‹Р»Р° РѕР±СЉСЏРІР»РµРЅР° РІ
+  canvas-IIFE, Р° С‡РёС‚Р°Р»Р°СЃСЊ РёР· `draw()` Р»РµРЅС‚С‹, Рё `boot()` РїР°РґР°Р» СЃ
+  `ReferenceError` (СЃС‚СЂР°РЅРёС†Р° РѕСЃС‚Р°РІР°Р»Р°СЃСЊ РїСѓСЃС‚РѕР№, РѕС€РёР±РєСѓ РіР»РѕС‚Р°Р» `.catch` fetch'Р°).
+  РЈР±СЂР°РЅР° Рё РЅРµСЏРІРЅР°СЏ РіР»РѕР±Р°Р»СЊРЅР°СЏ `mainRect`. РЎРјРѕСѓРє `test/web-boot.test.ts` РіСЂСѓР·РёС‚
+  `app.js` РІ vm СЃ Р·Р°РіР»СѓС€РєРѕР№ DOM.
 - **subagents**: ребёнок с `browser_*` в `tools:` получает
   `PI_BROWSER_ENABLED=1` — расширение browser по умолчанию выключает свои
   инструменты в каждой новой сессии (`/browser on`), и web-verifier оставался

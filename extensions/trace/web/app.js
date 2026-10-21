@@ -355,6 +355,7 @@
 		var AUTOPLAY_TARGET_MS = 5000; // в какой срок уложить реплей
 		var AUTOPLAY_MAX_SPEED = 20000; // кап hyper-скорости автоплея (×)
 		var LIVE_MS = 5 * 60 * 1000; // записи свежее этого — сессия считается живой
+		var selectedTurn = -1; // T# выбранного узла графа; читают и лента, и canvas
 
 		var el = {
 			file: $("file"),
@@ -726,8 +727,7 @@
 				PAD = 14;
 			var zoom = 1,
 				MIN_Z = 0.55,
-				MAX_Z = 2.6,
-				selectedTurn = -1;
+				MAX_Z = 2.6;
 			var graphCv = $("graph"),
 				stripCv = $("strip");
 			var dpr = window.devicePixelRatio || 1;
@@ -823,7 +823,6 @@
 					mh = 44;
 				var mx = PAD,
 					my = PAD;
-				mainRect = { x: mx, y: my, w: mw, h: mh };
 				ctx.fillStyle = COLORS.bg;
 				ctx.strokeStyle = playing || hasRunningChip() ? COLORS.accent : COLORS.line;
 				ctx.lineWidth = 1.5;
