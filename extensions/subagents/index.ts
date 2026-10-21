@@ -663,8 +663,9 @@ export function readSessionModel(): string {
 /**
  * Read the prime toggle file, classified: absent → the policy defaults to
  * on; a valid `{ "enabled": boolean }` carries the mode (missing key counts
- * as on — fail-open; unknown keys ignored); unreadable or invalid JSON →
- * error, the policy keeps its last-known-good mode.
+ * as on — fail-open; unknown keys ignored; a non-boolean "enabled" is not a
+ * valid mode); unreadable file, invalid JSON or a non-boolean "enabled" →
+ * error (with a message), the policy keeps its last-known-good mode.
  */
 export function readPrimeState(path: string): PrimeStateRead {
 	let raw: string;
@@ -672,26 +673,42 @@ export function readPrimeState(path: string): PrimeStateRead {
 		raw = readFileSync(path, "utf8");
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
-		return { kind: "error" };
+		return { kind: "error", message: err instanceof Error ? err.message : String(err) };
 	}
 	try {
-		const parsed = JSON.parse(raw) as { enabled?: unknown };
-		return { kind: "ok", enabled: parsed.enabled !== false };
-	} catch {
-		return { kind: "error" };
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return { kind: "error", message: "prime state file must contain a JSON object" };
+		}
+		const v = (parsed as { enabled?: unknown }).enabled;
+		if (typeof v === "boolean") return { kind: "ok", enabled: v };
+		if (v === undefined) return { kind: "ok", enabled: true };
+		return { kind: "error", message: `"enabled" must be a boolean, got ${JSON.stringify(v)}` };
+	} catch (err) {
+		return { kind: "error", message: err instanceof Error ? err.message : String(err) };
 	}
 }
 
 /**
  * Persist the prime toggle atomically: write a uniquely named tmp file next
  * to the target, then rename over it. Throws to the caller — /prime reports
- * the failure and keeps the current mode.
+ * the failure and keeps the current mode; a failed rename removes its tmp
+ * file best-effort, so debris does not pile up next to the state file.
  */
-export function writePrimeState(path: string, value: { enabled: boolean }): void {
+export function writePrimeState(path: string, enabled: boolean): void {
 	mkdirSync(dirname(path), { recursive: true });
 	const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-	writeFileSync(tmp, `${JSON.stringify(value, null, "\t")}\n`, "utf8");
-	renameSync(tmp, path);
+	writeFileSync(tmp, `${JSON.stringify({ enabled }, null, "\t")}\n`, "utf8");
+	try {
+		renameSync(tmp, path);
+	} catch (err) {
+		try {
+			rmSync(tmp, { force: true });
+		} catch {
+			/* nothing more to clean up */
+		}
+		throw err;
+	}
 }
 
 // ── Extension entry point ──
@@ -716,7 +733,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const prime = createPrimePolicy({
 		agents: () => discoverAgents(latestCtx?.cwd ?? process.cwd(), getAgentDir()),
 		stateFile: join(process.cwd(), ".pi", "prime.json"),
-		model: readSessionModel(),
+		model: () => readSessionModel(),
 		readState: readPrimeState,
 		writeState: writePrimeState,
 	});

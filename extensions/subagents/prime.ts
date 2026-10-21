@@ -75,7 +75,7 @@ const PER_DISPATCH_ALLOWANCE = 3;
 const FILE_TURN_LIMIT = 3;
 
 /** Classification of one read of the toggle file (real impl: index.ts). */
-export type PrimeStateRead = { kind: "absent" } | { kind: "ok"; enabled: boolean } | { kind: "error" };
+export type PrimeStateRead = { kind: "absent" } | { kind: "ok"; enabled: boolean } | { kind: "error"; message: string };
 
 /** Everything the policy needs from the outside world; injected by index.ts. */
 export interface PrimeDeps {
@@ -83,12 +83,12 @@ export interface PrimeDeps {
 	agents: () => Map<string, AgentDef>;
 	/** Toggle file path: `<cwd>/.pi/prime.json`. */
 	stateFile: string;
-	/** Short model label for the banner/widget ("" = default model). */
-	model: string;
-	/** Read the toggle file with absent/ok/error classification. */
+	/** Model label for the banner/widget, re-read per render ("" = default model). */
+	model: () => string | undefined;
+	/** Read the toggle file with absent/ok/error classification (error carries a message). */
 	readState: (path: string) => PrimeStateRead;
 	/** Persist the toggle (tmp+rename); throws on failure. */
-	writeState: (path: string, value: { enabled: boolean }) => void;
+	writeState: (path: string, enabled: boolean) => void;
 }
 
 /** Event/command handlers index.ts subscribes and registers for. */
@@ -123,7 +123,7 @@ function emptyTurn(): Turn {
 export function createPrimePolicy(deps: PrimeDeps): PrimePolicy {
 	const isChild = () => Boolean(process.env.PI_SUBAGENT_SESSION);
 
-	const modelShort = deps.model;
+	const modelShort = (): string => deps.model() ?? "";
 
 	// Toggle state: last-known-good mode (a session starts on) plus whether
 	// the state file is currently unreadable.
@@ -174,7 +174,7 @@ export function createPrimePolicy(deps: PrimeDeps): PrimePolicy {
 	const banner = (): string => {
 		const poolSize = dispatchRows().length;
 		const pool = poolSize > 0 ? `${poolSize} agents` : "no agents";
-		const model = modelShort || "default model";
+		const model = modelShort() || "default model";
 		return `⚡ Prime online — orchestrator mode · ${model} · ${pool} in the pool`;
 	};
 
@@ -182,7 +182,7 @@ export function createPrimePolicy(deps: PrimeDeps): PrimePolicy {
 		const head = stateBroken
 			? "⚡ Prime · unknown (broken .pi/prime.json)"
 			: enabled
-				? `⚡ Prime · ${modelShort || "?"}`
+				? `⚡ Prime · ${modelShort() || "?"}`
 				: "⚡ Prime · off";
 		const capLabel =
 			turn.override === null
@@ -380,8 +380,14 @@ export function createPrimePolicy(deps: PrimeDeps): PrimePolicy {
 					applyState(deps.readState(deps.stateFile));
 					if (ctx.hasUI) {
 						if (arg && arg !== "status") ctx.ui.notify("Usage: /prime on | off | status", "warning");
+						// ADR §2 status: mode, state-file path, what on-mode
+						// enforces, and the toggles — the numbers rendered from
+						// the same constants the enforcement uses.
 						ctx.ui.notify(
-							`Prime is ${primeStateLabel()}. Toggle: /prime on | off. State file: ${deps.stateFile}`,
+							`Prime is ${primeStateLabel()}. State file: ${deps.stateFile}. On: protocol injection, ` +
+								`${BASE_LOOKUP_ALLOWANCE} lookups + ${PER_DISPATCH_ALLOWANCE} per dispatched agent, ` +
+								`${FILE_TURN_LIMIT} distinct files per user turn. ` +
+								"Toggle: /prime on | off · lookup cap: /solo <N> | off",
 							"info",
 						);
 					}
@@ -392,15 +398,18 @@ export function createPrimePolicy(deps: PrimeDeps): PrimePolicy {
 
 				const next = arg === "on";
 				// Write first: a failure throws and the mode stays as it was.
-				deps.writeState(deps.stateFile, { enabled: next });
+				deps.writeState(deps.stateFile, next);
 				enabled = next;
 				stateBroken = false;
 				stateBrokenNotified = false;
 				if (ctx.hasUI) {
 					ctx.ui.notify(
 						next
-							? "Prime on — protocol and solo enforcement active."
-							: "Prime off — protocol and solo enforcement suspended.",
+							? // ADR §2 verbatim: the toggle lands on the next run
+								// (before_agent_start), the current one keeps the old
+								// protocol; off never touches the subagent tools.
+								"Prime on — протокол и solo-enforcement вернутся со следующего хода"
+							: "Prime off — инъекция и блокировки сняты со следующего хода; инструменты субагентов остаются доступны",
 						"info",
 					);
 				}

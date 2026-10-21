@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,6 +15,25 @@ import type { AgentDef } from "../agents.ts";
 import { discoverAgents } from "../agents.ts";
 import { readPrimeState, writePrimeState } from "../index.ts";
 import { createPrimePolicy, type PrimeDeps, type PrimePolicy, type PrimeStateRead } from "../prime.ts";
+
+/**
+ * `test` with PI_SUBAGENT_SESSION neutralized: save → delete → restore in
+ * finally (same pattern as the guards test below). An ambient value — set
+ * in pi child sessions, where this suite runs via npm run smoke — would
+ * flip the policy into its child guard and fail half the file.
+ */
+function test(name: string, fn: () => unknown): void {
+	nodeTest(name, async () => {
+		const saved = process.env.PI_SUBAGENT_SESSION;
+		delete process.env.PI_SUBAGENT_SESSION;
+		try {
+			await fn();
+		} finally {
+			if (saved === undefined) delete process.env.PI_SUBAGENT_SESSION;
+			else process.env.PI_SUBAGENT_SESSION = saved;
+		}
+	});
+}
 
 // ── Fixtures ──
 
@@ -99,22 +118,22 @@ function makeCtx(): {
 function makePolicy(options: { pool?: Map<string, AgentDef>; state?: PrimeStateRead; failWrite?: boolean } = {}): {
 	prime: PrimePolicy;
 	stateBox: { value: PrimeStateRead };
-	writes: Array<{ path: string; value: { enabled: boolean } }>;
+	writes: Array<{ path: string; enabled: boolean }>;
 	ctx: ExtensionContext & ExtensionCommandContext;
 	notifications: Array<{ message: string; type?: string }>;
 	widgets: string[];
 } {
 	const stateBox = { value: options.state ?? ({ kind: "absent" } as PrimeStateRead) };
-	const writes: Array<{ path: string; value: { enabled: boolean } }> = [];
+	const writes: Array<{ path: string; enabled: boolean }> = [];
 	const deps: PrimeDeps = {
 		agents: () => options.pool ?? basePool(),
 		stateFile: "/project/.pi/prime.json",
-		model: "zai/glm-5.3-flash",
+		model: () => "zai/glm-5.3-flash",
 		readState: () => stateBox.value,
-		writeState: (path, value) => {
+		writeState: (path, enabled) => {
 			if (options.failWrite) throw new Error("disk on fire");
-			writes.push({ path, value });
-			stateBox.value = { kind: "ok", enabled: value.enabled };
+			writes.push({ path, enabled });
+			stateBox.value = { kind: "ok", enabled };
 		},
 	};
 	const { ctx, notifications, widgets } = makeCtx();
@@ -145,7 +164,7 @@ function makeAgentsTree(files: { global?: Record<string, string>; project?: Reco
 		deps: {
 			agents: () => discoverAgents(cwd, globalDir),
 			stateFile: join(cwd, ".pi", "prime.json"),
-			model: "",
+			model: () => undefined,
 			readState: () => ({ kind: "absent" }),
 			writeState: () => {},
 		},
@@ -182,7 +201,7 @@ test("toggle: broken state file after off → keeps off, warns once, widget show
 	prime.onPrimeCommand("off", ctx);
 	assert.deepEqual(stateBox.value, { kind: "ok", enabled: false });
 
-	stateBox.value = { kind: "error" };
+	stateBox.value = { kind: "error", message: "EACCES: hand-edited garbage" };
 	// The broken file is observed on the next before_agent_start read; the
 	// warning (ui) fires on the next user message.
 	assert.equal(prime.onBeforeAgentStart(beforeEvent()), undefined);
@@ -197,7 +216,7 @@ test("toggle: broken state file after off → keeps off, warns once, widget show
 });
 
 test("toggle: broken state file at session start (no previous value) → session starts on", () => {
-	const { prime, ctx, notifications } = makePolicy({ state: { kind: "error" } });
+	const { prime, ctx, notifications } = makePolicy({ state: { kind: "error", message: "invalid JSON" } });
 	prime.onSessionStart(ctx);
 	assert.equal(notifications[0]?.type, "warning");
 	const override = prime.onBeforeAgentStart(beforeEvent());
@@ -210,9 +229,9 @@ test("toggle: broken state file at session start (no previous value) → session
 test("toggle: /prime off and /prime on write {enabled} to the state file", () => {
 	const { prime, writes, ctx } = makePolicy();
 	prime.onPrimeCommand("off", ctx);
-	assert.deepEqual(writes, [{ path: "/project/.pi/prime.json", value: { enabled: false } }]);
+	assert.deepEqual(writes, [{ path: "/project/.pi/prime.json", enabled: false }]);
 	prime.onPrimeCommand("on", ctx);
-	assert.deepEqual(writes[1], { path: "/project/.pi/prime.json", value: { enabled: true } });
+	assert.deepEqual(writes[1], { path: "/project/.pi/prime.json", enabled: true });
 	prime.onPrimeCommand("status", ctx);
 	assert.equal(writes.length, 2);
 });
@@ -226,13 +245,45 @@ test("toggle: writeState failure → error notify, mode unchanged (still enforci
 	assert.deepEqual(lookup(prime, "/f3.ts"), { block: true, reason: lookupBlockReason(3) });
 });
 
-test("toggle: /prime status reports state; unknown args get usage", () => {
+test("toggle: /prime status reports mode, state file, on-effects, toggles; unknown args get usage", () => {
 	const { prime, ctx, notifications } = makePolicy({ state: { kind: "ok", enabled: false } });
 	prime.onPrimeCommand("status", ctx);
-	assert.ok(notifications.some((n) => n.message.includes("Prime is off")));
+	const status = notifications.find((n) => n.message.includes("Prime is off"))?.message ?? "";
+	assert.ok(status.includes("/project/.pi/prime.json"));
+	assert.ok(status.includes("3 lookups + 3 per dispatched agent"));
+	assert.ok(status.includes("3 distinct files per user turn"));
+	assert.ok(status.includes("/prime on | off"));
+	assert.ok(status.includes("/solo"));
 	notifications.length = 0;
 	prime.onPrimeCommand("wat", ctx);
 	assert.ok(notifications.some((n) => n.message.includes("Usage: /prime on | off | status")));
+});
+
+test("toggle: non-boolean enabled (hand-edited) → broken file, last-known-good, warns once", () => {
+	const { prime, stateBox, ctx, notifications } = makePolicy({ state: { kind: "ok", enabled: false } });
+	prime.onBeforeAgentStart(beforeEvent());
+	// readPrimeState reports {"enabled":"false"|0|null} as an error, not as on.
+	stateBox.value = { kind: "error", message: '"enabled" must be a boolean, got "false"' };
+	assert.equal(prime.onBeforeAgentStart(beforeEvent()), undefined);
+	prime.onUserMessageStart(userMessage(), ctx);
+	const warnings = notifications.filter((n) => n.message.includes("unreadable"));
+	assert.equal(warnings.length, 1);
+	assert.equal(warnings[0]?.type, "warning");
+	// Last-known-good off: enforcement stays lifted.
+	assert.equal(lookup(prime, "/x.ts"), undefined);
+});
+
+test("toggle: /prime on|off notify the next-turn timing; off reassures about subagent tools", () => {
+	const { prime, ctx, notifications } = makePolicy();
+	prime.onPrimeCommand("off", ctx);
+	prime.onPrimeCommand("on", ctx);
+	assert.deepEqual(
+		notifications.map((n) => n.message),
+		[
+			"Prime off — инъекция и блокировки сняты со следующего хода; инструменты субагентов остаются доступны",
+			"Prime on — протокол и solo-enforcement вернутся со следующего хода",
+		],
+	);
 });
 
 test("toggle: /solo in off mode → hint, state untouched", () => {
@@ -484,19 +535,26 @@ test("guards: selectedTools without subagent → not armed", () => {
 
 // ── Real state-file implementations (index.ts) ──
 
-test("readPrimeState: absent, enabled:false, missing key → on, unknown keys ignored, invalid JSON → error", () => {
+test("readPrimeState: absent, enabled:false, missing key → on, unknown keys ignored; invalid JSON and non-boolean enabled → error", () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-prime-state-test-"));
 	const file = join(dir, "prime.json");
 	try {
 		assert.deepEqual(readPrimeState(file), { kind: "absent" });
-		writePrimeState(file, { enabled: false });
+		writePrimeState(file, false);
 		assert.deepEqual(readPrimeState(file), { kind: "ok", enabled: false });
 		writeFileSync(file, '{"enabled":true,"junk":"x"}', "utf8");
 		assert.deepEqual(readPrimeState(file), { kind: "ok", enabled: true });
 		writeFileSync(file, '{"junk":1}', "utf8");
 		assert.deepEqual(readPrimeState(file), { kind: "ok", enabled: true });
 		writeFileSync(file, "not json at all", "utf8");
-		assert.deepEqual(readPrimeState(file), { kind: "error" });
+		assert.equal(readPrimeState(file).kind, "error");
+		// A hand-edited truthy-but-not-boolean value is not a mode: it must
+		// not silently read as on (last-known-good branch instead).
+		for (const garbage of ['{"enabled":"false"}', '{"enabled":0}', '{"enabled":null}', "42"]) {
+			writeFileSync(file, garbage, "utf8");
+			const read = readPrimeState(file);
+			assert.ok(read.kind === "error" && typeof read.message === "string", garbage);
+		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -509,8 +567,8 @@ test("writePrimeState: two atomic writes — no tmp debris, last value wins", ()
 	const dir = mkdtempSync(join(tmpdir(), "pi-prime-state-test-"));
 	const file = join(dir, "sub", "prime.json");
 	try {
-		writePrimeState(file, { enabled: true });
-		writePrimeState(file, { enabled: false });
+		writePrimeState(file, true);
+		writePrimeState(file, false);
 		assert.deepEqual(readPrimeState(file), { kind: "ok", enabled: false });
 		assert.deepEqual(
 			readdirSync(dirname(file)).filter((name) => name.endsWith(".tmp")),
