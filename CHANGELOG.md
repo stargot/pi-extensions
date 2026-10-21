@@ -29,6 +29,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Changed
 
+- **subagents**: модель убрана из prime-баннера и виджета — on-режим теперь
+  рисует просто `⚡ Prime`, а баннер — `⚡ Prime online — orchestrator mode ·
+  <pool> in the pool` без сегмента модели: pi показывает модель нативно в
+  статус-баре, дубль не нужен (варианты `off` и `unknown (broken
+  .pi/prime.json)` не менялись).
 - **prime-protocol**: child-detect по append сравнивает его окончание с телом
   агента, а не точное совпадение — общий промпт детей перед identity его не
   ломает.

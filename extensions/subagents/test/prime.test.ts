@@ -128,7 +128,6 @@ function makePolicy(options: { pool?: Map<string, AgentDef>; state?: PrimeStateR
 	const deps: PrimeDeps = {
 		agents: () => options.pool ?? basePool(),
 		stateFile: "/project/.pi/prime.json",
-		model: () => "zai/glm-5.3-flash",
 		readState: () => stateBox.value,
 		writeState: (path, enabled) => {
 			if (options.failWrite) throw new Error("disk on fire");
@@ -164,7 +163,6 @@ function makeAgentsTree(files: { global?: Record<string, string>; project?: Reco
 		deps: {
 			agents: () => discoverAgents(cwd, globalDir),
 			stateFile: join(cwd, ".pi", "prime.json"),
-			model: () => undefined,
 			readState: () => ({ kind: "absent" }),
 			writeState: () => {},
 		},
@@ -181,7 +179,7 @@ test("toggle: absent file → on, silently (only the first-message banner)", () 
 	prime.onUserMessageStart(userMessage(), ctx);
 	assert.deepEqual(
 		notifications.map((n) => n.message),
-		["⚡ Prime online — orchestrator mode · zai/glm-5.3-flash · 2 agents in the pool"],
+		["⚡ Prime online — orchestrator mode · 2 agents in the pool"],
 	);
 });
 

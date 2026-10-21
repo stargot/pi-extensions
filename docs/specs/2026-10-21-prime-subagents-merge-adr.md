@@ -310,8 +310,9 @@ trace) не меняются — см. ADR-7.
 ### ADR-7 (R7): on-режим поведенчески идентичен текущему
 
 «Идентично» означает: guard'ы arming, моменты и причины блокировок, формулы
-счётчиков, reset-точки, сообщения блокировок, banner/виджет-факты (включая
-модель в banner — паритет сохраняется через инжектируемый `PrimeDeps.model`,
+счётчиков, reset-точки, сообщения блокировок, banner/виджет-факты (модель в
+banner/виджете — убрана 2026-10-21 после e2e: pi показывает модель нативно в
+статус-баре, дубль снят; раньше — паритет через инжектируемый `PrimeDeps.model`,
 §5), отсутствие trace-записей у prime. Единственные санкционированные дельты —
 из R3: текст таблицы (без Model, из объединённого пула) и, как следствие, число
 строк в ней.
@@ -385,9 +386,10 @@ export interface AgentDef {
 export interface PrimeDeps {
 	agents: () => Map<string, AgentDef>; // лениво: свежий пул на каждый before_agent_start
 	stateFile: string;                   // <cwd>/.pi/prime.json
-	/** источник модели для banner/виджета: index.ts передаёт эквивалент
-	 *  readSessionModel() — паритет banner `⚡ Prime online — … · ${model}`. */
-	model: () => string | undefined;
+	// model: () => string | undefined — УБРАНО 2026-10-21 после e2e: pi
+	// показывает модель нативно в статус-баре, дубль в banner/виджете снят
+	// (раньше: источник модели — readSessionModel(), паритет banner
+	// `⚡ Prime online — … · ${model}`).
 	/** injectable fs для тестов (по образцу dependency-free registry.ts). */
 	readState: (path: string) =>
 		| { kind: "ok"; enabled: boolean } // ключ прочитан

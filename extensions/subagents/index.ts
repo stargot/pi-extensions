@@ -645,22 +645,6 @@ async function doResume(
 // ── Prime toggle persistence (<cwd>/.pi/prime.json) ──
 
 /**
- * Short model label for the prime banner/widget — `defaultModel` from the
- * global settings.json, last path segment. "" = default model.
- */
-export function readSessionModel(): string {
-	try {
-		const raw = readFileSync(join(getAgentDir(), "settings.json"), "utf8").trim();
-		if (!raw) return "";
-		const parsed = JSON.parse(raw) as { defaultModel?: string };
-		const model = parsed.defaultModel?.trim();
-		return model ? (model.split("/").pop() ?? "") : "";
-	} catch {
-		return "";
-	}
-}
-
-/**
  * Read the prime toggle file, classified: absent → the policy defaults to
  * on; a valid `{ "enabled": boolean }` carries the mode (missing key counts
  * as on — fail-open; unknown keys ignored; a non-boolean "enabled" is not a
@@ -733,7 +717,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const prime = createPrimePolicy({
 		agents: () => discoverAgents(latestCtx?.cwd ?? process.cwd(), getAgentDir()),
 		stateFile: join(process.cwd(), ".pi", "prime.json"),
-		model: () => readSessionModel(),
 		readState: readPrimeState,
 		writeState: writePrimeState,
 	});

@@ -34,10 +34,10 @@
  * identity) → selectedTools → armed — and only then the toggle. Children
  * are never injected and never blocked, toggle on or off.
  *
- * Boundaries: pi is imported for types only; no direct fs — the pool, the
- * model label and the state-file read/write arrive via PrimeDeps (real
- * implementations live in index.ts, as do the pi subscriptions/commands
- * that delegate here).
+ * Boundaries: pi is imported for types only; no direct fs — the pool and
+ * the state-file read/write arrive via PrimeDeps (real implementations
+ * live in index.ts, as do the pi subscriptions/commands that delegate
+ * here).
  */
 import { basename } from "node:path";
 import type {
@@ -83,8 +83,6 @@ export interface PrimeDeps {
 	agents: () => Map<string, AgentDef>;
 	/** Toggle file path: `<cwd>/.pi/prime.json`. */
 	stateFile: string;
-	/** Model label for the banner/widget, re-read per render ("" = default model). */
-	model: () => string | undefined;
 	/** Read the toggle file with absent/ok/error classification (error carries a message). */
 	readState: (path: string) => PrimeStateRead;
 	/** Persist the toggle (tmp+rename); throws on failure. */
@@ -122,8 +120,6 @@ function emptyTurn(): Turn {
 
 export function createPrimePolicy(deps: PrimeDeps): PrimePolicy {
 	const isChild = () => Boolean(process.env.PI_SUBAGENT_SESSION);
-
-	const modelShort = (): string => deps.model() ?? "";
 
 	// Toggle state: last-known-good mode (a session starts on) plus whether
 	// the state file is currently unreadable.
@@ -174,16 +170,11 @@ export function createPrimePolicy(deps: PrimeDeps): PrimePolicy {
 	const banner = (): string => {
 		const poolSize = dispatchRows().length;
 		const pool = poolSize > 0 ? `${poolSize} agents` : "no agents";
-		const model = modelShort() || "default model";
-		return `⚡ Prime online — orchestrator mode · ${model} · ${pool} in the pool`;
+		return `⚡ Prime online — orchestrator mode · ${pool} in the pool`;
 	};
 
 	const statusLine = (): string => {
-		const head = stateBroken
-			? "⚡ Prime · unknown (broken .pi/prime.json)"
-			: enabled
-				? `⚡ Prime · ${modelShort() || "?"}`
-				: "⚡ Prime · off";
+		const head = stateBroken ? "⚡ Prime · unknown (broken .pi/prime.json)" : enabled ? "⚡ Prime" : "⚡ Prime · off";
 		const capLabel =
 			turn.override === null
 				? String(lookupAllowance())
