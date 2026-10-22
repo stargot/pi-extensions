@@ -3,9 +3,10 @@
  *
  *   node web/serve.ts [--file <session.jsonl>] [--port 8787] [--no-open]
  *
- * Раздаёт index.html и app.js из этой папки, ядро trace — по /core/<имя>.ts (типы
+ * Раздаёт index.html и модули вьюера из этой папки, ядро trace — по /core/<имя>.ts (типы
  * стёрты, браузер грузит его как ES-модуль), файл сессии — по /session.jsonl
  * (?from=<байт> — только дописанное после offset: живой хвост вкладки).
+ * GET /sessions — 40 последних сессий (без субагентских) для выбора в шапке.
  * Без --file берётся самая свежая сессия из ~/.pi/agent/sessions (или $PI_CODING_AGENT_DIR).
  * POST /load {"file": "..."} переключает файл без перезапуска; запросы с заголовком Origin
  * отвергаются — чужая страница в браузере не может дёргать этот эндпоинт.
@@ -24,7 +25,8 @@ import {
 	statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolveSessionsDir } from "../../shared/sessions.ts";
+import { isNestedSessionFile } from "../../shared/session-index.ts";
+import { discoverSessionFiles, resolveSessionsDir } from "../../shared/sessions.ts";
 import { isLoopbackHost } from "../../shared/loopback.ts";
 import { stripTypeScriptTypes } from "node:module";
 import { basename, dirname, join } from "node:path";
@@ -40,6 +42,9 @@ const MIME: Record<string, string> = {
 	".js": "text/javascript; charset=utf-8",
 	".jsonl": "text/plain; charset=utf-8",
 };
+
+/** Статика вьюера: страница и её ES-модули. */
+const STATIC = new Set(["index.html", "main.js", "render.js", "tail.js"]);
 
 export interface ServeOptions {
 	/** Абсолютный путь к файлу сессии. Без него /session.jsonl отвечает 404. */
@@ -157,6 +162,11 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		return;
 	}
 
+	if (url.pathname === "/sessions") {
+		send(res, 200, JSON.stringify({ sessions: recentSessions() }), "application/json");
+		return;
+	}
+
 	if (url.pathname === "/session.jsonl") {
 		const file = state.file;
 		if (!file || !existsSync(file)) {
@@ -191,16 +201,16 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		return;
 	}
 
-	// Статика: / → index.html, /app.js
+	// Статика: / → index.html, модули вьюера
 	const rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
-	if (rel !== "index.html" && rel !== "app.js") {
+	if (!STATIC.has(rel)) {
 		send(res, 404, "not found");
 		return;
 	}
 	try {
 		// Читаем до writeHead: при ошибке чтения заголовки ещё не ушли и 404 отправится.
 		const body = readFileSync(join(webDir, rel));
-		// no-cache: после обновления trace вкладка не держит старые index.html/app.js
+		// no-cache: после обновления trace вкладка не держит старые index.html и модули
 		res.writeHead(200, {
 			"content-type": MIME[rel.slice(rel.lastIndexOf("."))] ?? "text/plain",
 			"cache-control": "no-cache",
@@ -209,6 +219,50 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 	} catch {
 		send(res, 404, "not found");
 	}
+}
+
+export interface SessionListItem {
+	file: string;
+	mtime: number;
+	project: string;
+	/** Имя из /name или первый промпт. */
+	title: string;
+}
+
+/** Последние сессии верхнего уровня: заголовок и имя — из первых 64 КБ файла. */
+export function recentSessions(root = sessionsRoot(), limit = 40): SessionListItem[] {
+	const files = discoverSessionFiles(root)
+		.filter((f) => !isNestedSessionFile(f.slice(root.length)))
+		.flatMap((file) => {
+			try {
+				return [{ file, mtime: statSync(file).mtimeMs }];
+			} catch {
+				return [];
+			}
+		})
+		.sort((a, b) => b.mtime - a.mtime)
+		.slice(0, limit);
+	return files.map(({ file, mtime }) => {
+		let project = "";
+		let title = "";
+		const head = readRange(file, 0, Math.min(64 * 1024, statSync(file).size)).toString("utf8");
+		for (const line of head.split("\n")) {
+			let e: any;
+			try {
+				e = JSON.parse(line);
+			} catch {
+				continue; // обрезанная последняя строка
+			}
+			if (e.type === "session" && typeof e.cwd === "string") project = basename(e.cwd);
+			else if (e.type === "session_info" && e.name) title = String(e.name);
+			else if (!title && e.type === "message" && e.message?.role === "user") {
+				const c = e.message.content;
+				const text = typeof c === "string" ? c : Array.isArray(c) ? c.map((b: any) => b?.text ?? "").join(" ") : "";
+				title = text.replace(/\s+/g, " ").trim().slice(0, 60);
+			}
+		}
+		return { file, mtime, project, title: title || basename(file) };
+	});
 }
 
 const stripped = new Map<string, { mtimeMs: number; js: string }>();

@@ -34,3 +34,30 @@ export function entryEndMs(e: any, fallback: number): number {
 	const p = Date.parse(e?.timestamp ?? "");
 	return Number.isFinite(p) && p > fallback ? p : fallback;
 }
+
+export function fmtK(n: number): string {
+	if (!Number.isFinite(n) || n === 0) return "0";
+	if (n < 1000) return String(Math.round(n));
+	if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+	return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+export function fmtDur(ms?: number): string {
+	if (ms === undefined || !Number.isFinite(ms)) return "";
+	if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+	const s = ms / 1000;
+	if (s < 60) return `${s.toFixed(1)}s`;
+	if (s < 3600) return `${Math.floor(s / 60)}m${Math.round(s % 60)}s`;
+	return `${Math.floor(s / 3600)}h${Math.round((s % 3600) / 60)}m`;
+}
+
+export function fmtClock(ms: number): string {
+	const d = new Date(ms);
+	const p = (x: number) => String(x).padStart(2, "0");
+	return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+export function fmtMoney(c: number): string {
+	if (!Number.isFinite(c) || c === 0) return "";
+	return c < 0.01 ? `$${c.toFixed(4)}` : `$${c.toFixed(2)}`;
+}
