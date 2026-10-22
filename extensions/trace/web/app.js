@@ -446,10 +446,59 @@
 			return out;
 		}
 
+		// Хвост с сервера: байтовый offset уже прочитанного, незавершённая последняя
+		// строка и потоковый декодер (UTF-8-символ может разрезаться границей куска).
+		var tail = { offset: 0, pending: "", decoder: null };
+		function resetTail() {
+			tail = { offset: 0, pending: "", decoder: new TextDecoder() };
+		}
+		/** Полные строки из очередного куска байт; хвост без \n ждёт следующего опроса. */
+		function tailEntries(buf) {
+			tail.offset += buf.byteLength;
+			var text = tail.pending + tail.decoder.decode(new Uint8Array(buf), { stream: true });
+			var cut = text.lastIndexOf("\n");
+			tail.pending = text.slice(cut + 1);
+			return parseLines(text.slice(0, cut + 1));
+		}
+		/** Перечитать сессию с сервера целиком (первая загрузка, смена файла). */
+		function reloadServed() {
+			resetTail();
+			return fetch("session.jsonl?from=0", { cache: "no-store" }).then(function (r) {
+				if (!r.ok) return false;
+				var name = r.headers.get("x-session-file");
+				return r.arrayBuffer().then(function (buf) {
+					fileName = name ? decodeURIComponent(name) : "session.jsonl";
+					fileHandle = null;
+					servedMode = true;
+					load(tailEntries(buf));
+					return true;
+				});
+			});
+		}
+		/** Опрос: сервер отдаёт только байты после offset. */
+		function pollServed() {
+			return fetch("session.jsonl?from=" + tail.offset, { cache: "no-store" }).then(function (r) {
+				if (!r.ok) return;
+				var name = r.headers.get("x-session-file");
+				// Сервер переключили на другой файл (/load) или файл пересоздали короче
+				// прочитанного (сервер отдал его с нуля) — инкремент невозможен.
+				var moved = r.headers.get("x-session-from") !== String(tail.offset);
+				if (moved || (name && decodeURIComponent(name) !== fileName)) return reloadServed();
+				return r.arrayBuffer().then(function (buf) {
+					appendEntries(tailEntries(buf));
+				});
+			});
+		}
+
+		/** Перечитанный целиком File: в ленту идут только новые записи. */
 		function applyGrowth(parsed) {
-			if (parsed.length <= entries.length) return;
+			appendEntries(parsed.slice(entries.length));
+		}
+
+		function appendEntries(added) {
+			if (!added.length) return;
 			var atEnd = fedCount >= entries.length;
-			for (var i = entries.length; i < parsed.length; i++) entries.push(parsed[i]);
+			for (var i = 0; i < added.length; i++) entries.push(added[i]);
 			// Шкала ползунка растёт вместе с живой сессией, иначе он упирается в край
 			el.slider.max = String(Math.max(1, entries[entries.length - 1].ms - firstMs));
 			if (atEnd) {
@@ -498,16 +547,9 @@
 						/* файл мог исчезнуть — не страшно */
 					});
 			} else if (servedMode) {
-				fetch("session.jsonl", { cache: "no-store" })
-					.then(function (r) {
-						return r.ok ? r.text() : null;
-					})
-					.then(function (t) {
-						if (t) applyGrowth(parseLines(t));
-					})
-					.catch(function () {
-						/* сервер могли остановить */
-					});
+				pollServed().catch(function () {
+					/* сервер могли остановить */
+				});
 			}
 		}, 2000);
 		// --- живые task_batch-воркеры (глобальный индекс subagents) ---
@@ -576,19 +618,10 @@
 			// Переключаем сервер на сессию воркера и подтягиваем её с хвостом.
 			fetch("load", { method: "POST", body: JSON.stringify({ file: w.sessionFile }) })
 				.then(function (r) {
-					if (!r.ok) return null;
-					fileName = w.sessionFile.split(/[\\/]/).pop();
-					fileHandle = null;
-					servedMode = true;
-					return fetch("session.jsonl", { cache: "no-store" }).then(function (r2) {
-						return r2.ok ? r2.text() : null;
-					});
+					return r.ok ? reloadServed() : false;
 				})
-				.then(function (t) {
-					if (t) {
-						load(parseLines(t));
-						el.end.onclick();
-					}
+				.then(function (ok) {
+					if (ok) el.end.onclick();
 				});
 		};
 		setInterval(fetchWorkers, 5000);
@@ -678,21 +711,15 @@
 
 		// Автозагрузка с сервера: web/serve.ts отдаёт сессию по относительному /session.jsonl.
 		// С file:// fetch падает — молча остаёмся в режиме drag&drop.
-		fetch("session.jsonl", { cache: "no-store" })
-			.then(function (r) {
-				if (!r.ok) return null;
-				return r.text().then(function (t) {
-					var name = r.headers.get("x-session-file");
-					fileName = name ? decodeURIComponent(name) : "session.jsonl";
-					servedMode = true;
-					load(parseLines(t));
-					// #end — открыть сразу с хвоста сессии; иначе — автоплей реплея
-					if (location.hash === "#end" && entries.length) {
-						seekTo(entries[entries.length - 1].ms);
-					} else {
-						startAutoplay();
-					}
-				});
+		reloadServed()
+			.then(function (ok) {
+				if (!ok) return;
+				// #end — открыть сразу с хвоста сессии; иначе — автоплей реплея
+				if (location.hash === "#end" && entries.length) {
+					seekTo(entries[entries.length - 1].ms);
+				} else {
+					startAutoplay();
+				}
 			})
 			.catch(function () {
 				/* file:// — drag&drop */

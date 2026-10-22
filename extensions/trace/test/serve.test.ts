@@ -161,3 +161,49 @@ test("ServeHandle.setFile switches the session; close() does not wait for keep-a
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("/session.jsonl?from= returns only the bytes after the offset", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-from-"));
+	try {
+		const a = join(dir, "a.jsonl");
+		writeFileSync(a, '{"n":1}\n{"n":"ё"}\n');
+		const handle = await startServer({ file: a, port: 0 });
+		try {
+			const tail = await fetch(`${handle.url}session.jsonl?from=8`);
+			assert.equal(tail.headers.get("x-session-from"), "8");
+			assert.equal(await tail.text(), '{"n":"ё"}\n');
+
+			// offset за концом (файл пересоздан короче) — весь файл с нуля
+			const reset = await fetch(`${handle.url}session.jsonl?from=999`);
+			assert.equal(reset.headers.get("x-session-from"), "0");
+			assert.equal(await reset.text(), '{"n":1}\n{"n":"ё"}\n');
+		} finally {
+			await handle.close();
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("/session.jsonl?from= returns only the bytes after the offset", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-from-"));
+	try {
+		const a = join(dir, "a.jsonl");
+		writeFileSync(a, '{"n":1}\n{"n":"ё"}\n');
+		const handle = await startServer({ file: a, port: 0 });
+		try {
+			const tail = await fetch(`${handle.url}session.jsonl?from=8`);
+			assert.equal(tail.headers.get("x-session-from"), "8");
+			assert.equal(await tail.text(), '{"n":"ё"}\n');
+
+			// offset за концом (файл пересоздан короче) — весь файл с нуля
+			const reset = await fetch(`${handle.url}session.jsonl?from=999`);
+			assert.equal(reset.headers.get("x-session-from"), "0");
+			assert.equal(await reset.text(), '{"n":1}\n{"n":"ё"}\n');
+		} finally {
+			await handle.close();
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

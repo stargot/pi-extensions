@@ -3,7 +3,8 @@
  *
  *   node web/serve.ts [--file <session.jsonl>] [--port 8787] [--no-open]
  *
- * Раздаёт index.html и app.js из этой папки, файл сессии — по /session.jsonl.
+ * Раздаёт index.html и app.js из этой папки, файл сессии — по /session.jsonl
+ * (?from=<байт> — только дописанное после offset: живой хвост вкладки).
  * Без --file берётся самая свежая сессия из ~/.pi/agent/sessions (или $PI_CODING_AGENT_DIR).
  * POST /load {"file": "..."} переключает файл без перезапуска; запросы с заголовком Origin
  * отвергаются — чужая страница в браузере не может дёргать этот эндпоинт.
@@ -11,7 +12,16 @@
  * Ctrl+C — остановка.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	openSync,
+	readFileSync,
+	readdirSync,
+	readSync,
+	statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolveSessionsDir } from "../../shared/sessions.ts";
 import { isLoopbackHost } from "../../shared/loopback.ts";
@@ -150,12 +160,19 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 			send(res, 404, "нет файла сессии — запустите serve.ts с --file или перетащите .jsonl на страницу");
 			return;
 		}
+		// ?from=<байт> — только дописанное после уже прочитанного (живой хвост вкладки).
+		// from за концом файла (пересоздан короче) — отдаём с нуля; клиент видит это
+		// по x-session-from и перечитывает сессию целиком.
+		const size = statSync(file).size;
+		const from = Number(url.searchParams.get("from") ?? 0);
+		const start = Number.isInteger(from) && from >= 0 && from <= size ? from : 0;
 		res.writeHead(200, {
 			"content-type": MIME[".jsonl"],
 			"x-session-file": encodeURIComponent(basename(file)),
+			"x-session-from": String(start),
 			"cache-control": "no-store",
 		});
-		res.end(readFileSync(file));
+		res.end(readRange(file, start, size));
 		return;
 	}
 
@@ -176,6 +193,23 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		res.end(body);
 	} catch {
 		send(res, 404, "not found");
+	}
+}
+
+/** Байты [start, end) файла — без чтения всей сессии ради хвоста. */
+function readRange(file: string, start: number, end: number): Buffer {
+	const buf = Buffer.alloc(Math.max(0, end - start));
+	const fd = openSync(file, "r");
+	try {
+		let got = 0;
+		while (got < buf.length) {
+			const n = readSync(fd, buf, got, buf.length - got, start + got);
+			if (n === 0) break; // файл укоротили между stat и read
+			got += n;
+		}
+		return buf.subarray(0, got);
+	} finally {
+		closeSync(fd);
 	}
 }
 
