@@ -14,6 +14,7 @@ import {
 	spawnJob,
 	verifyKillTarget,
 } from "../runner.ts";
+import { rmTemp } from "./rm-temp.ts";
 
 // pwsh — platform requirement of the package (Windows 11 + pwsh); CI runs on
 // windows-latest. Everywhere else these fixture tests just skip.
@@ -106,7 +107,7 @@ test("readLogTail: missing log → exists=false, empty tail", () => {
 		assert.equal(r.truncated, false);
 		assert.equal(r.totalChars, 0);
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -127,7 +128,7 @@ test("spawnJob: failed spawn (async error) closes the log fd — no leak per fai
 			assert.ok(!fds.some((f) => readFileSync(join("/proc/self/fd", f)).toString().includes("output.log")));
 		}
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -140,7 +141,7 @@ test("spawnJob: synchronous spawn throw (null byte in command) closes the log fd
 			rmSync(logFile); // бросил бы EBUSY/EPERM, будь fd всё ещё открыт
 		}
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -154,7 +155,7 @@ test("spawnJob fixture echo: durable log receives stdout, exit code 0", pwshOnly
 		assert.ok(existsSync(logFile), "log file pre-created by spawn");
 		assert.ok(readLogText(logFile).includes("hello-bg"), "stdout lands in the durable log");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -166,7 +167,7 @@ test("spawnJob fixture exit-code: non-zero exit propagates through the pwsh wrap
 		const code = await new Promise<number | null>((resolve) => child.once("exit", (c) => resolve(c)));
 		assert.notEqual(code, 0, "terminating pwsh error → non-zero exit");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -178,7 +179,7 @@ test("spawnJob fixture native exit code: cmd /c exit 3 → job exit 3", pwshOnly
 		const code = await new Promise<number | null>((resolve) => child.once("exit", (c) => resolve(c)));
 		assert.equal(code, 3, "native command exit code propagates (exit $LASTEXITCODE)");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -210,7 +211,7 @@ test("spawnJob fixture sleep + killProcessTree: tree dies, log tail honest", pws
 		assert.equal(tail.exists, true);
 		assert.ok(tail.text.includes("started"), "durable log survives the kill");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -235,7 +236,7 @@ test("readLogTail: truncation marker on a big log", pwshOnly, async () => {
 		assert.ok(tail.text.includes("TAIL-MARKER"), "tail keeps the end");
 		assert.ok(tail.text.includes("output.log"), "marker names the full log");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -262,6 +263,6 @@ test("readLogTail: multibyte log — window split is repaired, no U+FFFD at the 
 			`no fabricated replacement char at window start, got: ${JSON.stringify(body.slice(0, 3))}`,
 		);
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });

@@ -7,13 +7,14 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import bgJobs from "../index.ts";
 import { readRegistry } from "../registry.ts";
+import { rmTemp } from "./rm-temp.ts";
 
 const havePwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "$true"], { stdio: "ignore" }).status === 0;
 
@@ -152,7 +153,7 @@ test("factory registers the documented surface without touching disk", () => {
 		// Контракт фабрики: ничего не спавнит и не читает диск сверх импортов.
 		assert.equal(existsSync(join(dir, ".pi", "jobs")), false, "no registry dir before session_start");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -204,7 +205,7 @@ test("bg_run happy path: registry row, terminal steer delivery, trace card", { s
 		assert.equal(trace.data.exitCode, 0);
 		assert.ok(typeof trace.data.durationSec === "number");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -228,7 +229,7 @@ test("user-origin job notifies, never wakes the model; widget clears after /jobs
 		await getCommand(fake, "jobs").handler("", fake.ctx);
 		assert.equal(fake.widget, undefined);
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -275,7 +276,7 @@ test("bg_status / bg_logs / bg_kill cover unknown-id errors and kill path", { sk
 			/already finished/,
 		);
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -328,7 +329,7 @@ test("bg_kill on an npm-wrapped tree kills the whole tree (port-style fixture)",
 			return (check.stdout ?? "").trim() === "dead";
 		});
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -422,7 +423,7 @@ test("session_start adopts the registry: dead pid → orphaned; quit kills, relo
 				return !isPidAlive(adopteePid);
 			});
 		}
-		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		rmTemp(dir);
 	}
 });
 
@@ -445,7 +446,7 @@ test("timeout: watcher settles an over-budget job", { skip: !havePwsh }, async (
 		const { isPidAlive } = await import("../runner.ts");
 		await until(() => !isPidAlive(started.details.pid), 5000);
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -471,11 +472,15 @@ test("timeoutSeconds 0/negative clamps to 1s, not an instant kill", { skip: !hav
 			fake.ctx,
 		);
 		assert.equal(negative.details.timeoutSeconds, 1, "negative clamps to 1");
-		const id = zero.details.id;
-		await until(() => readRegistry(dir).jobs[id]?.status === "completed");
-		assert.equal(readRegistry(dir).jobs[id]?.status, "completed", "job ran to completion, not killed at spawn");
+		// Ждать ОБА джоба реестра: пока «negative» жив, его pwsh держит cwd-хэндл
+		// и финальная уборка temp-каталога падает с EPERM (Windows).
+		await until(() => Object.values(readRegistry(dir).jobs).every((j) => j.status === "completed"));
+		assert.ok(
+			Object.values(readRegistry(dir).jobs).every((j) => j.status === "completed"),
+			"jobs ran to completion, not killed at spawn",
+		);
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmTemp(dir);
 	}
 });
 
@@ -515,7 +520,7 @@ test("/bg name separator: only ' :: ' with spaces splits; bare :: stays in the c
 		} catch {
 			// Best effort.
 		}
-		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		rmTemp(dir);
 	}
 });
 
@@ -582,7 +587,7 @@ test("orphaned survivor: resurrects to running on session_start, killable via bg
 			killProcessTree(survivorPid);
 			await until(() => !isPidAlive(survivorPid));
 		}
-		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		rmTemp(dir);
 	}
 });
 
@@ -648,7 +653,7 @@ test("session_shutdown(quit): settles only this session's jobs; foreign session 
 			if (pid != null && isPidAlive(pid)) killProcessTree(pid);
 		}
 		await until(() => pids.every((p) => !isPidAlive(p)), 5000);
-		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		rmTemp(dir);
 	}
 });
 
@@ -714,6 +719,6 @@ test("bg_run: soft limit on running jobs — refuses with count/ids/hint, admits
 		assert.match(ok.content[0]?.text ?? "", /Background job started\./);
 		await until(() => readRegistry(dir).jobs[ok.details.id]?.status === "completed");
 	} finally {
-		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		rmTemp(dir);
 	}
 });
