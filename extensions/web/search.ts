@@ -1,10 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { isAbort } from "./http.ts";
 import { ddgProvider } from "./providers/ddg.ts";
-import { langSearchProvider } from "./providers/langsearch.ts";
-import { decideProvider, type ProviderName } from "./providers/select.ts";
 import { buildSearchQuery, clampCount, formatResults, type SearchResult, type StructuredSearchArgs } from "./query.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -12,7 +9,7 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search the web. DuckDuckGo is the default provider; set PI_WEB_SEARCH_PROVIDER=langsearch plus LANGSEARCH_API_KEY to use LangSearch instead. Build one search per call from a base query string, exact phrases, exclusions, and an optional site. Returns title, URL, and snippet.",
+			"Search the web via DuckDuckGo. Build one search per call from a base query string, exact phrases, exclusions, and an optional site. Returns title, URL, and snippet.",
 		promptSnippet:
 			"Search the web via a query string plus optional exactPhrases, excludeTerms, and site. Use one tool call per search angle.",
 		promptGuidelines: [
@@ -55,27 +52,7 @@ export default function (pi: ExtensionAPI) {
 			const built = buildSearchQuery(params);
 			const startedAt = Date.now();
 
-			const decision = decideProvider(process.env);
-			let providerUsed: ProviderName = decision.name;
-			const fallbackReasons: string[] = [];
-			if (decision.fallbackReason) fallbackReasons.push(decision.fallbackReason);
-
-			let results: SearchResult[];
-			if (providerUsed === "langsearch") {
-				try {
-					results = await langSearchProvider.search(built, { signal, count });
-				} catch (error) {
-					if (isAbort(error) || (error as { transient?: boolean })?.transient !== true) {
-						throw error;
-					}
-					providerUsed = "ddg";
-					const message = error instanceof Error ? error.message : String(error);
-					fallbackReasons.push(`langsearch failed: ${message}; fell back to DuckDuckGo`);
-					results = await ddgProvider.search(built, { signal, count });
-				}
-			} else {
-				results = await ddgProvider.search(built, { signal, count });
-			}
+			const results: SearchResult[] = await ddgProvider.search(built, { signal, count });
 
 			return {
 				content: [
@@ -92,8 +69,7 @@ export default function (pi: ExtensionAPI) {
 					site: built.site,
 					resultCount: results.length,
 					durationMs: Date.now() - startedAt,
-					providerUsed,
-					...(fallbackReasons.length > 0 ? { fallbackReason: fallbackReasons.join("; ") } : {}),
+					providerUsed: "ddg",
 				},
 			};
 		},

@@ -104,7 +104,6 @@ export const NON_SECRET_VALUE_STOP_LIST: readonly string[] = [
 	"error",
 	"ddg",
 	"duckduckgo",
-	"langsearch",
 ];
 
 const NON_SECRET_VALUES = new Set(NON_SECRET_VALUE_STOP_LIST);

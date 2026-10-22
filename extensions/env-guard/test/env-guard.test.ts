@@ -81,7 +81,7 @@ test("parseDotenv: hash inside quoted value is kept", () => {
 });
 
 test("matchesSecretName: pattern cases", () => {
-	assert.equal(matchesSecretName("LANGSEARCH_API_KEY"), true);
+	assert.equal(matchesSecretName("SEARCH_API_KEY"), true);
 	assert.equal(matchesSecretName("GITHUB_TOKEN"), true);
 	assert.equal(matchesSecretName("DB_PASSWORD"), true);
 	assert.equal(matchesSecretName("DB_PASSWD"), true);
@@ -149,7 +149,7 @@ test("isPlausibleSecretValue: length, numbers, stop-list words and redaction mar
 	assert.equal(isPlausibleSecretValue("warnings"), true);
 	assert.equal(isPlausibleSecretValue("DDG"), false);
 	assert.equal(isPlausibleSecretValue("duckduckgo"), false);
-	assert.equal(isPlausibleSecretValue("LangSearch"), false);
+	assert.equal(isPlausibleSecretValue("WARN"), false);
 	assert.equal(isPlausibleSecretValue("YES"), false);
 	assert.equal(isPlausibleSecretValue("Off"), false);
 	assert.equal(isPlausibleSecretValue("p@ssw0rd!123"), true);
@@ -169,7 +169,7 @@ test("isStopListedSecretValue: common words and markers, case-insensitive", () =
 });
 
 test("isCollectableEntry: implausible common words are dropped, secret-named numbers and urls stay", () => {
-	assert.equal(isCollectableEntry({ key: "PI_WEB_SEARCH_PROVIDER", value: "langsearch" }), false);
+	assert.equal(isCollectableEntry({ key: "NODE_ENV", value: "development" }), false);
 	assert.equal(isCollectableEntry({ key: "PI_WEB_SEARCH_PROVIDER", value: "duckduckgo" }), false);
 	assert.equal(isCollectableEntry({ key: "PI_WEB_SEARCH_PROVIDER", value: "production" }), false);
 	assert.equal(isCollectableEntry({ key: "DEBUG_TOKEN", value: "production" }), false);
@@ -341,7 +341,7 @@ test("redactEnvLines: inline comment is masked together with the value", () => {
 
 test("redaction is idempotent", () => {
 	const redactor = buildRedactor([
-		{ key: "LANGSEARCH_API_KEY", value: SECRET },
+		{ key: "SEARCH_API_KEY", value: SECRET },
 		{ key: "OTHER_TOKEN", value: OTHER },
 	]);
 	const once = redactText(`curl -H "Authorization: Bearer ${SECRET}" ${OTHER}`, redactor);
@@ -364,7 +364,7 @@ test("redaction stays idempotent when a value is a marker substring", () => {
 });
 
 test("redactDeep: walks nested objects and arrays, keeps structure", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const input = {
 		stdout: `token ${SECRET}`,
 		nested: { list: [1, "two", { deep: SECRET }], empty: null },
@@ -374,15 +374,15 @@ test("redactDeep: walks nested objects and arrays, keeps structure", () => {
 	const result = redactDeep(input, redactor);
 	assert.equal(result.changed, true);
 	assert.deepEqual(result.value, {
-		stdout: "token [REDACTED:LANGSEARCH_API_KEY]",
-		nested: { list: [1, "two", { deep: "[REDACTED:LANGSEARCH_API_KEY]" }], empty: null },
+		stdout: "token [REDACTED:SEARCH_API_KEY]",
+		nested: { list: [1, "two", { deep: "[REDACTED:SEARCH_API_KEY]" }], empty: null },
 		count: 5,
 		flag: true,
 	});
 });
 
 test("redactDeep: no hit returns original value unchanged", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const input = { stdout: "nothing here" };
 	const result = redactDeep(input, redactor);
 	assert.equal(result.changed, false);
@@ -390,32 +390,32 @@ test("redactDeep: no hit returns original value unchanged", () => {
 });
 
 test("redactDeep: cyclic object is redacted without throwing", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const input: Record<string, unknown> = { stdout: `token ${SECRET}` };
 	input.self = input;
 	const result = redactDeep(input, redactor);
 	assert.equal(result.changed, true);
 	const output = result.value as Record<string, unknown>;
-	assert.equal(output.stdout, "token [REDACTED:LANGSEARCH_API_KEY]");
+	assert.equal(output.stdout, "token [REDACTED:SEARCH_API_KEY]");
 	assert.equal(output.self, output);
-	assert.equal((output.self as Record<string, unknown>).stdout, "token [REDACTED:LANGSEARCH_API_KEY]");
-	assert.equal(result.hits.get("LANGSEARCH_API_KEY"), 1);
+	assert.equal((output.self as Record<string, unknown>).stdout, "token [REDACTED:SEARCH_API_KEY]");
+	assert.equal(result.hits.get("SEARCH_API_KEY"), 1);
 });
 
 test("redactDeep: shared diamond reference yields one redacted copy", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const shared = { token: SECRET };
 	const input = { a: shared, b: shared };
 	const result = redactDeep(input, redactor);
 	assert.equal(result.changed, true);
 	const output = result.value as { a: { token: string }; b: { token: string } };
-	assert.equal(output.a.token, "[REDACTED:LANGSEARCH_API_KEY]");
-	assert.equal(output.b.token, "[REDACTED:LANGSEARCH_API_KEY]");
+	assert.equal(output.a.token, "[REDACTED:SEARCH_API_KEY]");
+	assert.equal(output.b.token, "[REDACTED:SEARCH_API_KEY]");
 	assert.equal(output.a, output.b);
 });
 
 test("redactDeep: Date, Map, Set and Buffer pass through unchanged", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const date = new Date(0);
 	const map = new Map([["a", 1]]);
 	const set = new Set([1, 2]);
@@ -428,11 +428,11 @@ test("redactDeep: Date, Map, Set and Buffer pass through unchanged", () => {
 	assert.equal(output.lookup, map);
 	assert.equal(output.tags, set);
 	assert.ok(Buffer.isBuffer(output.raw));
-	assert.equal(output.note, "has [REDACTED:LANGSEARCH_API_KEY]");
+	assert.equal(output.note, "has [REDACTED:SEARCH_API_KEY]");
 });
 
 test("redactAssistantMessage: redacts text and thinking, preserves role", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const message = {
 		role: "assistant",
 		content: [
@@ -447,16 +447,16 @@ test("redactAssistantMessage: redacts text and thinking, preserves role", () => 
 	assert.deepEqual(result.message, {
 		role: "assistant",
 		content: [
-			{ type: "text", text: "the key is [REDACTED:LANGSEARCH_API_KEY]" },
-			{ type: "thinking", thinking: "checking [REDACTED:LANGSEARCH_API_KEY]" },
+			{ type: "text", text: "the key is [REDACTED:SEARCH_API_KEY]" },
+			{ type: "thinking", thinking: "checking [REDACTED:SEARCH_API_KEY]" },
 			{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "echo hi" } },
 		],
 	});
-	assert.equal(result.hits.get("LANGSEARCH_API_KEY"), 2);
+	assert.equal(result.hits.get("SEARCH_API_KEY"), 2);
 });
 
 test("redactAssistantMessage: user messages are untouched", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const result = redactAssistantMessage({ role: "user", content: SECRET } as never, redactor);
 	assert.equal(result, undefined);
 });
@@ -468,12 +468,12 @@ function makeCtx(notified: string[]): NotifyContext {
 function makeStateWithSecrets(): GuardState {
 	const state = createState();
 	state.secrets = [
-		{ key: "LANGSEARCH_API_KEY", value: SECRET },
+		{ key: "SEARCH_API_KEY", value: SECRET },
 		{ key: "OTHER_TOKEN", value: OTHER },
 	];
 	state.redactor = buildRedactor(state.secrets);
 	state.files = [{ path: "/tmp/proj/.env", count: 2 }];
-	state.envNames = ["LANGSEARCH_API_KEY"];
+	state.envNames = ["SEARCH_API_KEY"];
 	return state;
 }
 
@@ -494,20 +494,20 @@ test("tool_result handler: redacts content, structuredContent and details, keeps
 	const handler = createToolResultHandler(state);
 	const patch = await handler(TOOL_RESULT_EVENT, makeCtx(notified));
 	assert.ok(patch);
-	assert.deepEqual(patch.content, [{ type: "text", text: "output [REDACTED:LANGSEARCH_API_KEY]" }]);
+	assert.deepEqual(patch.content, [{ type: "text", text: "output [REDACTED:SEARCH_API_KEY]" }]);
 	assert.deepEqual(patch.structuredContent, {
-		out: "output [REDACTED:LANGSEARCH_API_KEY]",
+		out: "output [REDACTED:SEARCH_API_KEY]",
 		rows: ["[REDACTED:OTHER_TOKEN]"],
 	});
-	assert.deepEqual(patch.details, { command: "echo key", output: "output [REDACTED:LANGSEARCH_API_KEY]" });
+	assert.deepEqual(patch.details, { command: "echo key", output: "output [REDACTED:SEARCH_API_KEY]" });
 	assert.deepEqual(
 		[...state.counters.entries()],
 		[
-			["LANGSEARCH_API_KEY", 3],
+			["SEARCH_API_KEY", 3],
 			["OTHER_TOKEN", 1],
 		],
 	);
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY", "env-guard: redacted OTHER_TOKEN"]);
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY", "env-guard: redacted OTHER_TOKEN"]);
 });
 
 test("tool_result handler: notifies each key once per session", async () => {
@@ -524,8 +524,8 @@ test("tool_result handler: notifies each key once per session", async () => {
 	const second = await handler(event, makeCtx(notified));
 	assert.ok(first);
 	assert.ok(second);
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
-	assert.equal(state.counters.get("LANGSEARCH_API_KEY"), 2);
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY"]);
+	assert.equal(state.counters.get("SEARCH_API_KEY"), 2);
 });
 
 test("tool_result handler: returns undefined when nothing matches", async () => {
@@ -655,10 +655,10 @@ test("tool_call handler: redacts arguments in place, notifies once per key", asy
 	assert.equal(await handler(event, makeCtx(notified)), undefined);
 	const input = (event as unknown as { input: { command: string; nested: { list: string[] } } }).input;
 	assert.ok(!input.command.includes(SECRET));
-	assert.ok(input.command.includes("[REDACTED:LANGSEARCH_API_KEY]"));
+	assert.ok(input.command.includes("[REDACTED:SEARCH_API_KEY]"));
 	assert.equal(input.nested.list[0], "x [REDACTED:OTHER_TOKEN]");
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY", "env-guard: redacted OTHER_TOKEN"]);
-	assert.equal(state.counters.get("LANGSEARCH_API_KEY"), 1);
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY", "env-guard: redacted OTHER_TOKEN"]);
+	assert.equal(state.counters.get("SEARCH_API_KEY"), 1);
 	assert.equal(state.counters.get("OTHER_TOKEN"), 1);
 });
 
@@ -678,7 +678,7 @@ test("tool_call handler: no-op without matches and without secrets", async () =>
 
 test("tool_result handler: removed-and-re-added key notifies again after refresh", async () => {
 	const state = createState();
-	let dotenv = `LANGSEARCH_API_KEY=${SECRET}\n`;
+	let dotenv = `SEARCH_API_KEY=${SECRET}\n`;
 	const dir = "/tmp/env-guard-refresh";
 	const deps = {
 		readFile: (async (path: string) => {
@@ -692,14 +692,14 @@ test("tool_result handler: removed-and-re-added key notifies again after refresh
 	const handler = createToolResultHandler(state);
 	const event = { ...TOOL_RESULT_EVENT, structuredContent: undefined, details: undefined } as ToolResultEvent;
 	await handler(event, makeCtx(notified));
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY"]);
 	dotenv = `OTHER_TOKEN=${OTHER}\n`;
 	await refresh(state, dir, deps);
-	dotenv = `LANGSEARCH_API_KEY=${SECRET}\n`;
+	dotenv = `SEARCH_API_KEY=${SECRET}\n`;
 	await refresh(state, dir, deps);
 	await handler(event, makeCtx(notified));
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY", "env-guard: redacted LANGSEARCH_API_KEY"]);
-	assert.equal(state.counters.get("LANGSEARCH_API_KEY"), 2);
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY", "env-guard: redacted SEARCH_API_KEY"]);
+	assert.equal(state.counters.get("SEARCH_API_KEY"), 2);
 });
 
 const MESSAGE_END_EVENT = {
@@ -723,8 +723,8 @@ test("message_end handler: redacts finalized assistant message preserving role",
 	const result = await handler(MESSAGE_END_EVENT, makeCtx(notified));
 	assert.ok(result);
 	assert.equal(result.message.role, "assistant");
-	assert.deepEqual(result.message.content, [{ type: "text", text: "answer with [REDACTED:LANGSEARCH_API_KEY]" }]);
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
+	assert.deepEqual(result.message.content, [{ type: "text", text: "answer with [REDACTED:SEARCH_API_KEY]" }]);
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY"]);
 });
 
 test("message_end handler: redacts user messages and skips empty state", async () => {
@@ -739,19 +739,19 @@ test("message_end handler: redacts user messages and skips empty state", async (
 	assert.ok(result);
 	assert.equal(result.message.role, "user");
 	assert.equal((result.message.content as string).includes(SECRET), false);
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY"]);
 	const empty = createState();
 	assert.equal(await createMessageEndHandler(empty)(MESSAGE_END_EVENT, makeCtx([])), undefined);
 });
 
 test("formatStatus: names and counts only, never values", () => {
 	const state = makeStateWithSecrets();
-	state.counters.set("LANGSEARCH_API_KEY", 2);
+	state.counters.set("SEARCH_API_KEY", 2);
 	const status = formatStatus(state);
 	assert.ok(status.includes("2 secrets tracked"));
 	assert.ok(status.includes("/tmp/proj/.env (2)"));
-	assert.ok(status.includes("LANGSEARCH_API_KEY"));
-	assert.ok(status.includes("LANGSEARCH_API_KEY x2"));
+	assert.ok(status.includes("SEARCH_API_KEY"));
+	assert.ok(status.includes("SEARCH_API_KEY x2"));
 	assert.ok(!status.includes(SECRET));
 	assert.ok(!status.includes(OTHER));
 });
@@ -761,13 +761,13 @@ test("refresh: collects from files and env into state", async () => {
 	const dir = resolve("/tmp/whatever");
 	await refresh(state, "/tmp/whatever", {
 		readFile: (async (path: string) => {
-			if (path === join(dir, ".env")) return `LANGSEARCH_API_KEY=${SECRET}\nSHORT=abc\n`;
+			if (path === join(dir, ".env")) return `SEARCH_API_KEY=${SECRET}\nSHORT=abc\n`;
 			throw new Error("missing");
 		}) as never,
 		env: { OTHER_TOKEN: OTHER, PATH: "C:\\Windows" },
 	});
 	assert.deepEqual(state.secrets, [
-		{ key: "LANGSEARCH_API_KEY", value: SECRET },
+		{ key: "SEARCH_API_KEY", value: SECRET },
 		{ key: "OTHER_TOKEN", value: OTHER },
 	]);
 	assert.ok(state.redactor.regex);
@@ -847,14 +847,14 @@ test("collectSecrets: direnv .envrc entries are collected and reported as a sour
 test("collectSecrets: envNames stay complete while implausible values are not tracked", async () => {
 	const collected = await collectSecrets("/nonexistent/env-guard", {
 		env: {
-			LANGSEARCH_API_KEY: "ddg",
+			SEARCH_API_KEY: "ddg",
 			DEBUG_TOKEN: "production",
 			PROVIDER_TOKEN: "duckduckgo",
 			GITHUB_TOKEN: "gh-test-12345678",
 		},
 	});
 	assert.deepEqual(collected.secrets, [{ key: "GITHUB_TOKEN", value: "gh-test-12345678" }]);
-	assert.deepEqual(collected.sources.envNames, ["LANGSEARCH_API_KEY", "DEBUG_TOKEN", "PROVIDER_TOKEN", "GITHUB_TOKEN"]);
+	assert.deepEqual(collected.sources.envNames, ["SEARCH_API_KEY", "DEBUG_TOKEN", "PROVIDER_TOKEN", "GITHUB_TOKEN"]);
 });
 
 test("collectSecrets: degenerate secret-named values are not collected and never become patterns", async () => {
@@ -874,7 +874,7 @@ test("collectSecrets: degenerate secret-named values are not collected and never
 test("collectSecrets: unreadable files are skipped, env names matched", async () => {
 	const collected = await collectSecrets("/nonexistent/env-guard", {
 		env: {
-			LANGSEARCH_API_KEY: SECRET,
+			SEARCH_API_KEY: SECRET,
 			GITHUB_TOKEN: "gh-test-12345678",
 			NUMBERS_TOKEN: "12345678",
 			PLAIN_VALUE: "abcdefghijklmnop",
@@ -883,11 +883,11 @@ test("collectSecrets: unreadable files are skipped, env names matched", async ()
 		},
 	});
 	assert.deepEqual(collected.secrets, [
-		{ key: "LANGSEARCH_API_KEY", value: SECRET },
+		{ key: "SEARCH_API_KEY", value: SECRET },
 		{ key: "GITHUB_TOKEN", value: "gh-test-12345678" },
 		{ key: "NUMBERS_TOKEN", value: "12345678" },
 	]);
-	assert.deepEqual(collected.sources.envNames, ["LANGSEARCH_API_KEY", "GITHUB_TOKEN", "NUMBERS_TOKEN"]);
+	assert.deepEqual(collected.sources.envNames, ["SEARCH_API_KEY", "GITHUB_TOKEN", "NUMBERS_TOKEN"]);
 	assert.equal(collected.sources.files.length, 0);
 });
 
@@ -1120,10 +1120,10 @@ test("tool_call deny: commands referencing tracked env var names are blocked", a
 	const state = makeStateWithSecrets();
 	const handler = createToolCallDenyHandler(state);
 	for (const command of [
-		"printenv LANGSEARCH_API_KEY",
-		"env | grep LANGSEARCH_API_KEY",
-		"echo $LANGSEARCH_API_KEY",
-		"powershell -Command echo $env:LANGSEARCH_API_KEY",
+		"printenv SEARCH_API_KEY",
+		"env | grep SEARCH_API_KEY",
+		"echo $SEARCH_API_KEY",
+		"powershell -Command echo $env:SEARCH_API_KEY",
 	]) {
 		const event = {
 			type: "tool_call",
@@ -1134,13 +1134,13 @@ test("tool_call deny: commands referencing tracked env var names are blocked", a
 		const result = await handler(event, makeCtx([]));
 		assert.ok(result, command);
 		assert.equal(result.block, true, command);
-		assert.equal(result.reason, "env-guard: command references secret env var LANGSEARCH_API_KEY", command);
+		assert.equal(result.reason, "env-guard: command references secret env var SEARCH_API_KEY", command);
 	}
 	const prefix = {
 		type: "tool_call",
 		toolCallId: "t2",
 		toolName: "bash",
-		input: { command: "printenv LANGSEARCH_API_KEY_EXTRA" },
+		input: { command: "printenv SEARCH_API_KEY_EXTRA" },
 	} as unknown as ToolCallEvent;
 	assert.equal(await handler(prefix, makeCtx([])), undefined);
 	const empty = createState();
@@ -1148,7 +1148,7 @@ test("tool_call deny: commands referencing tracked env var names are blocked", a
 		type: "tool_call",
 		toolCallId: "t3",
 		toolName: "bash",
-		input: { command: "printenv LANGSEARCH_API_KEY" },
+		input: { command: "printenv SEARCH_API_KEY" },
 	} as unknown as ToolCallEvent;
 	assert.equal(await createToolCallDenyHandler(empty)(bare, makeCtx([])), undefined);
 });
@@ -1219,14 +1219,14 @@ test("user_bash handler: tracked env var names in commands are denied", async ()
 	const notified: string[] = [];
 	const event = {
 		type: "user_bash",
-		command: "printenv LANGSEARCH_API_KEY",
+		command: "printenv SEARCH_API_KEY",
 		excludeFromContext: false,
 		cwd: "/tmp/proj",
 	} as unknown as UserBashEvent;
 	const result = await handler(event, makeCtx(notified));
 	assert.ok(result);
 	assert.equal(result.result?.exitCode, 1);
-	assert.equal(result.result?.output, "env-guard: command references secret env var LANGSEARCH_API_KEY");
+	assert.equal(result.result?.output, "env-guard: command references secret env var SEARCH_API_KEY");
 	const clean = {
 		type: "user_bash",
 		command: "printenv OTHER_PLAIN",
@@ -1242,7 +1242,7 @@ test("input handler: transforms steer-delivered text containing secrets", async 
 	const notified: string[] = [];
 	const event = {
 		type: "input",
-		text: `subagent result: LANGSEARCH_API_KEY=${SECRET}`,
+		text: `subagent result: SEARCH_API_KEY=${SECRET}`,
 		source: "extension",
 		streamingBehavior: "steer",
 	} as unknown as InputEvent;
@@ -1250,9 +1250,9 @@ test("input handler: transforms steer-delivered text containing secrets", async 
 	assert.ok(result);
 	const transformed = result as { action: string; text: string };
 	assert.equal(transformed.action, "transform");
-	assert.equal(transformed.text, "subagent result: LANGSEARCH_API_KEY=[REDACTED:LANGSEARCH_API_KEY]");
-	assert.deepEqual(notified, ["env-guard: redacted LANGSEARCH_API_KEY"]);
-	assert.equal(state.counters.get("LANGSEARCH_API_KEY"), 1);
+	assert.equal(transformed.text, "subagent result: SEARCH_API_KEY=[REDACTED:SEARCH_API_KEY]");
+	assert.deepEqual(notified, ["env-guard: redacted SEARCH_API_KEY"]);
+	assert.equal(state.counters.get("SEARCH_API_KEY"), 1);
 	const clean = { type: "input", text: "nothing here", source: "interactive" } as unknown as InputEvent;
 	assert.equal(await handler(clean, makeCtx([])), undefined);
 	const bare = createState();
@@ -1291,11 +1291,11 @@ test("input handler: masks values sourced from direnv .envrc", async () => {
 });
 
 test("redactMessage: user string, user blocks, toolResult and system contents", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const userString = redactMessage({ role: "user", content: `paste ${SECRET}`, timestamp: 0 } as never, redactor);
 	assert.ok(userString);
 	assert.equal(userString.message.role, "user");
-	assert.equal((userString.message as { content: unknown }).content, "paste [REDACTED:LANGSEARCH_API_KEY]");
+	assert.equal((userString.message as { content: unknown }).content, "paste [REDACTED:SEARCH_API_KEY]");
 	const userBlocks = redactMessage(
 		{
 			role: "user",
@@ -1309,7 +1309,7 @@ test("redactMessage: user string, user blocks, toolResult and system contents", 
 	);
 	assert.ok(userBlocks);
 	assert.deepEqual((userBlocks.message as { content: unknown }).content, [
-		{ type: "text", text: "[REDACTED:LANGSEARCH_API_KEY]" },
+		{ type: "text", text: "[REDACTED:SEARCH_API_KEY]" },
 		{ type: "image", data: "AA==", mimeType: "image/png" },
 	]);
 	const toolResult = redactMessage(
@@ -1325,17 +1325,17 @@ test("redactMessage: user string, user blocks, toolResult and system contents", 
 	);
 	assert.ok(toolResult);
 	assert.deepEqual((toolResult.message as { content: unknown }).content, [
-		{ type: "text", text: "[REDACTED:LANGSEARCH_API_KEY]" },
+		{ type: "text", text: "[REDACTED:SEARCH_API_KEY]" },
 	]);
 	const system = redactMessage({ role: "system", content: `rules ${SECRET}` } as never, redactor);
 	assert.ok(system);
-	assert.equal((system.message as { content: unknown }).content, "rules [REDACTED:LANGSEARCH_API_KEY]");
+	assert.equal((system.message as { content: unknown }).content, "rules [REDACTED:SEARCH_API_KEY]");
 	const clean = { role: "user", content: "nothing here", timestamp: 0 } as never;
 	assert.equal(redactMessage(clean, redactor), undefined);
 });
 
 test("redactMessage: system non-text blocks are preserved", () => {
-	const redactor = buildRedactor([{ key: "LANGSEARCH_API_KEY", value: SECRET }]);
+	const redactor = buildRedactor([{ key: "SEARCH_API_KEY", value: SECRET }]);
 	const message = {
 		role: "system",
 		content: [
@@ -1347,7 +1347,7 @@ test("redactMessage: system non-text blocks are preserved", () => {
 	assert.ok(result);
 	assert.equal(result.message.role, "system");
 	assert.deepEqual(result.message.content, [
-		{ type: "text", text: "rules [REDACTED:LANGSEARCH_API_KEY]" },
+		{ type: "text", text: "rules [REDACTED:SEARCH_API_KEY]" },
 		{ type: "image", data: "AA==", mimeType: "image/png" },
 	]);
 });

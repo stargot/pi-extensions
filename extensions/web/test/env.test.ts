@@ -51,12 +51,12 @@ test("parseDotEnv: CRLF line endings", () => {
 test("loadDotEnv: reads the nearest .env and fills the env object", () => {
 	const root = makeTmp();
 	try {
-		writeFileSync(join(root, ".env"), "LANGSEARCH_API_KEY=test-key\nOTHER=1\n", "utf8");
+		writeFileSync(join(root, ".env"), "EXAMPLE_API_KEY=test-key\nOTHER=1\n", "utf8");
 		withCwd(root, () => {
 			const env: NodeJS.ProcessEnv = {};
 			const loaded = loadDotEnv(env, root);
-			assert.deepEqual(loaded, { LANGSEARCH_API_KEY: "test-key", OTHER: "1" });
-			assert.equal(env.LANGSEARCH_API_KEY, "test-key");
+			assert.deepEqual(loaded, { EXAMPLE_API_KEY: "test-key", OTHER: "1" });
+			assert.equal(env.EXAMPLE_API_KEY, "test-key");
 			assert.equal(env.OTHER, "1");
 		});
 	} finally {

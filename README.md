@@ -37,8 +37,6 @@
 | `PI_SUBAGENT_NAME` / `PI_SUBAGENT_AGENT` / `PI_SUBAGENT_ID` / `PI_SUBAGENT_SESSION` / `PI_SUBAGENT_AUTO_EXIT` / `PI_SUBAGENT_ACTIVITY_FILE` | subagents: контекст ребёнка — задаётся расширением при спавне |
 | `HERDR_ENV` / `HERDR_PANE_ID` / `HERDR_WORKSPACE_ID` | subagents: детект запуска под herdr — задаёт сам herdr |
 | `WEZTERM_PANE` | subagents: детект запуска в панели WezTerm — задаёт WezTerm |
-| `PI_WEB_SEARCH_PROVIDER` | web: провайдер поиска (`langsearch`), по умолчанию DuckDuckGo |
-| `LANGSEARCH_API_KEY` | web: API-ключ LangSearch |
 | `PI_WEB_BRIDGE_PORT` / `PI_WEB_BRIDGE_PORTS` | web bridge: порт или диапазон портов (по умолчанию 8790–8799) |
 | `PI_WEB_BRIDGE_TOKEN` / `PI_WEB_BRIDGE_TOKEN_FILE` | web bridge: токен аутентификации или файл с ним |
 | `HOME` / `USERPROFILE` | Домашний каталог (нативные) — subagents |
