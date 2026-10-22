@@ -202,10 +202,12 @@ function foldPath(path: readonly Entry[], labels: Map<string, string>, turnBase:
 		return era;
 	};
 	const current = (ts: number) => era ?? open(0, null, "", ts);
+	// Маркеры до первого промпта (смена модели, thinking) эру 0 не открывают —
+	// она только для ходов без промпта.
 	const mark = (kind: MarkerKind, e: Entry, ts: number, text: string) => {
 		const m: Marker = { kind, entryId: e.id!, ts, text };
 		out.markers.push(m);
-		current(ts).markers.push(m);
+		era?.markers.push(m);
 	};
 
 	for (const e of path) {

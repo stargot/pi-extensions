@@ -91,3 +91,31 @@ test("cacheHit: доля cacheRead в промпте; null без отчёта �
 	assert.equal(cacheHit({ input: 100, cacheRead: 300, cacheWrite: 0, output: 1 }), 0.75);
 	assert.equal(cacheHit({ input: 100, cacheRead: 0, cacheWrite: 0, output: 1 }), null);
 });
+
+test("deriveSession: смена модели до первого промпта не открывает эру 0", () => {
+	const t = new SessionTree();
+	t.add({
+		type: "model_change",
+		id: "m",
+		parentId: null,
+		timestamp: "2026-09-05T12:00:00.000Z",
+		provider: "zai",
+		modelId: "glm",
+	});
+	t.add({
+		type: "message",
+		id: "u",
+		parentId: "m",
+		timestamp: "2026-09-05T12:00:01.000Z",
+		message: { role: "user", content: "hi" },
+	});
+	const v = deriveSession(t);
+	assert.deepEqual(
+		v.eras.map((e) => e.index),
+		[1],
+	);
+	assert.deepEqual(
+		v.markers.map((m) => m.kind),
+		["model"],
+	);
+});
