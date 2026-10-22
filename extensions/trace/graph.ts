@@ -679,7 +679,7 @@ export class TraceView {
 		kinds.push("C");
 		card.addChild(textLine(` ${th.fg("dim", basename(c.session))}`));
 		kinds.push("C");
-		card.addChild(textLine(` ${th.fg("toolTitle", "→ /graph " + c.session)}`));
+		card.addChild(textLine(` ${th.fg("toolTitle", "→ /trace " + c.session)}`));
 		kinds.push("C");
 		card.addChild(textLine("")); // отбивка вместо нижней рамки
 		kinds.push(".");

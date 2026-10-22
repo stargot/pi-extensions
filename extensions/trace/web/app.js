@@ -222,7 +222,7 @@
 				(it.cost ? " · " + fmtMoney(it.cost) : "") +
 				"</div>";
 			ch += '<div class="prev text">' + esc(it.task) + "</div>";
-			ch += '<div class="prev">→ /graph <span class="model">' + esc(it.session) + "</span></div>";
+			ch += '<div class="prev">→ /trace <span class="model">' + esc(it.session) + "</span></div>";
 			return ch + "</div>";
 		}
 		// turn
@@ -524,7 +524,7 @@
 			var now = Date.now();
 			el.wpanel.innerHTML = workersList
 				.map(function (w, i) {
-					var mode = w.mode ? ' <span class="dim">' + esc(w.mode) + (w.step ? " ·" + w.step : "") + ")</span>" : "";
+					var mode = w.mode ? ' <span class="dim">(' + esc(w.mode) + (w.step ? " ·" + w.step : "") + ")</span>" : "";
 					return (
 						'<div class="w" data-i="' +
 						i +
@@ -642,8 +642,9 @@
 			seekTo(firstMs + Number(el.slider.value));
 		};
 		document.addEventListener("keydown", function (ev) {
-			var typing = ev.target && ev.target.tagName === "INPUT";
-			if (typing) return; // в поле фильтра клавиши не перехватываем
+			// в поле фильтра и в селекте скорости стрелки — их собственные (не перемотка)
+			var typing = ev.target && (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT");
+			if (typing) return;
 			if (ev.code === "Space" && ev.target === document.body) {
 				ev.preventDefault();
 				el.play.onclick();

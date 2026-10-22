@@ -68,6 +68,7 @@
 	#timeline {
 		flex: 1; overflow-y: auto; padding: 14px 24px 40px;
 		min-width: 0;
+		overflow-wrap: anywhere; /* URL и пути без пробелов не распирают колонку */
 	}
 	@media (max-width: 880px) {
 		#split { flex-direction: column; }
