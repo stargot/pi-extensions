@@ -450,6 +450,8 @@
 			if (parsed.length <= entries.length) return;
 			var atEnd = fedCount >= entries.length;
 			for (var i = entries.length; i < parsed.length; i++) entries.push(parsed[i]);
+			// Шкала ползунка растёт вместе с живой сессией, иначе он упирается в край
+			el.slider.max = String(Math.max(1, entries[entries.length - 1].ms - firstMs));
 			if (atEnd) {
 				feedUntil(Infinity);
 				playheadMs = entries.length ? entries[entries.length - 1].ms : 0;

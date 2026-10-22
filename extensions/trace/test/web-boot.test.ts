@@ -32,15 +32,16 @@ function stub(): any {
 	});
 }
 
+const line = (e: object) => JSON.stringify(e);
 const SESSION = [
-	{ type: "session", version: 3, id: "s1", timestamp: "2026-09-05T12:00:00.000Z", cwd: "/x" },
-	{
+	line({ type: "session", version: 3, id: "s1", timestamp: "2026-09-05T12:00:00.000Z", cwd: "/x" }),
+	line({
 		type: "message",
 		id: "u1",
 		timestamp: "2026-09-05T12:00:01.000Z",
 		message: { role: "user", content: "fix the bug" },
-	},
-	{
+	}),
+	line({
 		type: "message",
 		id: "a1",
 		timestamp: "2026-09-05T12:00:05.000Z",
@@ -50,16 +51,16 @@ const SESSION = [
 			usage: { input: 10, output: 5 },
 			content: [{ type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } }],
 		},
-	},
-]
-	.map((e) => JSON.stringify(e))
-	.join("\n");
+	}),
+].join("\n");
 
-test("web/app.js: boot() рисует ленту из /session.jsonl без исключений", async () => {
+/** Поднимает app.js; session() — текущее содержимое /session.jsonl. */
+async function boot(session: () => string) {
 	const nodes = new Map<string, any>();
 	const q = stub();
 	q.value = ""; // пустой фильтр: заглушка иначе отфильтрует всё
 	nodes.set("q", q);
+	const intervals: (() => void)[] = [];
 	let onReady: (() => void) | undefined;
 	const document = {
 		getElementById: (id: string) => {
@@ -76,11 +77,11 @@ test("web/app.js: boot() рисует ленту из /session.jsonl без ис
 		location: { search: "?noplay=1", hash: "#end" },
 		performance: { now: () => 0 },
 		requestAnimationFrame: () => 0,
-		setInterval: () => 0,
+		setInterval: (fn: () => void) => intervals.push(fn),
 		fetch: async (url: string) => ({
-			ok: url === "session.jsonl",
+			ok: url.startsWith("session.jsonl"),
 			headers: { get: () => null },
-			text: async () => SESSION,
+			text: async () => session(),
 			json: async () => ({}),
 		}),
 		console,
@@ -88,9 +89,29 @@ test("web/app.js: boot() рисует ленту из /session.jsonl без ис
 	runInNewContext(readFileSync(APP_JS, "utf8"), sandbox, { filename: APP_JS });
 	assert.ok(onReady, "app.js подписался на DOMContentLoaded");
 	onReady!();
-	await new Promise((r) => setTimeout(r, 20)); // дождаться цепочки fetch → load
+	await settle();
+	/** Прогнать все setInterval-колбэки (опрос хвоста, воркеры, плеер). */
+	const tickIntervals = async () => {
+		for (const fn of intervals) fn();
+		await settle();
+	};
+	return { nodes, tickIntervals };
+}
 
+const settle = () => new Promise((r) => setTimeout(r, 20)); // цепочки fetch → load
+
+test("web/app.js: boot() рисует ленту из /session.jsonl без исключений", async () => {
+	const { nodes } = await boot(() => SESSION);
 	const html = String(nodes.get("timeline")?.innerHTML ?? "");
 	assert.match(html, /id="t-1"/, "карточка T1 в ленте");
 	assert.match(html, /fix the bug/, "user-сообщение в ленте");
+});
+
+test("web/app.js: шкала ползунка растёт вместе с живой сессией", async () => {
+	let text = SESSION;
+	const { nodes, tickIntervals } = await boot(() => text);
+	assert.equal(nodes.get("slider").max, "5000"); // 12:00:00 → 12:00:05
+	text += `\n${line({ type: "message", id: "u2", timestamp: "2026-09-05T12:01:00.000Z", message: { role: "user", content: "more" } })}`;
+	await tickIntervals();
+	assert.equal(nodes.get("slider").max, "60000");
 });
