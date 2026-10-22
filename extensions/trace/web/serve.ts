@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_PORT = 8787;
+export const DEFAULT_PORT = 8787;
 
 const MIME: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
@@ -38,6 +38,9 @@ export interface ServeOptions {
 export interface ServeHandle {
 	port: number;
 	url: string;
+	/** Переключает отдаваемый файл сессии (как POST /load, но без HTTP). */
+	setFile(file: string | undefined): void;
+	/** Останавливает сервер; не ждёт, пока закроют вкладку вьюера. */
 	close(): Promise<void>;
 }
 
@@ -182,6 +185,10 @@ export function startServer(options: ServeOptions = {}): Promise<ServeHandle> {
 			resolve({
 				port,
 				url: `http://127.0.0.1:${port}/`,
+				setFile: (file) => {
+					state.file = file;
+				},
+				// Node ≥19 сам закрывает простаивающие keep-alive-соединения открытых вкладок.
 				close: () => new Promise<void>((done) => server.close(() => done())),
 			});
 		});
@@ -198,7 +205,7 @@ function fail(message: string): never {
 	process.exit(1);
 }
 
-function openBrowser(url: string): void {
+export function openBrowser(url: string): void {
 	const cmd = process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
 	const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
 	spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true })

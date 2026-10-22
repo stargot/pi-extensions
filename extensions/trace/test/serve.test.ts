@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { request } from "node:http";
+import { Agent, request } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,6 +120,41 @@ test("newestSession picks the freshest jsonl across subfolders, ignores non-json
 		utimesSync(newer, new Date(), new Date(Date.now() + 120_000));
 		assert.equal(newestSession(dir), newer); // рекурсия + сравнение по mtime
 		assert.equal(newestSession(join(dir, "empty")), undefined);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("ServeHandle.setFile switches the session; close() does not wait for keep-alive clients", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-handle-"));
+	try {
+		const a = join(dir, "a.jsonl");
+		const b = join(dir, "b.jsonl");
+		writeFileSync(a, '{"id":"a"}\n');
+		writeFileSync(b, '{"id":"b"}\n');
+		const handle = await startServer({ file: a, port: 0 });
+		// Открытая вкладка: keep-alive-соединение остаётся после ответа.
+		const agent = new Agent({ keepAlive: true });
+		const get = () =>
+			new Promise<string>((resolve, reject) => {
+				request(`${handle.url}session.jsonl`, { agent }, (res) => {
+					let body = "";
+					res.on("data", (c) => (body += c));
+					res.on("end", () => resolve(body));
+				})
+					.on("error", reject)
+					.end();
+			});
+		try {
+			assert.match(await get(), /"a"/);
+			handle.setFile(b);
+			assert.match(await get(), /"b"/);
+		} finally {
+			const closed = handle.close().then(() => "closed");
+			const timeout = new Promise((r) => setTimeout(() => r("timeout"), 2000).unref());
+			assert.equal(await Promise.race([closed, timeout]), "closed");
+			agent.destroy();
+		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

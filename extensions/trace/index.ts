@@ -7,30 +7,29 @@
  *
  * Read-only: только читает session-файл, ничего не пишет и не блокирует агента.
  */
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import { readRunningWorkers, runningIndexPath } from "../subagents/running-index.ts";
 
 const subagentSessionsRoot = () => join(getAgentDir(), "sessions", "subagents");
 import { TraceView } from "./graph.ts";
-
-const SERVE_TS = join(dirname(fileURLToPath(import.meta.url)), "web", "serve.ts");
-const WEB_URL = "http://127.0.0.1:8787/";
+import { DEFAULT_PORT, newestSession, openBrowser, type ServeHandle, startServer } from "./web/serve.ts";
 
 export default function (pi: ExtensionAPI) {
 	let active: TraceView | undefined;
-	let webServer: ReturnType<typeof spawn> | undefined;
+	// Веб-сервер живёт в процессе pi: умирает вместе с ним (без сирот на порту),
+	// а повторный /trace-web просто переключает файл — без гонки kill/spawn.
+	let web: Promise<ServeHandle> | undefined;
 
 	// Если сессию переключили/закрыли pi, пока оверлей открыт — прибрать за собой.
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", async () => {
 		active?.dispose();
 		active = undefined;
-		webServer?.kill();
-		webServer = undefined;
+		const server = web;
+		web = undefined;
+		await server?.then((h) => h.close()).catch(() => {});
 	});
 
 	// Кэш списка сессий проекта для автодополнения аргумента /trace
@@ -106,9 +105,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Веб-вьюер в браузере: поднимаем локальный сервер отдельным процессом.
-	// serve.ts при занятом порту сам найдёт свой работающий экземпляр, переключит
-	// файл и просто откроет браузер, поэтому повторные вызовы безопасны.
+	// Веб-вьюер в браузере: локальный сервер в процессе pi (поднимается при первом
+	// вызове, гаснет в session_shutdown); повторный вызов переключает файл.
 	pi.registerCommand("trace-web", {
 		description: "trace in the browser: local server + web viewer",
 		handler: async (args, ctx) => {
@@ -118,16 +116,25 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`trace: файл сессии не найден: ${file}`, "error");
 				return;
 			}
-			webServer?.kill();
-			const child = spawn(process.execPath, [SERVE_TS, ...(file ? ["--file", file] : [])], {
-				detached: true,
-				stdio: "ignore",
-				windowsHide: true,
-			});
-			child.unref();
-			webServer = child;
+			const target = file ?? newestSession();
+			let handle: ServeHandle;
+			try {
+				if (web) {
+					handle = await web;
+					handle.setFile(target);
+				} else {
+					// Привычный 8787, а если он занят (другой pi, чужой процесс) — любой свободный.
+					web = startServer({ file: target, port: DEFAULT_PORT }).catch(() => startServer({ file: target, port: 0 }));
+					handle = await web;
+				}
+			} catch (error) {
+				web = undefined;
+				ctx.ui.notify(`trace: веб-сервер не запустился: ${(error as Error).message}`, "error");
+				return;
+			}
+			openBrowser(handle.url);
 
-			const message = `trace: web — ${WEB_URL}${file ? ` · ${basename(file)}` : ""} · сервер остановится при закрытии сессии`;
+			const message = `trace: web — ${handle.url}${target ? ` · ${basename(target)}` : ""} · сервер остановится при закрытии сессии`;
 			if (ctx.hasUI) ctx.ui.notify(message, "info");
 			else process.stdout.write(`${message}\n`);
 		},
