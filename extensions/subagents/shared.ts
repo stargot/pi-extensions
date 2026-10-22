@@ -1,7 +1,8 @@
 /**
- * Pure helpers shared by the mux backends: completion sentinel parsing,
- * split-layout math and steer-delivery failure texts. No child_process,
- * no env reads — safe to unit-test.
+ * Pure helpers shared across the extension: completion sentinel parsing,
+ * split-layout math, steer-delivery failure texts and the summary-cap knob.
+ * No child_process — safe to unit-test; the single env read (SUMMARY_CHARS)
+ * happens once at import, parseSummaryLimit itself is pure.
  */
 
 // Type-only: erased at runtime, so this creates no import cycle with herdr.ts
@@ -158,3 +159,29 @@ export function fmtElapsed(sec: number): string {
 	const h = Math.floor(m / 60);
 	return `${h}h${String(m % 60).padStart(2, "0")}m`;
 }
+
+// ── Summary cap ──
+
+/**
+ * Env knob capping a subagent result (watcher steer + trace card) and each
+ * task_batch task's output — one handle for both truncation sites by design.
+ */
+export const SUMMARY_CHARS_ENV = "PI_SUBAGENT_SUMMARY_CHARS";
+
+/** Cap used when PI_SUBAGENT_SUMMARY_CHARS is unset or invalid. */
+export const DEFAULT_SUMMARY_CHARS = 8000;
+
+/**
+ * Strict env parse for SUMMARY_CHARS_ENV: a positive integer stands as-is;
+ * anything else (unset, blank, non-numeric, fractional, <= 0) silently falls
+ * back — a broken knob must degrade to the default, never break the run.
+ */
+export function parseSummaryLimit(raw: string | undefined, fallback: number): number {
+	const trimmed = (raw ?? "").trim();
+	if (!/^\d+$/.test(trimmed)) return fallback;
+	const parsed = Number.parseInt(trimmed, 10);
+	return parsed > 0 ? parsed : fallback;
+}
+
+/** Effective cap for this session — computed once at module start. */
+export const SUMMARY_CHARS = parseSummaryLimit(process.env[SUMMARY_CHARS_ENV], DEFAULT_SUMMARY_CHARS);

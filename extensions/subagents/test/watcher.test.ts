@@ -3,12 +3,12 @@ import type { ChildProcess } from "node:child_process";
 import { test } from "node:test";
 import type { ActivityReadResult } from "../activity.ts";
 import type { AgentDef } from "../agents.ts";
+import { SUMMARY_CHARS } from "../shared.ts";
 import type { PaneListSnapshot, TraceEntry, WatcherPaneOps } from "../watcher.ts";
 import {
 	CANCEL_KILL_AFTER_MS,
 	createSubagentWatcher,
 	LABEL_RETRY_INTERVAL_MS,
-	MAX_SUMMARY_CHARS,
 	NATIVE_DONE_GRACE_MS,
 	NATIVE_WAITER_DELAY_MS,
 	POLL_INTERVAL_MS,
@@ -1024,7 +1024,7 @@ test("over-long summaries are truncated with the transcript pointer", (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 	const h = makeHarness();
 	h.files.set(DONE, "0");
-	h.summaries.set(SESSION, { summary: "x".repeat(MAX_SUMMARY_CHARS + 500), usage: null, model: null });
+	h.summaries.set(SESSION, { summary: "x".repeat(SUMMARY_CHARS + 500), usage: null, model: null });
 	const watcher = createSubagentWatcher(makeDeps(h));
 	watcher.track(makeRunning());
 	watcher.ensureTicker();
@@ -1033,7 +1033,21 @@ test("over-long summaries are truncated with the transcript pointer", (t) => {
 	const steer = lastSteer(h);
 	const tail = `… [truncated — full transcript: ${SESSION}]`;
 	assert.match(steer.message.content, new RegExp(tail.replace(/[[\](){}*+?|^$\\.-]/g, "\\$&")));
-	assert.equal(steer.message.details["summary"], `${"x".repeat(MAX_SUMMARY_CHARS)}\n${tail}`);
+	assert.equal(steer.message.details["summary"], `${"x".repeat(SUMMARY_CHARS)}\n${tail}`);
+});
+
+test("summary exactly at the limit is delivered verbatim", (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const h = makeHarness();
+	h.files.set(DONE, "0");
+	const exact = "x".repeat(SUMMARY_CHARS);
+	h.summaries.set(SESSION, { summary: exact, usage: null, model: null });
+	const watcher = createSubagentWatcher(makeDeps(h));
+	watcher.track(makeRunning());
+	watcher.ensureTicker();
+	oneTick(t);
+
+	assert.equal(lastSteer(h).message.details["summary"], exact);
 });
 
 test("trace card falls back to the display name when agentName is empty", (t) => {

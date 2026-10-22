@@ -19,12 +19,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { addRunningWorker, removeRunningWorker, runningIndexPath } from "./running-index.ts";
+import { SUMMARY_CHARS } from "./shared.ts";
 import { killProcessTree } from "../shared/proctree.ts";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
-export const PER_TASK_OUTPUT_CAP = 50 * 1024;
 /**
  * Cap for a chain step's {previous} output. The handoff is spliced into the
  * next step's task, which the child reads whole as its prompt — an uncapped
@@ -170,7 +170,13 @@ export function substitutePrevious(task: string, previousOutput: string): string
 	return task.replace(/\{previous\}/g, () => previousOutput);
 }
 
-export function truncateOutput(output: string, cap = PER_TASK_OUTPUT_CAP): string {
+/**
+ * Cap the output a batch task returns to the parent (default cap here — the
+ * final result content). Chain handoffs cap separately via PREVIOUS_OUTPUT_CAP
+ * (they ride in the next step's argv); the default follows the same
+ * PI_SUBAGENT_SUMMARY_CHARS knob as the watcher's summary truncation.
+ */
+export function truncateOutput(output: string, cap = SUMMARY_CHARS): string {
 	const byteLength = Buffer.byteLength(output, "utf8");
 	if (byteLength <= cap) return output;
 	let truncated = output.slice(0, cap);

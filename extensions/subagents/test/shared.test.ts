@@ -5,6 +5,7 @@ import {
 	classifyExitSidecar,
 	describePromptFailure,
 	parseSpawnAllowlist,
+	parseSummaryLimit,
 	resolveInterrupt,
 } from "../shared.ts";
 
@@ -28,6 +29,28 @@ test("resolveInterrupt: explicit true/false wins", () => {
 test("resolveInterrupt: undefined → auto-interrupt stalled agents only", () => {
 	assert.equal(resolveInterrupt(undefined, true), true);
 	assert.equal(resolveInterrupt(undefined, false), false);
+});
+
+// ── parseSummaryLimit — the PI_SUBAGENT_SUMMARY_CHARS knob ──
+
+test("parseSummaryLimit: positive integers stand as-is, surrounding whitespace tolerated", () => {
+	assert.equal(parseSummaryLimit("8000", 2000), 8000);
+	assert.equal(parseSummaryLimit("1", 2000), 1);
+	assert.equal(parseSummaryLimit(" 42 ", 2000), 42);
+});
+
+test("parseSummaryLimit: unset/blank/non-numeric/fractional fall back", () => {
+	assert.equal(parseSummaryLimit(undefined, 8000), 8000);
+	assert.equal(parseSummaryLimit("", 8000), 8000);
+	assert.equal(parseSummaryLimit("   ", 8000), 8000);
+	assert.equal(parseSummaryLimit("abc", 8000), 8000);
+	assert.equal(parseSummaryLimit("1.5", 8000), 8000);
+	assert.equal(parseSummaryLimit("1e3", 8000), 8000);
+});
+
+test("parseSummaryLimit: zero and negatives fall back", () => {
+	assert.equal(parseSummaryLimit("0", 8000), 8000);
+	assert.equal(parseSummaryLimit("-5", 8000), 8000);
 });
 
 // ── classifyExitSidecar — the pollTick exit-sidecar verdict ──

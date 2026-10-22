@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SUMMARY_CHARS } from "../shared.ts";
 import {
 	batchDepthFromEnv,
 	batchDepthRefusal,
@@ -119,6 +120,14 @@ test("truncateOutput: under cap unchanged, over cap cut with marker", () => {
 	const out = truncateOutput(big, 100);
 	assert.ok(out.startsWith("x".repeat(100)));
 	assert.match(out, /\[Output truncated: \d+ bytes omitted\.\]/);
+});
+
+test("truncateOutput: default cap follows PI_SUBAGENT_SUMMARY_CHARS", () => {
+	// ASCII, so the byte-based cap equals the char count of the knob.
+	assert.equal(truncateOutput("x".repeat(SUMMARY_CHARS)), "x".repeat(SUMMARY_CHARS));
+	const over = truncateOutput("x".repeat(SUMMARY_CHARS + 1));
+	assert.ok(over.startsWith("x".repeat(SUMMARY_CHARS)));
+	assert.match(over, /\[Output truncated: \d+ bytes omitted\.\]/);
 });
 
 test("mapWithConcurrencyLimit: preserves order, respects limit", async () => {

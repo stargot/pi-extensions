@@ -4,7 +4,7 @@ import type { AgentDef } from "./agents.ts";
 import type { ActivityReadResult, SubagentActivityState } from "./activity.ts";
 import { herdrAgentName, type MuxBackendName, type NativeAgentOps } from "./mux.ts";
 import { formatUsage, type SessionSummary } from "./session-read.ts";
-import { cancelSidecarPath, classifyExitSidecar, fmtElapsed, parseSentinel } from "./shared.ts";
+import { SUMMARY_CHARS, cancelSidecarPath, classifyExitSidecar, fmtElapsed, parseSentinel } from "./shared.ts";
 
 export const POLL_INTERVAL_MS = 1000;
 // Five minutes of ZERO events — streaming deltas and tool output count as
@@ -42,7 +42,6 @@ export const NATIVE_DONE_GRACE_MS = 5000;
 // end the wait; "done" (turn finished) is the only state pi reaches before
 // its record is removed on exit. --until is repeatable, one flag per state.
 export const NATIVE_DONE_UNTIL = ["done", "unknown"];
-export const MAX_SUMMARY_CHARS = 2000;
 
 export interface ActivityObservation {
 	state: SubagentActivityState | null;
@@ -317,9 +316,10 @@ export function createSubagentWatcher(deps: WatcherDeps): SubagentWatcher {
 		const usageText = usage && (usage.input > 0 || usage.output > 0) ? formatUsage(usage) : undefined;
 		const elapsedText = fmtElapsed(elapsedSec);
 		// Same truncated form the LLM sees — the subagent_result card renders this exact text.
+		// Cap = PI_SUBAGENT_SUMMARY_CHARS (shared.ts, default 8000); the same knob caps task_batch output.
 		const summaryText =
-			summary.length > MAX_SUMMARY_CHARS
-				? `${summary.slice(0, MAX_SUMMARY_CHARS)}\n… [truncated — full transcript: ${running.sessionFile}]`
+			summary.length > SUMMARY_CHARS
+				? `${summary.slice(0, SUMMARY_CHARS)}\n… [truncated — full transcript: ${running.sessionFile}]`
 				: summary;
 		const statusLine = cancelled
 			? `cancelled by user after ${elapsedText}`
