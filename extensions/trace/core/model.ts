@@ -146,7 +146,8 @@ function tokensOf(u: any): Tokens {
 	return { input: u?.input ?? 0, cacheRead: u?.cacheRead ?? 0, cacheWrite: u?.cacheWrite ?? 0, output: u?.output ?? 0 };
 }
 
-function toolLabel(args: any): string {
+/** Сводка аргументов вызова для чипа: агент и задача, путь, команда, запрос… */
+export function toolLabel(args: any): string {
 	const a = args ?? {};
 	if (typeof a.agent === "string" && a.agent && a.task) return oneLine(`${a.agent}: ${a.task}`, 60);
 	for (const k of ["path", "file_path", "command", "query", "url"]) {
