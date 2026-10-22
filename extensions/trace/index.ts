@@ -3,7 +3,8 @@
  * инструментов как чипы, компакции/смены модели как маркеры на таймлайне.
  *
  *   /trace            — текущая сессия, follow за живым хвостом
- *   /trace <file>     — replay любого JSONL по его timestamp'ам (space, ←→, +/-, l, r)
+ *   /trace <file>     — replay любого JSONL по его timestamp'ам (space, ←→, +/-, l, r);
+ *                       сессия живого task_batch-воркера — сразу live
  *
  * Read-only: только читает session-файл, ничего не пишет и не блокирует агента.
  */
@@ -13,9 +14,35 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import { readRunningWorkers, runningIndexPath } from "../subagents/running-index.ts";
 
-const subagentSessionsRoot = () => join(getAgentDir(), "sessions", "subagents");
 import { TraceView } from "./graph.ts";
 import { DEFAULT_PORT, newestSession, openBrowser, type ServeHandle, startServer } from "./web/serve.ts";
+
+const subagentSessionsRoot = () => join(getAgentDir(), "sessions", "subagents");
+
+/** Живые task_batch-воркеры из глобального индекса subagents; без индекса — пусто. */
+function liveWorkers() {
+	try {
+		return readRunningWorkers(runningIndexPath(subagentSessionsRoot())).workers;
+	} catch {
+		return []; // индекс опционален
+	}
+}
+
+type Completion = { value: string; label: string };
+
+/** Варианты аргумента /trace: живые воркеры (их нет среди сессий проекта) + 20 последних сессий cwd. */
+async function loadCompletions(cwd: string): Promise<Completion[]> {
+	const live = liveWorkers().map((w) => ({
+		value: w.sessionFile,
+		label: `● live · ${w.label}${w.mode ? ` (${w.mode})` : ""} · pid ${w.pid}`,
+	}));
+	const sessions = await SessionManager.list(cwd).catch(() => []);
+	const recent = sessions.slice(0, 20).map((s) => ({
+		value: s.path,
+		label: `${basename(s.path)}${s.modified ? ` · ${new Date(s.modified).toLocaleString()}` : ""}`,
+	}));
+	return [...live, ...recent].slice(0, 30);
+}
 
 export default function (pi: ExtensionAPI) {
 	let active: TraceView | undefined;
@@ -32,40 +59,25 @@ export default function (pi: ExtensionAPI) {
 		await server?.then((h) => h.close()).catch(() => {});
 	});
 
-	// Кэш списка сессий проекта для автодополнения аргумента /trace
-	let completions: { value: string; label: string }[] | undefined;
+	// cwd сессии: в getArgumentCompletions ctx нет, а process.cwd() у pi может отличаться.
+	let sessionCwd = process.cwd();
+	pi.on("session_start", (_event, ctx) => {
+		sessionCwd = ctx.cwd;
+	});
+
+	// Кэш вариантов автодополнения /trace (промис: первый Tab ждёт загрузку, а не
+	// получает пустоту; живые воркеры и сессии собираются в одном месте).
+	let completions: Promise<Completion[]> | undefined;
 	let completionsAt = 0;
 
 	pi.registerCommand("trace", {
 		description: "Flow graph of the session (trace): live follow or replay",
-		getArgumentCompletions: (prefix: string) => {
-			if (Date.now() - completionsAt > 10_000) {
+		getArgumentCompletions: async (prefix: string) => {
+			if (!completions || Date.now() - completionsAt > 10_000) {
 				completionsAt = Date.now();
-				SessionManager.list(process.cwd())
-					.then((sessions) => {
-						completions = sessions.slice(0, 20).map((s) => ({
-							value: s.path,
-							label: `${basename(s.path)}${s.modified ? ` · ${new Date(s.modified).toLocaleString()}` : ""}`,
-						}));
-					})
-					.catch(() => {
-						completions = [];
-					});
-				// Живые task_batch-воркеры лежат в глобальном subagents-кталоге, а не
-				// в сессиях текущего проекта — без этого их можно найти только по PID.
-				try {
-					const { workers } = readRunningWorkers(runningIndexPath(subagentSessionsRoot()));
-					const live = workers.map((w) => ({
-						value: w.sessionFile,
-						label: `● live · ${w.label}${w.mode ? ` (${w.mode})` : ""} · pid ${w.pid}`,
-					}));
-					completions = [...live, ...(completions ?? [])].slice(0, 30);
-				} catch {
-					// Индекс опционален — не ломаем автокомплит без него.
-				}
+				completions = loadCompletions(sessionCwd);
 			}
-			if (!completions) return null;
-			const filtered = completions.filter((c) => c.value.startsWith(prefix));
+			const filtered = (await completions).filter((c) => c.value.startsWith(prefix));
 			return filtered.length > 0 ? filtered : null;
 		},
 		handler: async (args, ctx) => {
@@ -79,8 +91,10 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`trace: файл сессии не найден: ${file ?? "(ephemeral)"}`, "error");
 				return;
 			}
-			const mode = arg ? "replay" : "live";
-			const isReplay = mode === "replay";
+			// Явный файл — replay с начала, но сессию живого воркера смотрим с хвоста:
+			// автодополнение помечает её «● live», и реплей ×8 там бесполезен.
+			const isLiveWorker = liveWorkers().some((w) => resolve(w.sessionFile) === file);
+			const mode = !arg || isLiveWorker ? "live" : "replay";
 
 			await ctx.ui.custom((tui, theme, _kb, done) => {
 				const view = new TraceView({
@@ -101,7 +115,6 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			active = undefined;
-			void isReplay; // режим выбирается внутри view; arg только выбирает файл
 		},
 	});
 
