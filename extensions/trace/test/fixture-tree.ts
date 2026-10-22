@@ -17,7 +17,12 @@ const at = (sec: number) => {
 /** Ответ модели генерируется 2 с: message.timestamp — старт стрима, entry.timestamp — его конец. */
 export const GEN_MS = 2000;
 
-const msg = (id: string, parentId: string | null, sec: number, message: { role: string; [key: string]: unknown }): Entry => {
+const msg = (
+	id: string,
+	parentId: string | null,
+	sec: number,
+	message: { role: string; [key: string]: unknown },
+): Entry => {
 	const timestamp = at(sec);
 	const start = Date.parse(timestamp) - (message.role === "assistant" ? GEN_MS : 0);
 	return { type: "message", id, parentId, timestamp, message: { timestamp: start, ...message } };
