@@ -316,3 +316,43 @@ test("live: a UTF-8 character split across two reads is decoded intact", () => {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("tick requests a host render only when the frame changes", () => {
+	const dir = mkdtempSync(join(tmpdir(), "trace-graph-test-"));
+	const file = join(dir, "session.jsonl");
+	const at = (s: number) => new Date(Date.parse("2026-01-01T00:00:00Z") + s * 1000).toISOString();
+	writeFileSync(
+		file,
+		`${JSON.stringify({ type: "message", timestamp: at(0), message: { role: "user", content: "hi" } })}\n`,
+	);
+	let renders = 0;
+	const tui = { requestRender: () => renders++, terminal: { rows: 24, columns: 100 } };
+	const view = new TraceView({ tui: tui as any, theme: mockTheme() as any, file, mode: "live", onClose: () => {} });
+	try {
+		view.render(100);
+		const tick = () => (view as any).tick();
+		for (let i = 0; i < 5; i++) tick();
+		assert.equal(renders, 0, "простой: ни одной перерисовки");
+
+		appendFileSync(
+			file,
+			`${JSON.stringify({ type: "message", timestamp: at(1), message: { role: "user", content: "more" } })}\n`,
+		);
+		tick();
+		assert.equal(renders, 1, "дозапись: одна перерисовка");
+
+		const call = { type: "toolCall", id: "c1", name: "bash", arguments: { command: "sleep" } };
+		appendFileSync(
+			file,
+			`${JSON.stringify({ type: "message", timestamp: at(2), message: { role: "assistant", content: [call] } })}\n`,
+		);
+		tick();
+		view.render(100); // кадр с running-чипом попал в кэш
+		renders = 0;
+		tick();
+		assert.equal(renders, 1, "running-чип: спиннер продолжает анимироваться");
+	} finally {
+		view.dispose();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

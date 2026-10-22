@@ -299,6 +299,8 @@ export class TraceView {
 		const now = Date.now();
 		const dt = now - this.lastTick;
 		this.lastTick = now;
+		const model = this.model;
+		const fedBefore = this.fedCount;
 		const grew = this.poll();
 		if (this.mode === "live" || this.follow) {
 			this.feedAvailable();
@@ -311,7 +313,11 @@ export class TraceView {
 				this.poll(); // догнать дозапись на «живом» краю replay
 			}
 		}
-		this.tui.requestRender();
+		// Перерисовка всего TUI хоста — только когда кадр изменился: новые записи
+		// (шапка считает entries), скормленные/пересобранные модели или крутящийся
+		// спиннер running-чипа. Раньше — безусловно ~7 раз в секунду.
+		const spinning = !this.diffMode && this.cache?.spinFrame != null;
+		if (grew || this.fedCount !== fedBefore || this.model !== model || spinning) this.tui.requestRender();
 	}
 
 	// ---------- ввод ----------
