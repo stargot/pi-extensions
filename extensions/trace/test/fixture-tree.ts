@@ -14,9 +14,13 @@ const at = (sec: number) => {
 	return new Date(clock).toISOString();
 };
 
-const msg = (id: string, parentId: string | null, sec: number, message: object): Entry => {
+/** Ответ модели генерируется 2 с: message.timestamp — старт стрима, entry.timestamp — его конец. */
+export const GEN_MS = 2000;
+
+const msg = (id: string, parentId: string | null, sec: number, message: { role: string; [key: string]: unknown }): Entry => {
 	const timestamp = at(sec);
-	return { type: "message", id, parentId, timestamp, message: { timestamp: Date.parse(timestamp), ...message } };
+	const start = Date.parse(timestamp) - (message.role === "assistant" ? GEN_MS : 0);
+	return { type: "message", id, parentId, timestamp, message: { timestamp: start, ...message } };
 };
 
 const usage = (input: number, cacheRead: number, output: number, cost: number) => ({
