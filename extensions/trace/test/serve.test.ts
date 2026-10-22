@@ -15,7 +15,9 @@ test("serve.ts serves static files and the session file, /load switches it", asy
 		writeFileSync(b, '{"type":"session","version":3,"id":"b","timestamp":"2026-09-05T13:00:00.000Z","cwd":"/y"}\n');
 		const handle = await startServer({ file: a, port: 0 });
 		try {
-			const index = await fetch(`${handle.url}`).then((r) => r.text());
+			const indexRes = await fetch(`${handle.url}`);
+			assert.equal(indexRes.headers.get("cache-control"), "no-cache", "статика ревалидируется после обновления");
+			const index = await indexRes.text();
 			assert.ok(index.includes("<!DOCTYPE") || index.includes("trace"));
 
 			const first = await fetch(`${handle.url}session.jsonl`);

@@ -166,8 +166,14 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		return;
 	}
 	try {
-		res.writeHead(200, { "content-type": MIME[rel.slice(rel.lastIndexOf("."))] ?? "text/plain" });
-		res.end(readFileSync(join(webDir, rel)));
+		// Читаем до writeHead: при ошибке чтения заголовки ещё не ушли и 404 отправится.
+		const body = readFileSync(join(webDir, rel));
+		// no-cache: после обновления trace вкладка не держит старые index.html/app.js
+		res.writeHead(200, {
+			"content-type": MIME[rel.slice(rel.lastIndexOf("."))] ?? "text/plain",
+			"cache-control": "no-cache",
+		});
+		res.end(body);
 	} catch {
 		send(res, 404, "not found");
 	}
