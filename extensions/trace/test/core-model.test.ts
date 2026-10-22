@@ -119,3 +119,56 @@ test("deriveSession: смена модели до первого промпта 
 		["model"],
 	);
 });
+
+test("deriveSession: команды пользователя (!cmd) — в эре, ненулевой exit считается ошибкой", () => {
+	const v = deriveSession(tree());
+	assert.deepEqual(
+		v.eras[1]!.shell.map((c) => [c.command, c.exitCode]),
+		[
+			["ls", 0],
+			["npm test", 0],
+		],
+	);
+});
+
+test("deriveSession: ссылки на субагентов под новым и старым customType", () => {
+	const t = new SessionTree();
+	t.add({
+		type: "message",
+		id: "u",
+		parentId: null,
+		timestamp: "2026-09-05T12:00:00.000Z",
+		message: { role: "user", content: "go" },
+	});
+	for (const [id, customType] of [
+		["c1", "trace:subagents"],
+		["c2", "pitrace:subagents"],
+	] as const) {
+		t.add({
+			type: "custom",
+			id,
+			parentId: t.leafId,
+			timestamp: "2026-09-05T12:00:01.000Z",
+			customType,
+			data: { agent: "scout", task: "look", session: `/s/${id}.jsonl`, usage: { output: 10, cost: 0.01 } },
+		});
+	}
+	assert.deepEqual(
+		deriveSession(t).children.map((c) => c.session),
+		["/s/c1.jsonl", "/s/c2.jsonl"],
+	);
+});
+
+test("SessionTree/deriveSession: битые и неизвестные записи не роняют свёртку", () => {
+	const t = new SessionTree();
+	for (const e of [
+		null,
+		42,
+		"x",
+		{ type: "weird", id: "w", parentId: null },
+		{ type: "message", id: "m", parentId: "w" },
+	])
+		t.add(e as any);
+	assert.doesNotThrow(() => deriveSession(t));
+	assert.equal(deriveSession(t).turns.length, 0);
+});

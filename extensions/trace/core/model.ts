@@ -68,6 +68,14 @@ export interface ChildLink {
 	cost?: number;
 }
 
+/** Команда пользователя через `!` (bashExecution). */
+export interface ShellCommand {
+	entryId: string;
+	ts: number;
+	command: string;
+	exitCode?: number;
+}
+
 export interface Era {
 	/** 1…; эра 0 — ходы до первого промпта (если были). */
 	index: number;
@@ -78,6 +86,7 @@ export interface Era {
 	turns: Turn[];
 	markers: Marker[];
 	children: ChildLink[];
+	shell: ShellCommand[];
 	cost: number;
 	tokensOut: number;
 	/** Инструменты с ошибкой и ходы с stopReason error. */
@@ -195,6 +204,7 @@ function foldPath(path: readonly Entry[], labels: Map<string, string>, turnBase:
 			turns: [],
 			markers: [],
 			children: [],
+			shell: [],
 			cost: 0,
 			tokensOut: 0,
 			errors: 0,
@@ -255,6 +265,15 @@ function foldPath(path: readonly Entry[], labels: Map<string, string>, turnBase:
 					if (turn.stopReason === "error") host.errors++;
 					if (endMs > host.endMs) host.endMs = endMs;
 					out.turns.push(turn);
+				} else if (m.role === "bashExecution") {
+					const cmd: ShellCommand = {
+						entryId: e.id!,
+						ts,
+						command: oneLine(m.command ?? "", 200),
+						exitCode: m.exitCode,
+					};
+					current(ts).shell.push(cmd);
+					if (typeof m.exitCode === "number" && m.exitCode !== 0) current(ts).errors++;
 				} else if (m.role === "toolResult") {
 					const tool = calls.get(m.toolCallId);
 					if (tool) {
