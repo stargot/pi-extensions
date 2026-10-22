@@ -3,7 +3,8 @@
  *
  *   node web/serve.ts [--file <session.jsonl>] [--port 8787] [--no-open]
  *
- * Раздаёт index.html и app.js из этой папки, файл сессии — по /session.jsonl
+ * Раздаёт index.html и app.js из этой папки, ядро trace — по /core/<имя>.ts (типы
+ * стёрты, браузер грузит его как ES-модуль), файл сессии — по /session.jsonl
  * (?from=<байт> — только дописанное после offset: живой хвост вкладки).
  * Без --file берётся самая свежая сессия из ~/.pi/agent/sessions (или $PI_CODING_AGENT_DIR).
  * POST /load {"file": "..."} переключает файл без перезапуска; запросы с заголовком Origin
@@ -25,11 +26,13 @@ import {
 import { tmpdir } from "node:os";
 import { resolveSessionsDir } from "../../shared/sessions.ts";
 import { isLoopbackHost } from "../../shared/loopback.ts";
+import { stripTypeScriptTypes } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
+const coreDir = join(webDir, "..", "core");
 export const DEFAULT_PORT = 8787;
 
 const MIME: Record<string, string> = {
@@ -176,6 +179,18 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		return;
 	}
 
+	const core = /^\/core\/([a-z][a-z-]*)\.ts$/.exec(url.pathname);
+	if (core) {
+		try {
+			const body = coreModule(join(coreDir, `${core[1]}.ts`));
+			res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-cache" });
+			res.end(body);
+		} catch {
+			send(res, 404, "not found");
+		}
+		return;
+	}
+
 	// Статика: / → index.html, /app.js
 	const rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
 	if (rel !== "index.html" && rel !== "app.js") {
@@ -193,6 +208,31 @@ function handle(req: IncomingMessage, res: ServerResponse, state: { file?: strin
 		res.end(body);
 	} catch {
 		send(res, 404, "not found");
+	}
+}
+
+const stripped = new Map<string, { mtimeMs: number; js: string }>();
+
+/**
+ * Модуль ядра для браузера: типы стёрты, импорты ./x.ts остаются — браузер
+ * запросит их здесь же. Кэш по mtime. stripTypeScriptTypes — experimental:
+ * его разовое предупреждение глушится, чтобы не печататься поверх TUI pi.
+ */
+function coreModule(file: string): string {
+	const { mtimeMs } = statSync(file);
+	const hit = stripped.get(file);
+	if (hit?.mtimeMs === mtimeMs) return hit.js;
+	const emit = process.emitWarning;
+	process.emitWarning = ((warning: string | Error, ...rest: any[]) => {
+		if (String(warning).includes("stripTypeScriptTypes")) return;
+		return (emit as any).call(process, warning, ...rest);
+	}) as typeof process.emitWarning;
+	try {
+		const js = stripTypeScriptTypes(readFileSync(file, "utf8"));
+		stripped.set(file, { mtimeMs, js });
+		return js;
+	} finally {
+		process.emitWarning = emit;
 	}
 }
 

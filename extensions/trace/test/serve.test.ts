@@ -3,6 +3,7 @@ import { Agent, request } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { isLoopbackHost, newestSession, startServer } from "../web/serve.ts";
 
@@ -181,6 +182,39 @@ test("/session.jsonl?from= returns only the bytes after the offset", async () =>
 			await handle.close();
 		}
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("/core/<name>.ts serves the core as browser-loadable JavaScript", async () => {
+	const handle = await startServer({ port: 0 });
+	const dir = mkdtempSync(join(tmpdir(), "trace-core-"));
+	try {
+		for (const name of ["text", "tree", "model"]) {
+			const res = await fetch(`${handle.url}core/${name}.ts`);
+			assert.equal(res.status, 200, name);
+			assert.match(res.headers.get("content-type") ?? "", /^text\/javascript/);
+			// Как браузер: модули по своим URL, импорты ./x.ts — к соседям.
+			const js = (await res.text()).replace(/from "\.\/([a-z-]+)\.ts"/g, 'from "./$1.mjs"');
+			assert.doesNotMatch(js, /export interface|: SessionTree\b/, "типы стёрты");
+			writeFileSync(join(dir, `${name}.mjs`), js);
+		}
+		const tree = await import(pathToFileURL(join(dir, "tree.mjs")).href);
+		const model = await import(pathToFileURL(join(dir, "model.mjs")).href);
+		const t = new tree.SessionTree();
+		t.add({
+			type: "message",
+			id: "u",
+			parentId: null,
+			timestamp: "2026-09-05T12:00:00.000Z",
+			message: { role: "user", content: "hi" },
+		});
+		assert.equal(model.deriveSession(t).eras[0].prompt, "hi");
+
+		assert.equal((await fetch(`${handle.url}core/nope.ts`)).status, 404);
+		assert.equal((await fetch(`${handle.url}core/%2E%2E%2Fweb%2Fserve.ts`)).status, 404, "только имена из core/");
+	} finally {
+		await handle.close();
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
