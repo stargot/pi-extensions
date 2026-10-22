@@ -67,6 +67,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
 
 ### Removed
 
+- **shared**: модуль `shared/line-diff.ts` с тестом — его использовал только
+  старый режим контекст-диффа trace, который заменил вид Context.
 - **prime-protocol**: расширение удалено из пакета — протокол оркестратора
   слился в subagents как внутренний policy-модуль (pure `prime-protocol.ts`,
   фабрика `prime.ts`, hook-слой и команды `/prime`/`/solo` в `index.ts`);
