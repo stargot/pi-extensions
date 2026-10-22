@@ -1,7 +1,7 @@
 /**
  * Смоук-тест trace без TTY: рендерит реальную сессию в stdout.
  * Запуск:
- *   node test/render.ts <session.jsonl> [rows] [--keys=ПОСЛЕДОВATEЛЬНОСТЬ]
+ *   node test/render.ts <session.jsonl> [rows] [--cols=110] [--keys=ПОСЛЕДОВATEЛЬНОСТЬ]
  * Клавиши: обычные символы пишутся как есть, Enter — «\r», например:
  *   --keys="m"          сводка по моделям
  *   --keys="/edit\r"    фильтр по подстроке
@@ -19,11 +19,13 @@ if (!file) {
 }
 const rowsArg = argv.find((a) => /^\d+$/.test(a));
 const keysArg = argv.find((a) => a.startsWith("--keys="));
+const colsArg = argv.find((a) => a.startsWith("--cols="));
 const rows = Number(rowsArg ?? 30);
+const cols = Number(colsArg?.slice(7) ?? 110);
 
 const tui = {
 	requestRender() {},
-	terminal: { rows, columns: 110 },
+	terminal: { rows, columns: cols },
 };
 const theme = {
 	fg: (_color: string, s: string) => s,
@@ -61,10 +63,10 @@ if (keysArg) {
 	for (const t of tokens) view.handleInput(t);
 }
 
-const lines = view.render(110);
+const lines = view.render(cols);
 console.log(lines.join("\n"));
 console.log(
-	`\n[rendered ${lines.length} rows @110 cols from ${basename(file)}${keysArg ? ` · keys=${keysArg.slice(7)}` : ""}]`,
+	`\n[rendered ${lines.length} rows @${cols} cols from ${basename(file)}${keysArg ? ` · keys=${keysArg.slice(7)}` : ""}]`,
 );
 view.dispose();
 process.exit(0);

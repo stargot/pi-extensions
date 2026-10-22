@@ -111,10 +111,11 @@ test("reserveRows: 1 (fullscreen-хост) — рендер на строку к
 	}
 });
 
-test("reserveRows учитывается в теле ленты: PgDn с верха сдвигает на (rows - reserve - 5)", () => {
+test("reserveRows учитывается в теле ленты: PgDn с верха сдвигает на (rows - reserve - 7)", () => {
 	const file = writeSession(40);
 	try {
-		// rows=15, reserve=1 → avail 14, тело 12; PgDn = тело-3 = 9 строк.
+		// rows=15, reserve=1 → avail 14: шапка, вкладки, полоса эр и подсказки —
+		// тело 10; PgDn = тело-3 = 7 строк.
 		const view = new TraceView({
 			tui: mockTui(15, 200) as any,
 			theme: mockTheme() as any,
@@ -128,9 +129,9 @@ test("reserveRows учитывается в теле ленты: PgDn с вер�
 			view.handleInput("\x1b[H"); // home: scrollTop = 0
 			view.handleInput(PAGE_DOWN);
 			const out = view.render(160);
-			// scrollTop 9 → верх тела = строка ленты №10 (индекс 9): вторая строка
-			// пятого элемента («question 5»); out[0] — header, out[1] — верх тела.
-			assert.ok(out[1].includes("question 5"), `после PgDn верх тела: ${out[1]}`);
+			// scrollTop 7 → верх тела = строка ленты №8 (индекс 7): заголовок четвёртой
+			// эры («question 4»); out[0] — шапка, out[1] — вкладки, out[2] — верх тела.
+			assert.ok(out[2].includes("question 4"), `после PgDn верх тела: ${out[2]}`);
 		} finally {
 			view.dispose();
 		}

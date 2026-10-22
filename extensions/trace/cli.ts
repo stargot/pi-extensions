@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { resolveSessionsDir } from "../shared/sessions.ts";
 import { TraceView } from "./graph.ts";
-import { oneLine } from "./session.ts";
+import { oneLine } from "./core/text.ts";
 
 const SESSIONS_DIR = resolveSessionsDir();
 

@@ -1,25 +1,23 @@
 /**
- * trace — TUI-компонент: лента ходов агента как flow-граф.
+ * trace — TUI-оверлей сессии на ядре trace (core/): дерево записей по parentId,
+ * эры промптов, брошенные ветки, контекст запроса как его собирает pi.
  * Режимы: live (follow за хвостом файла) и replay (проигрывание по timestamp'ам).
  *
- * Композиция на примитивах pi-tui (паттерн — shared/scroll-report.ts):
- * карточки — Box, лента — ScrollView, мини-карта — соседняя колонка HStack.
- * Клавиши действий (/, e, m, d, n/N, f, q и replay-набор) — action'ы ext.trace.*
- * из shared/keybindings.ts (переопределяются в <agentDir>/keybindings.json);
- * скролл-навигация и esc/ctrl+c — как раньше, литерально.
- * Состояние скролла (scrollTop, клампы) принадлежит ScrollView; follow-режим
- * («держать хвост») остаётся флагом TraceView и каждый рендер пинокает
- * scrollToEnd() — так бейдж LIVE/PAUSED/▶ не зависит от внутреннего
- * followingEnd у ScrollView. Колесо мыши приходит в handleMouse компонента через
- * dispatchMouseToLayout (и в editor-dock fullscreen-хоста, и в cli-alt-screen);
- * { handled: true } не пускает routeWheel до transcript'а хоста.
- * Высоту вью берёт из terminal.rows минус reserveRows (резерв хоста — см. поле).
+ * Раскладка: шапка (итоги, разбивка времени, бейдж) · вкладки 1 Flow / 2 Timeline /
+ * 3 Context · тело (ScrollView + мини-карта, справа — инспектор выбранного хода
+ * на широком терминале) · полоса эр · подсказки с позицией n/total.
+ * На низком терминале вкладки и полоса эр прячутся — тело важнее.
+ *
+ * Виды строятся чистыми функциями tui-views.ts; здесь — данные, ввод, скролл.
+ * Клавиши действий — action'ы ext.trace.* из shared/keybindings.ts
+ * (переопределяются в <agentDir>/keybindings.json); скролл и esc/ctrl+c — литерально.
+ * Колесо мыши приходит в handleMouse через dispatchMouseToLayout; { handled: true }
+ * не пускает routeWheel хоста до transcript'а.
  */
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { basename } from "node:path";
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { basename, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
-	Box,
 	type Component,
 	HStack,
 	Key,
@@ -30,24 +28,33 @@ import {
 	type TuiMouseEventResult,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { chip } from "../shared/chip.ts";
-import {
-	diffKindColors,
-	diffLines,
-	filterRows,
-	renderDiffRow,
-	type DiffColor,
-	type DiffDisplayRow,
-	type DiffRow,
-} from "../shared/line-diff.ts";
 import { actionHint, getExtKeybindings, matchAction, matchActionIndex } from "../shared/keybindings.ts";
-import { GraphModel, type ChildItem, type Item, fmtClock, fmtDur, fmtK, fmtMoney, oneLine } from "./session.ts";
-import { cacheHitRatio, cacheLevel, CONTEXT_HISTORY_LIMIT } from "./context-history.ts";
+import { resolveSessionsDir } from "../shared/sessions.ts";
+import { readRunningWorkers, runningIndexPath } from "../subagents/running-index.ts";
+import { deriveSession, type SessionView } from "./core/model.ts";
+import { fmtClock, fmtK, fmtMoney, oneLine } from "./core/text.ts";
+import { SessionTree } from "./core/tree.ts";
+import {
+	type Built,
+	type ChildState,
+	contextLines,
+	eraStrip,
+	flowLines,
+	inspectorLines,
+	spread,
+	type Th,
+	timelineLines,
+	turnState,
+} from "./tui-views.ts";
 
 const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
 /** Ширина мини-карты: колонка силуэта + колонка позиции вьюпорта. */
 const MAP = 2;
+/** С этой ширины справа появляется инспектор выбранного хода. */
+const INSPECTOR_MIN_WIDTH = 110;
+/** Ниже этой высоты вкладки и полоса эр прячутся. */
+const COMPACT_ROWS = 14;
 // класс строки ленты: вес для выборки и цвет на карте
 const KIND_WEIGHT: Record<string, number> = { E: 5, R: 4, U: 3, C: 2, B: 2, t: 1, ".": 0 };
 const MAP_COLOR: Record<string, string> = {
@@ -61,25 +68,48 @@ const MAP_COLOR: Record<string, string> = {
 	t: "muted",
 };
 
-interface UiTheme {
-	fg(color: string, text: string): string;
-	bg?(color: string, text: string): string;
-	bold(text: string): string;
-}
+type ViewMode = "flow" | "timeline" | "context";
+const VIEW_LABEL: Record<ViewMode, string> = { flow: "1 Flow", timeline: "2 Timeline", context: "3 Context" };
 
 interface TuiLike {
 	requestRender(): void;
 	terminal: { rows: number; columns: number };
 }
 
-/** Однострочный компонент для Box: отдаёт готовую строку, ширины касается сам Box. */
-function textLine(s: string): Component {
-	return { render: () => [s], invalidate: () => {} };
+/** Состояние субагента из его сессии: ходы, текущий инструмент, ошибка. */
+function childFromSession(file: string): Omit<ChildState, "name" | "task"> | undefined {
+	let text: string;
+	try {
+		text = readFileSync(file, "utf8");
+	} catch {
+		return undefined;
+	}
+	const tree = new SessionTree();
+	for (const line of text.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			tree.add(JSON.parse(line));
+		} catch {
+			// недописанная строка
+		}
+	}
+	const v = deriveSession(tree);
+	const last = v.turns.at(-1);
+	const running = last?.tools.find((x) => x.status === "running");
+	return {
+		model: last?.model,
+		state: v.running ? "running" : last && turnState(v, last) === "error" ? "error" : "ok",
+		turns: v.turns.length,
+		out: v.turns.reduce((s, t) => s + t.tokens.output, 0),
+		cost: v.totals.cost,
+		tool: running ? `${running.name} ${running.label}` : last?.tools.at(-1)?.name,
+		session: file,
+	};
 }
 
 export class TraceView {
 	private tui: TuiLike;
-	private theme: UiTheme;
+	private theme: Th;
 	private file: string;
 	private mode: "live" | "replay";
 	private onClose: () => void;
@@ -91,12 +121,14 @@ export class TraceView {
 	private readonly reserveRows: number;
 
 	private entries: { ms: number; e: any }[] = [];
-	private model: GraphModel = new GraphModel();
+	private tree = new SessionTree();
 	private fedCount = 0;
 	private byteOffset = 0;
 	private pending = "";
 	/** Держит неполный UTF-8-символ на границе чтения до следующего poll. */
 	private decoder = new StringDecoder("utf8");
+	/** Модель ядра на текущем дереве; пересчёт — только при смене revision. */
+	private derived: { rev: number; v: SessionView } | undefined;
 
 	private playheadMs = 0;
 	private speed = 8;
@@ -105,40 +137,32 @@ export class TraceView {
 	private lastTick = Date.now();
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private closed = false;
-	private lineKinds: string[] = [];
-	private matchStarts: number[] = []; // строки ленты, где начинаются элементы под фильтром
+
+	private viewMode: ViewMode = "timeline";
+	private viewBeforeContext: ViewMode = "timeline";
+	/** Выбранный ход (entryId); undefined — прилипает к последнему ходу. */
+	private selId: string | undefined;
+	private inspectorOn = true;
 	private matchCursor = -1; // индекс последнего совпадения, к которому прыгали (n/N)
 	private filterQ = ""; // активный фильтр подстроки
 	private editing = false; // идёт ввод фильтра
 	private errorsOnly = false; // режим «только ошибки»
 	private summary = false; // сводка по моделям вместо ленты
-	// B6: режим контекст-диффа (клавиша d): таблица последних ходов + построчный
-	// дифф подписей prev→curr для выбранного хода. q/esc/d — назад к ленте.
-	private diffMode = false;
-	private diffSel = 0; // индекс выбранного хода в history.snapshots
-	private diffTail = true; // выбран последний ход (догоняет новые при live-дозаписи)
-	private diffCache: { width: number; rev: number; lines: string[]; kinds: string[] } | undefined;
-	private followBeforeDiff?: boolean;
 	private cache:
-		| {
-				width: number;
-				version: number;
-				lines: string[];
-				kinds: string[];
-				matchStarts: number[];
-				/** Кадр спиннера, с которым собраны строки; null — в ленте нет running-чипов. */
+		| (Built & {
+				key: string;
+				/** Кадр спиннера, с которым собраны строки; null — идущих инструментов нет. */
 				spinFrame: string | null;
-		  }
+		  })
 		| undefined;
-	/** buildLines отрисовал хотя бы один running-чип (спиннер нужно анимировать). */
-	private builtRunning = false;
+	private children: { at: number; list: ChildState[] } | undefined;
 	/** Клавиши ext.*: свой менеджер с definitions расширений (см. shared/keybindings.ts). */
 	private readonly kb = getExtKeybindings();
 
 	/** Вьюпорт: нарезает кэш ленты по scrollTop (в оверлее layout-движка нет). */
 	private readonly viewport: Component = {
 		render: (_width: number) => {
-			const lines = (this.diffMode ? this.diffCache?.lines : this.cache?.lines) ?? [];
+			const lines = this.cache?.lines ?? [];
 			const body = this.mapState.body;
 			const top = this.scrollView.scrollTop;
 			const out: string[] = [];
@@ -166,10 +190,10 @@ export class TraceView {
 				let bestW = 0;
 				let bestK = ".";
 				for (let i = a; i < kinds.length && i < bEnd + 1; i++) {
-					const w = KIND_WEIGHT[kinds[i]] ?? 0;
+					const w = KIND_WEIGHT[kinds[i]!] ?? 0;
 					if (w > bestW) {
 						bestW = w;
-						bestK = kinds[i];
+						bestK = kinds[i]!;
 					}
 				}
 				const inView = bEnd > top && a < top + body;
@@ -180,14 +204,23 @@ export class TraceView {
 		},
 		invalidate: () => {},
 	};
-	private readonly feedRow = new HStack([
-		{ component: this.scrollView, grow: 1 },
-		{ component: this.mapComp, basis: MAP, grow: 0, shrink: 0 },
-	]);
+	/** Инспектор: строки на текущий кадр, слева — разделитель. */
+	private inspector: string[] = [];
+	private readonly inspectorComp: Component = {
+		render: (width: number) => {
+			const out: string[] = [];
+			const bar = this.theme.fg("borderMuted", "│ ");
+			for (let r = 0; r < this.mapState.body; r++) {
+				out.push(`${bar}${truncateToWidth(this.inspector[r] ?? "", Math.max(0, width - 2))}`);
+			}
+			return out;
+		},
+		invalidate: () => {},
+	};
 
 	constructor(opts: {
 		tui: TuiLike;
-		theme: UiTheme;
+		theme: Th;
 		file: string;
 		mode: "live" | "replay";
 		speed?: number;
@@ -231,7 +264,8 @@ export class TraceView {
 				this.byteOffset = 0;
 				this.pending = "";
 				this.decoder = new StringDecoder("utf8");
-				this.resetModel();
+				this.entries = [];
+				this.resetTree();
 			}
 			if (size === this.byteOffset) return false;
 			const buf = Buffer.alloc(size - this.byteOffset);
@@ -258,22 +292,22 @@ export class TraceView {
 		}
 	}
 
-	private resetModel(): void {
-		this.model = new GraphModel();
+	private resetTree(): void {
+		this.tree = new SessionTree();
 		this.fedCount = 0;
 		this.cache = undefined;
 	}
 
 	private feedOne(): void {
 		if (this.fedCount >= this.entries.length) return;
-		this.model.feedEntry(this.entries[this.fedCount].e);
+		this.tree.add(this.entries[this.fedCount]!.e);
 		this.fedCount++;
 	}
 
 	private feedAvailable(): void {
 		while (this.fedCount < this.entries.length) this.feedOne();
 		if (this.entries.length > 0) {
-			this.playheadMs = Math.max(this.playheadMs, this.entries[this.entries.length - 1].ms);
+			this.playheadMs = Math.max(this.playheadMs, this.entries[this.entries.length - 1]!.ms);
 		}
 	}
 
@@ -282,10 +316,10 @@ export class TraceView {
 		let hi = this.entries.length;
 		while (lo < hi) {
 			const mid = (lo + hi) >> 1;
-			if (this.entries[mid].ms <= ms) lo = mid + 1;
+			if (this.entries[mid]!.ms <= ms) lo = mid + 1;
 			else hi = mid;
 		}
-		this.resetModel();
+		this.resetTree();
 		for (let i = 0; i < lo; i++) this.feedOne();
 		// Плейхед — ровно в цель (в границах сессии), а не на последнюю скормленную
 		// запись: иначе при паузе >5с между записями → откатывал его назад и залипал.
@@ -294,19 +328,81 @@ export class TraceView {
 		this.playheadMs = Math.min(last, Math.max(first, ms));
 	}
 
+	/** Модель ядра на скормленном дереве. now — для идущих инструментов. */
+	private view(): SessionView {
+		if (this.derived?.rev !== this.tree.revision) {
+			const now = this.mode === "live" || this.follow ? Date.now() : this.playheadMs;
+			this.derived = { rev: this.tree.revision, v: deriveSession(this.tree, this.tree.leafId, now) };
+		}
+		return this.derived.v;
+	}
+
+	/** Субагенты для Flow: ссылки trace:subagents + живые воркеры, состояние — из их сессий. Раз в секунду. */
+	private childStates(v: SessionView): ChildState[] {
+		const now = Date.now();
+		if (this.children && now - this.children.at < 1000) return this.children.list;
+		let workers: { sessionFile: string; label: string; task?: string; startedAt: number }[] = [];
+		try {
+			workers = readRunningWorkers(runningIndexPath(join(resolveSessionsDir(), "subagents"))).workers;
+		} catch {
+			// индекс subagents опционален
+		}
+		const live = new Map(workers.map((w) => [w.sessionFile, w]));
+		const seen = new Set<string>();
+		const list: ChildState[] = [];
+		for (const link of v.children) {
+			seen.add(link.session);
+			const fromFile = childFromSession(link.session);
+			const w = live.get(link.session);
+			list.push({
+				name: link.agent,
+				task: link.task,
+				model: link.model,
+				state: w ? "running" : "ok",
+				turns: 0,
+				out: link.tokensOut ?? 0,
+				cost: link.cost ?? 0,
+				session: link.session,
+				...fromFile,
+				...(w ? { state: "running" as const, elapsedMs: now - w.startedAt } : {}),
+			});
+		}
+		for (const w of workers) {
+			if (seen.has(w.sessionFile)) continue;
+			// Живой воркер этой сессии ещё не записал карточку: показываем по индексу,
+			// если его сессия началась не раньше нашей.
+			const started = this.entries[0]?.ms ?? 0;
+			if (w.startedAt < started) continue;
+			const fromFile = childFromSession(w.sessionFile);
+			list.push({
+				name: w.label,
+				task: w.task ?? "",
+				turns: 0,
+				out: 0,
+				cost: 0,
+				...fromFile,
+				state: "running",
+				elapsedMs: now - w.startedAt,
+				session: w.sessionFile,
+			});
+		}
+		this.children = { at: now, list };
+		return list;
+	}
+
 	private tick(): void {
 		if (this.closed) return;
 		const now = Date.now();
 		const dt = now - this.lastTick;
 		this.lastTick = now;
-		const model = this.model;
 		const fedBefore = this.fedCount;
+		const treeBefore = this.tree;
 		const grew = this.poll();
 		if (this.mode === "live" || this.follow) {
 			this.feedAvailable();
 		} else if (!this.paused) {
 			this.playheadMs += dt * this.speed;
-			while (this.fedCount < this.entries.length && this.entries[this.fedCount].ms <= this.playheadMs) {
+			while (this.fedCount < this.entries.length && this.entries[this.fedCount]!.ms <= this.playheadMs) {
 				this.feedOne();
 			}
 			if (this.fedCount >= this.entries.length && grew) {
@@ -314,16 +410,16 @@ export class TraceView {
 			}
 		}
 		// Перерисовка всего TUI хоста — только когда кадр изменился: новые записи
-		// (шапка считает entries), скормленные/пересобранные модели или крутящийся
-		// спиннер running-чипа. Раньше — безусловно ~7 раз в секунду.
-		const spinning = !this.diffMode && this.cache?.spinFrame != null;
-		if (grew || this.fedCount !== fedBefore || this.model !== model || spinning) this.tui.requestRender();
+		// (шапка считает entries), скормленное/пересобранное дерево или крутящийся
+		// спиннер идущего инструмента.
+		const spinning = this.cache?.spinFrame != null;
+		if (grew || this.fedCount !== fedBefore || this.tree !== treeBefore || spinning) this.tui.requestRender();
 	}
 
 	// ---------- ввод ----------
 
 	handleInput(data: string): void {
-		const rows = this.availRows() - 2;
+		const rows = this.bodyRows();
 
 		// режим ввода фильтра: печатаем подстроку, enter — применить, esc — сбросить
 		if (this.editing) {
@@ -346,48 +442,19 @@ export class TraceView {
 			return;
 		}
 
-		// B6: режим контекст-диффа — свой набор клавиш; d/q (действия diff/close) и
-		// esc возвращают к ленте, а не закрывают оверлей. Ctrl+C закрывает и отсюда.
-		if (this.diffMode) {
-			if (matchesKey(data, Key.ctrl("c"))) {
-				this.dispose();
-				this.onClose();
-				return;
-			}
-			if (
-				matchAction(this.kb, data, "ext.trace.diff") ||
-				matchAction(this.kb, data, "ext.trace.close") ||
-				matchesKey(data, Key.escape)
-			) {
-				this.exitDiff();
-			} else if (matchesKey(data, Key.up)) {
-				this.moveDiffSel(-1);
-			} else if (matchesKey(data, Key.down)) {
-				this.moveDiffSel(1);
-			} else if (matchesKey(data, Key.pageUp)) {
-				this.scrollView.scrollBy(-(rows - 3));
-			} else if (matchesKey(data, Key.pageDown)) {
-				this.scrollView.scrollBy(rows - 3);
-			} else if (matchesKey(data, Key.home)) {
-				this.scrollView.scrollToStart();
-			} else if (matchesKey(data, Key.end) || matchAction(this.kb, data, "ext.trace.follow")) {
-				this.scrollView.scrollToEnd();
-			}
-			this.tui.requestRender();
-			return;
-		}
-
 		if (matchesKey(data, Key.ctrl("c")) || matchAction(this.kb, data, "ext.trace.close")) {
 			this.dispose();
 			this.onClose();
 			return;
 		}
 		if (matchesKey(data, Key.escape)) {
-			// esc: сначала снимает фильтры, и только потом закрывает
-			if (this.filterQ || this.errorsOnly || this.summary) {
+			// esc: сначала снимает фильтры и выбор, и только потом закрывает
+			if (this.filterQ || this.errorsOnly || this.summary || this.selId || this.viewMode === "context") {
 				this.filterQ = "";
 				this.errorsOnly = false;
 				this.summary = false;
+				this.selId = undefined;
+				if (this.viewMode === "context") this.viewMode = this.viewBeforeContext;
 				this.matchCursor = -1;
 				this.cache = undefined;
 			} else {
@@ -395,6 +462,25 @@ export class TraceView {
 				this.onClose();
 				return;
 			}
+		} else if (matchAction(this.kb, data, "ext.trace.viewFlow")) {
+			this.setView("flow");
+		} else if (matchAction(this.kb, data, "ext.trace.viewTimeline")) {
+			this.setView("timeline");
+		} else if (matchAction(this.kb, data, "ext.trace.viewContext")) {
+			this.setView("context");
+		} else if (matchAction(this.kb, data, "ext.trace.diff")) {
+			// d — контекст выбранного хода и обратно (раньше — отдельный режим диффа)
+			this.setView(this.viewMode === "context" ? this.viewBeforeContext : "context");
+		} else if (matchAction(this.kb, data, "ext.trace.inspector")) {
+			this.inspectorOn = !this.inspectorOn;
+		} else if (matchAction(this.kb, data, "ext.trace.prevTurn")) {
+			this.stepTurn(-1);
+		} else if (matchAction(this.kb, data, "ext.trace.nextTurn")) {
+			this.stepTurn(1);
+		} else if (matchAction(this.kb, data, "ext.trace.prevEra")) {
+			this.stepEra(-1);
+		} else if (matchAction(this.kb, data, "ext.trace.nextEra")) {
+			this.stepEra(1);
 		} else if (matchAction(this.kb, data, "ext.trace.filter")) {
 			this.editing = true;
 		} else if (matchAction(this.kb, data, "ext.trace.errors")) {
@@ -404,13 +490,9 @@ export class TraceView {
 		} else if (matchAction(this.kb, data, "ext.trace.models")) {
 			this.summary = !this.summary;
 			this.cache = undefined;
-		} else if (matchAction(this.kb, data, "ext.trace.diff")) {
-			this.enterDiff();
 		} else {
 			// направление — по индексу совпавшего ключа в резолвнутом списке: первая
-			// клавиша — вперёд (+1), вторая и далее — назад (-1). Не по регистру data:
-			// при переопределении ["j","k"] обе клавиши строчные и старая регистр-
-			// эвристика молча вела всё вперёд.
+			// клавиша — вперёд (+1), вторая и далее — назад (-1).
 			const idx = matchActionIndex(this.kb, data, "ext.trace.jumpMatch");
 			if (idx >= 0) {
 				this.jumpMatch(idx <= 0 ? 1 : -1);
@@ -438,9 +520,7 @@ export class TraceView {
 		this.tui.requestRender();
 	}
 
-	/** Колесо мыши: событие приходит сюда через dispatchMouseToLayout (и в editor-dock
-	 * fullscreen-хоста, и в cli-alt-screen); { handled: true } не пускает routeWheel
-	 * хоста до transcript'а — крутим только наш ScrollView. */
+	/** Колесо мыши: { handled: true } не пускает routeWheel хоста до transcript'а. */
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
 		this.scrollView.scrollBy(event.wheelDelta);
@@ -476,26 +556,71 @@ export class TraceView {
 		}
 	}
 
-	/** Строки терминала, доступные оверлею, с учётом резерва хоста. Единая точка расчёта
-	 * высоты: render (тело ленты), atTail (порог follow) и PgUp/PgDn должны считать
-	 * одинаково, иначе follow включается на строку раньше/позже хвоста. */
+	private setView(mode: ViewMode): void {
+		if (mode === this.viewMode) return;
+		if (mode === "context") this.viewBeforeContext = this.viewMode;
+		this.viewMode = mode;
+		this.cache = undefined;
+		this.matchCursor = -1;
+		if (mode === "timeline" && this.follow) this.scrollView.scrollToEnd();
+		else this.scrollView.scrollToStart();
+	}
+
+	/** , / . — соседний ход активного пути; выбор прокручивает Timeline к нему. */
+	private stepTurn(dir: 1 | -1): void {
+		const turns = this.view().turns;
+		if (turns.length === 0) return;
+		const cur = this.selId ? turns.findIndex((t) => t.entryId === this.selId) : turns.length - 1;
+		const next = turns[Math.min(turns.length - 1, Math.max(0, (cur < 0 ? turns.length - 1 : cur) + dir))]!;
+		this.select(next.entryId === turns.at(-1)?.entryId && dir === 1 ? undefined : next.entryId, next.entryId);
+	}
+
+	/** [ / ] — первая ход соседней эры. */
+	private stepEra(dir: 1 | -1): void {
+		const v = this.view();
+		const eras = v.eras.filter((e) => e.turns.length > 0);
+		if (eras.length === 0) return;
+		const selId = this.selId ?? v.turns.at(-1)?.entryId;
+		const cur = eras.findIndex((e) => e.turns.some((t) => t.entryId === selId));
+		const era = eras[Math.min(eras.length - 1, Math.max(0, (cur < 0 ? eras.length - 1 : cur) + dir))]!;
+		this.select(era.turns[0]!.entryId, era.turns[0]!.entryId);
+	}
+
+	private select(selId: string | undefined, scrollTo: string): void {
+		this.selId = selId;
+		this.cache = undefined;
+		if (this.viewMode !== "timeline") return;
+		this.render(this.tui.terminal.columns); // прогрев якорей
+		// render() выше заполнил кэш; TS сужает this.cache до undefined по присваиванию.
+		const at = (this.cache as Built | undefined)?.anchors.get(scrollTo);
+		if (at === undefined) return;
+		this.follow = false;
+		this.scrollView.scrollTo(Math.max(0, at - 2), { disableFollow: true });
+	}
+
+	/** Строки терминала, доступные оверлею, с учётом резерва хоста. */
 	private availRows(): number {
 		return Math.max(6, this.tui.terminal.rows - this.reserveRows);
 	}
 
+	private compact(): boolean {
+		return this.availRows() < COMPACT_ROWS;
+	}
+
+	/** Строки тела: минус шапка и подсказки, и (не в компактном режиме) вкладки с полосой эр. */
+	private bodyRows(): number {
+		return this.availRows() - 2 - (this.compact() ? 0 : 2);
+	}
+
 	/** Вьюпорт сидит на хвосте ленты (последняя строка контента видна). */
 	private atTail(): boolean {
-		const total = (this.diffMode ? this.diffCache?.lines.length : this.cache?.lines.length) ?? 0;
-		const body = this.availRows() - 2;
-		return this.scrollView.scrollTop >= Math.max(0, total - body);
+		const total = this.cache?.lines.length ?? 0;
+		return this.scrollView.scrollTop >= Math.max(0, total - this.bodyRows());
 	}
 
 	/** n/N: к следующему/предыдущему совпадению фильтра (без фильтра — к соседнему элементу). */
 	private jumpMatch(dir: 1 | -1): void {
-		if (!this.cache) {
-			// после правки фильтра кэш сброшен — прогреваем, чтобы получить matchStarts
-			this.render(Math.max(20, this.tui.terminal.columns - MAP));
-		}
+		if (!this.cache) this.render(this.tui.terminal.columns);
 		const ms = this.cache?.matchStarts;
 		if (!ms || ms.length === 0) return;
 
@@ -507,7 +632,7 @@ export class TraceView {
 			if (dir === -1) {
 				this.matchCursor = ms.length - 1;
 				for (let i = ms.length - 1; i >= 0; i--) {
-					if (ms[i] < cur) {
+					if (ms[i]! < cur) {
 						this.matchCursor = i;
 						break;
 					}
@@ -519,7 +644,7 @@ export class TraceView {
 			if (this.matchCursor < 0) this.matchCursor = ms.length - 1;
 		}
 
-		const target = ms[this.matchCursor];
+		const target = ms[this.matchCursor]!;
 		this.follow = false;
 		this.scrollView.scrollTo(target, { disableFollow: true });
 		this.tui.requestRender();
@@ -528,6 +653,7 @@ export class TraceView {
 	private jumpToEnd(): void {
 		this.follow = true;
 		this.feedAvailable();
+		if (this.viewMode === "timeline") this.scrollView.scrollToEnd();
 	}
 
 	// ---------- рендер ----------
@@ -536,115 +662,166 @@ export class TraceView {
 		this.cache = undefined;
 	}
 
+	private spin(): string {
+		return SPIN[Math.floor(Date.now() / 90) % SPIN.length]!;
+	}
+
+	private showInspector(width: number): boolean {
+		return this.inspectorOn && width >= INSPECTOR_MIN_WIDTH && !this.summary;
+	}
+
+	private inspectorWidth(width: number): number {
+		return Math.max(30, Math.min(48, Math.floor(width * 0.32)));
+	}
+
 	render(width: number): string[] {
 		const rows = this.availRows();
-		const body = rows - 2;
-		const contentW = Math.max(20, width - MAP);
-		if (this.diffMode) {
-			this.syncDiffSel();
-			if (!this.diffCache || this.diffCache.width !== contentW || this.diffCache.rev !== this.model.history.revision) {
-				const built = this.buildDiffLines(contentW);
-				this.diffCache = {
-					width: contentW,
-					rev: this.model.history.revision,
-					lines: built.lines.map((l) => truncateToWidth(l, contentW)),
-					kinds: built.kinds,
-				};
-			}
-		} else if (
+		const body = this.bodyRows();
+		const withInspector = this.showInspector(width);
+		const inspW = withInspector ? this.inspectorWidth(width) : 0;
+		const contentW = Math.max(20, width - MAP - inspW);
+		const v = this.view();
+		const frame = this.spin();
+		const key = [
+			this.viewMode,
+			contentW,
+			this.tree.revision,
+			this.selId,
+			this.filterQ,
+			this.errorsOnly,
+			this.summary,
+		].join("|");
+		const childrenStale = this.viewMode === "flow" && (!this.children || Date.now() - this.children.at >= 1000);
+		if (
 			!this.cache ||
-			this.cache.width !== contentW ||
-			this.cache.version !== this.model.version ||
-			(this.cache.spinFrame !== null && this.cache.spinFrame !== this.spin())
+			this.cache.key !== key ||
+			childrenStale ||
+			(this.cache.spinFrame !== null && this.cache.spinFrame !== frame)
 		) {
-			// Кадр берём до сборки: buildLines рисует running-чипы им же.
-			const frame = this.spin();
-			const lines = this.buildLines(contentW).map((l) => truncateToWidth(l, contentW));
+			const built = this.build(v, contentW, frame);
 			this.cache = {
-				width: contentW,
-				version: this.model.version,
-				lines,
-				kinds: this.lineKinds,
-				matchStarts: this.matchStarts,
-				spinFrame: this.builtRunning ? frame : null,
+				...built,
+				lines: built.lines.map((l) => truncateToWidth(l, contentW)),
+				key,
+				spinFrame: built.running ? frame : null,
 			};
 		}
-		const active = this.diffMode ? this.diffCache : this.cache;
-		const lines = active?.lines ?? [];
-		const kinds = active?.kinds ?? [];
+		const { lines, kinds } = this.cache;
 		this.scrollView.updateLayout(lines.length, body, () => this.tui.requestRender());
-		// follow-режим и играющий replay держат хвост; стоит пользователю
-		// уехать вверх (scrollTop < хвоста) — вьюпорт больше не дёргается.
-		// В диффе своего скролла не трогаем — там нет «хвоста ленты».
-		if (!this.diffMode && (this.follow || (this.mode === "replay" && this.atTail()))) this.scrollView.scrollToEnd();
+		// follow-режим и играющий replay держат хвост ленты; стоит пользователю
+		// уехать вверх — вьюпорт больше не дёргается. Flow и Context начинаются сверху.
+		if (this.viewMode === "timeline" && (this.follow || (this.mode === "replay" && this.atTail()))) {
+			this.scrollView.scrollToEnd();
+		}
 		const top = this.scrollView.scrollTop;
 		this.mapState = { kinds, top, body, total: lines.length, show: lines.length > body };
-		const out = [this.header(width, top)];
-		out.push(...this.feedRow.render(width));
+		this.inspector = withInspector ? inspectorLines(v, this.theme, inspW - 2, this.selId, Date.now(), frame) : [];
+
+		const row = new HStack([
+			{ component: this.scrollView, grow: 1 },
+			{ component: this.mapComp, basis: MAP, grow: 0, shrink: 0 },
+			...(withInspector ? [{ component: this.inspectorComp, basis: inspW, grow: 0, shrink: 0 }] : []),
+		]);
+		const out = [this.header(width, top, v)];
+		if (!this.compact()) out.push(this.tabs(width, withInspector ? inspW : 0));
+		out.push(...row.render(width).slice(0, body));
+		while (out.length < rows - 1 - (this.compact() ? 0 : 1)) out.push("");
+		if (!this.compact())
+			out.push(eraStrip(v, this.theme, width, this.selId ?? v.turns.at(-1)?.entryId, this.stripRight()));
 		while (out.length < rows) out.push("");
 		out[rows - 1] = this.footer(width, top, lines.length);
-		return out;
+		return out.slice(0, rows).map((l) => truncateToWidth(l, width));
+	}
+
+	private build(v: SessionView, width: number, frame: string): Built {
+		if (this.summary) return this.summaryLines(v, width);
+		const filter = { query: this.filterQ, errorsOnly: this.errorsOnly };
+		if (this.viewMode === "flow")
+			return flowLines(v, this.childStates(v), this.theme, width, { spin: frame, nowMs: Date.now() });
+		if (this.viewMode === "context") return contextLines(v, this.tree, this.theme, width, this.selId);
+		return timelineLines(v, this.theme, width, { filter, spin: frame, selId: this.selId });
+	}
+
+	/** Правый край полосы эр: в реплее — скорость и время плейхеда. */
+	private stripRight(): string {
+		if (this.mode === "live" || this.follow) return "";
+		return this.theme.fg("dim", `▶ ${this.speed}× · ${fmtClock(this.playheadMs)}`);
 	}
 
 	private badge(top: number): string {
 		const th = this.theme;
 		let b: string;
-		if (this.diffMode) {
-			const n = this.model.history.length;
-			b = `${th.fg("accent", th.bold("DIFF ⧉"))} ${th.fg("dim", `${n === 0 ? 0 : this.diffSel + 1}/${n}`)}`;
-			return b;
-		}
 		if (this.mode === "live" || this.follow) b = th.fg("accent", th.bold("LIVE ●"));
 		else if (this.paused) b = th.fg("warning", "PAUSED ⏸");
 		else if (this.fedCount >= this.entries.length) b = th.fg("muted", "END");
 		else b = th.fg("dim", `▶ ${this.speed}×`);
-		if (this.errorsOnly) b += " " + th.fg("error", "err-only");
-		if (this.filterQ) b += " " + th.fg("accent", `«${oneLine(this.filterQ, 14)}»`);
+		if (this.errorsOnly) b += ` ${th.fg("error", "err-only")}`;
+		if (this.filterQ) b += ` ${th.fg("accent", `«${oneLine(this.filterQ, 14)}»`)}`;
 		const ms = this.cache?.matchStarts;
 		if (this.matchCursor >= 0 && ms && this.matchCursor < ms.length) {
-			b += " " + th.fg("dim", `${this.matchCursor + 1}/${ms.length}`);
+			b += ` ${th.fg("dim", `${this.matchCursor + 1}/${ms.length}`)}`;
 		} else if ((this.filterQ || this.errorsOnly) && ms && ms.length) {
 			let idx = 0;
 			for (const s of ms) if (s <= top) idx++;
-			b += " " + th.fg("dim", `${Math.min(idx + 1, ms.length)}/${ms.length}`);
+			b += ` ${th.fg("dim", `${Math.min(idx + 1, ms.length)}/${ms.length}`)}`;
 		}
 		return b;
 	}
 
-	private header(width: number, top: number): string {
+	private header(width: number, top: number, v: SessionView): string {
 		const th = this.theme;
-		const m = this.model;
 		const fileLabel =
 			this.mode === "replay" ? oneLine(basename(this.file).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, ""), 18) : "";
-		const name = m.sessionName ? oneLine(m.sessionName, 24) : "";
+		const name = v.name ? oneLine(v.name, 24) : "";
 		const sep = th.fg("dim", " · ");
+		const prompt = v.totals.input + v.totals.cacheRead + v.totals.cacheWrite;
+		const hit = prompt > 0 && v.totals.cacheRead > 0 ? v.totals.cacheRead / prompt : null;
+		// ⏱ модель / инструменты / ожидание — 10 клеток
+		const t = v.time;
+		let tbar = "";
+		if (t.spanMs > 0) {
+			const m = Math.round((t.modelMs / t.spanMs) * 10);
+			const k = Math.min(10 - m, Math.round((t.toolsMs / t.spanMs) * 10));
+			tbar = `⏱ ${th.fg("accent", "█".repeat(m))}${th.fg("toolTitle", "█".repeat(k))}${th.fg("dim", "█".repeat(10 - m - k))}`;
+		}
 		const parts = [
 			` ${th.fg("accent", "◐")} ${th.bold("trace")}`,
 			fileLabel && th.fg("dim", fileLabel),
 			th.fg("dim", `${name ? `${name} · ` : ""}${this.entries.length} entries`),
-			`↑${fmtK(m.totals.input)} ↓${fmtK(m.totals.output)}`,
-			m.totals.cost > 0 ? fmtMoney(m.totals.cost) : "",
+			v.totals.cost > 0 ? fmtMoney(v.totals.cost) : "",
+			`↑${fmtK(prompt)}${hit === null ? "" : ` ${th.fg("accent", `hit ${Math.round(hit * 100)}%`)}`} ↓${fmtK(v.totals.output)}`,
+			tbar,
 		].filter(Boolean) as string[];
-		const left = parts.join(sep);
-		const b = this.badge(top);
-		const pad = width - visibleWidth(left) - visibleWidth(b) - 1;
-		return pad > 0 ? `${left} ${" ".repeat(pad)}${b}` : truncateToWidth(`${left} ${b}`, width);
+		return spread(parts.join(sep), this.badge(top), width);
+	}
+
+	private tabs(width: number, inspW: number): string {
+		const th = this.theme;
+		const tabs = (Object.keys(VIEW_LABEL) as ViewMode[])
+			.map((m) =>
+				m === this.viewMode && !this.summary
+					? th.bold(th.fg("accent", `[${VIEW_LABEL[m]}]`))
+					: th.fg("muted", ` ${VIEW_LABEL[m]} `),
+			)
+			.join(" ");
+		if (!inspW) return truncateToWidth(` ${tabs}`, width);
+		// Подпись — ровно над колонкой инспектора.
+		const left = truncateToWidth(` ${tabs}`, width - inspW);
+		return `${left}${" ".repeat(Math.max(0, width - inspW - visibleWidth(left)))}${th.fg("borderMuted", "│ ")}${th.fg("dim", "инспектор")}`;
 	}
 
 	private footer(width: number, top: number, total: number): string {
-		const th = this.theme;
-		const pos = th.fg("dim", `${Math.min(top + 1, total)}/${total}`);
+		const pos = this.theme.fg("dim", `${Math.min(top + 1, total)}/${total}`);
 		let hints: string;
-		if (this.diffMode) {
-			hints = ` ↑↓ ход · PgUp/PgDn scroll · ${actionHint(this.kb, "ext.trace.diff")} / esc / ${actionHint(this.kb, "ext.trace.close")} — назад к ленте `;
-		} else if (this.editing) {
+		if (this.editing) {
 			hints = ` filter: ${this.filterQ}▏ enter — применить · esc — сброс `;
 		} else {
+			const h = (a: Parameters<typeof actionHint>[1], label?: string) => actionHint(this.kb, a, label);
 			const nav =
 				this.mode === "live"
-					? `↑↓ scroll · ${actionHint(this.kb, "ext.trace.follow", "follow")}`
-					: `space pause · ←→ seek · +/- speed · ${actionHint(this.kb, "ext.trace.live", "live")} · ${actionHint(this.kb, "ext.trace.restart", "restart")}`;
-			hints = ` ${nav} · ${actionHint(this.kb, "ext.trace.filter", "filter")} · ${actionHint(this.kb, "ext.trace.jumpMatch", "jump")} · ${actionHint(this.kb, "ext.trace.errors", "errors")} · ${actionHint(this.kb, "ext.trace.models", "models")} · ${actionHint(this.kb, "ext.trace.diff", "context-diff")} · esc clear · ${actionHint(this.kb, "ext.trace.close", "close")} `;
+					? `↑↓ scroll · ${h("ext.trace.follow", "follow")}`
+					: `space pause · ←→ seek · +/- speed · ${h("ext.trace.live", "live")} · ${h("ext.trace.restart", "restart")}`;
+			hints = ` ${nav} · 1-3 вид · [ ] эра · , . ход · ${h("ext.trace.inspector", "inspector")} · ${h("ext.trace.filter", "filter")} · ${h("ext.trace.jumpMatch", "jump")} · ${h("ext.trace.errors", "errors")} · ${h("ext.trace.models", "models")} · esc · ${h("ext.trace.close", "close")} `;
 		}
 		const right = `${hints}${pos} `;
 		const pad = width - visibleWidth(right);
@@ -655,362 +832,32 @@ export class TraceView {
 		return `${truncateToWidth(hints, hintsWidth)} ${pos}`;
 	}
 
-	private spin(): string {
-		return SPIN[Math.floor(Date.now() / 90) % SPIN.length];
-	}
-
-	/** Контент чипа: слева имя+лейбл, справа длительность и глиф статуса. */
-	private chipRow(left: string, right: string, inner: number): string {
-		const gap = inner - visibleWidth(left) - visibleWidth(right);
-		return gap >= 1 ? left + " ".repeat(gap) + right : truncateToWidth(`${left} ${right}`, inner);
-	}
-
-	private childLines(c: ChildItem, width: number, out: string[], kinds: string[]): void {
+	private summaryLines(v: SessionView, width: number): Built {
 		const th = this.theme;
-		const title =
-			`⧉ субагент: ${c.agent}` +
-			` · ${fmtClock(c.ts)}` +
-			(c.tokensOut ? ` · ↓${fmtK(c.tokensOut)}` : "") +
-			(c.cost ? ` · ${fmtMoney(c.cost)}` : "");
-		const card = new Box(1, 0);
-		card.addChild(textLine(th.fg("dim", ` ${title}`)));
-		kinds.push("C");
-		card.addChild(textLine(` ${th.fg("text", c.task)}`));
-		kinds.push("C");
-		card.addChild(textLine(` ${th.fg("dim", basename(c.session))}`));
-		kinds.push("C");
-		card.addChild(textLine(` ${th.fg("toolTitle", "→ /trace " + c.session)}`));
-		kinds.push("C");
-		card.addChild(textLine("")); // отбивка вместо нижней рамки
-		kinds.push(".");
-		out.push(...card.render(width));
-	}
-
-	private cardLines(t: any, width: number, out: string[], kinds: string[]): void {
-		const th = this.theme;
-		const inner = Math.max(8, width - 2);
-		const running = t.chips.some((c: any) => c.status === "running");
-		const ends = t.chips.map((c: any) => c.endMs).filter((x: any) => x !== undefined) as number[];
-		const end = Math.max(t.endMs ?? t.startMs, ...ends);
-		const dur = end > t.startMs ? fmtDur(end - t.startMs) : "";
-		const title =
-			`T${t.index} · ${fmtClock(t.startMs)}` +
-			(dur ? ` · ${dur}` : "") +
-			(t.model ? ` · ${t.model}` : "") +
-			(t.tokensOut ? ` · ↓${fmtK(t.tokensOut)}` : "") +
-			(t.cost ? ` · ${fmtMoney(t.cost)}` : "") +
-			(t.stopReason === "aborted" ? " · aborted" : "") +
-			(running ? " · working" : "");
-		const card = new Box(1, 0);
-		card.addChild(textLine(th.fg("dim", ` ${title}`)));
-		kinds.push(running ? "R" : "t");
-
-		for (const c of t.chips) {
-			const glyph =
-				c.status === "ok"
-					? th.fg("success", "✓")
-					: c.status === "error"
-						? th.fg("error", "✗")
-						: th.fg("accent", `${this.spin()} running`);
-			if (c.status === "running") this.builtRunning = true;
-			const chipDur = c.endMs !== undefined ? fmtDur(c.endMs - c.startMs) : "";
-			// B8: имя инструмента — чип с подложкой по статусу (ThemeBg: toolSuccessBg /
-			// toolErrorBg / toolPendingBg). Guard: темы без bg-токена и duck-typed темы без
-			// bg деградируют до fg-only (shared/chip.ts).
-			const badge = chip(
-				th,
-				`⚒ ${c.name}`,
-				c.status === "error"
-					? { fg: "error", bg: "toolErrorBg" }
-					: c.status === "running"
-						? { fg: "accent", bg: "toolPendingBg" }
-						: { fg: "toolTitle", bg: "toolSuccessBg" },
-			);
-			const left = ` ${badge} ${th.fg("dim", c.label)}`;
-			card.addChild(textLine(this.chipRow(left, `${th.fg("muted", chipDur)} ${glyph}`, inner)));
-			kinds.push(c.status === "error" ? "E" : c.status === "running" ? "R" : "t");
-		}
-		if (t.thinking) {
-			card.addChild(textLine(` ${th.fg("muted", `⋮ ${t.thinking}`)}`));
-			kinds.push("t");
-		}
-		if (t.text) {
-			card.addChild(textLine(` ${th.fg("text", `«${t.text}»`)}`));
-			kinds.push("t");
-		}
-		if (t.errorMessage) {
-			card.addChild(textLine(` ${th.fg("error", `✗ ${oneLine(t.errorMessage, inner - 4)}`)}`));
-			kinds.push("E");
-		}
-		card.addChild(textLine("")); // отбивка вместо нижней рамки
-		kinds.push(".");
-		out.push(...card.render(width));
-	}
-
-	/** Проходит ли элемент под активными фильтрами (подстрока и/или «только ошибки»). */
-	private matches(it: Item): boolean {
-		if (this.errorsOnly) {
-			const bad =
-				(it.kind === "turn" && (it.errorMessage || it.chips.some((c) => c.status === "error"))) ||
-				(it.kind === "bash" && it.exitCode !== undefined && it.exitCode !== 0);
-			if (!bad) return false;
-		}
-		if (!this.filterQ) return true;
-		const q = this.filterQ.toLowerCase();
-		const hay =
-			it.kind === "turn"
-				? `${it.text ?? ""} ${it.thinking ?? ""} ${it.model ?? ""} ${it.chips.map((c) => `${c.name} ${c.label}`).join(" ")}`
-				: it.kind === "marker"
-					? it.text
-					: it.kind === "user"
-						? it.text
-						: it.kind === "child"
-							? `${it.agent} ${it.task} ${it.session}`
-							: it.command; // bash
-		return hay.toLowerCase().includes(q);
-	}
-
-	private summaryLines(width: number, kinds: string[]): string[] {
-		const th = this.theme;
-		const out: string[] = ["", ` ${th.bold("Модели")}`];
-		kinds.push(".", ".");
-		const rows = [...this.model.models.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].turns - a[1].turns);
+		const out: Built = {
+			lines: ["", ` ${th.bold("Модели")}`],
+			kinds: [".", "."],
+			matchStarts: [],
+			anchors: new Map(),
+			running: false,
+		};
+		const rows = [...v.models.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].turns - a[1].turns);
 		for (const [name, s] of rows) {
-			const left = ` ${th.fg("toolTitle", oneLine(name, Math.max(12, width - 44)))}`;
-			const right = `${s.turns} turns · ↑${fmtK(s.input)} ↓${fmtK(s.output)} · ${fmtMoney(s.cost)}`;
-			const gap = width - visibleWidth(left) - visibleWidth(right) - 1;
-			out.push(
-				gap > 0 ? `${left}${" ".repeat(gap)}${th.fg("dim", right)}` : truncateToWidth(`${left} ${right}`, width),
+			out.lines.push(
+				spread(
+					` ${th.fg("toolTitle", oneLine(name, Math.max(12, width - 40)))}`,
+					th.fg("dim", `${s.turns} turns · ↓${fmtK(s.output)} · ${fmtMoney(s.cost)}`),
+					width,
+				),
 			);
-			kinds.push(".");
+			out.kinds.push(".");
 		}
 		if (rows.length === 0) {
-			out.push(th.fg("dim", " пока нет ответов модели"));
-			kinds.push(".");
+			out.lines.push(th.fg("dim", " пока нет ответов модели"));
+			out.kinds.push(".");
 		}
-		out.push("", th.fg("dim", ` ${actionHint(this.kb, "ext.trace.models")} — вернуться к ленте · esc — сбросить всё`));
-		kinds.push(".", ".");
-		return out;
-	}
-
-	// ---------- режим контекст-диффа (B6) ----------
-
-	private enterDiff(): void {
-		if (this.diffMode) return;
-		this.diffMode = true;
-		this.diffTail = true;
-		this.diffSel = Math.max(0, this.model.history.length - 1);
-		this.followBeforeDiff = this.follow;
-		this.follow = false;
-		this.diffCache = undefined;
-		this.scrollView.scrollToStart();
-	}
-
-	private exitDiff(): void {
-		this.diffMode = false;
-		this.diffCache = undefined;
-		this.follow = this.followBeforeDiff ?? this.follow;
-		this.followBeforeDiff = undefined;
-		if (this.follow) this.scrollView.scrollToEnd();
-	}
-
-	/** Клампы выбора; пока пользователь не уехал вверх — выбор прилип к последнему ходу. */
-	private syncDiffSel(): void {
-		const n = this.model.history.length;
-		if (n === 0) return;
-		if (this.diffTail || this.diffSel >= n) this.diffSel = n - 1;
-		if (this.diffSel < 0) this.diffSel = 0;
-	}
-
-	private moveDiffSel(dir: 1 | -1): void {
-		const n = this.model.history.length;
-		if (n === 0) return;
-		this.syncDiffSel();
-		this.diffSel = Math.min(n - 1, Math.max(0, this.diffSel + dir));
-		this.diffTail = this.diffSel === n - 1;
-		this.diffCache = undefined;
-	}
-
-	/** Строки режима диффа: таблица последних ходов + детальный дифф выбранного. */
-	private buildDiffLines(_width: number): { lines: string[]; kinds: string[] } {
-		const th = this.theme;
-		const out: string[] = [];
-		const kinds: string[] = [];
-		const snaps = this.model.history.snapshots;
-		if (snaps.length === 0) {
-			out.push(th.fg("dim", "  ходов пока нет — дифф появится после первого ответа модели"));
-			out.push("", th.fg("dim", ` ${actionHint(this.kb, "ext.trace.diff")} / esc — назад к ленте`));
-			kinds.push(".", ".", ".");
-			return { lines: out, kinds };
-		}
-		out.push(
-			"",
-			` ${th.fg("accent", "⧉")} ${th.bold("Контекст-дифф")} ${th.fg(
-				"dim",
-				`· ${snaps.length} из ${CONTEXT_HISTORY_LIMIT} ходов в буфере`,
-			)}`,
-		);
-		kinds.push(".", "t");
-		for (let i = 0; i < snaps.length; i++) {
-			out.push(this.diffMetricRow(i));
-			kinds.push("t");
-		}
-		this.pushDiffDetail(out, kinds);
-		out.push(
-			"",
-			th.fg(
-				"dim",
-				` + добавлено · − удалено · ~ изменено · ⋮ разрыв · ${actionHint(this.kb, "ext.trace.diff")} / esc — назад к ленте`,
-			),
-		);
-		kinds.push(".", ".");
-		return { lines: out, kinds };
-	}
-
-	/** Строка таблицы ходов: T#, время, модель, промпт-токены, Δ, чип кэша, hit-rate. */
-	private diffMetricRow(i: number): string {
-		const th = this.theme;
-		const { prev, curr, diff } = this.model.history.diffAt(i);
-		const sel = i === this.diffSel;
-		const cursor = sel ? th.fg("accent", "❯") : " ";
-		const idx = th.fg(sel ? "text" : "dim", `T${curr.turnIndex}`.padEnd(6));
-		const clock = th.fg("dim", fmtClock(curr.ts));
-		const model = th.fg("muted", oneLine(curr.model ?? "?", 16).padEnd(16));
-		const prompt = th.fg("dim", `↑${fmtK(diff.promptTokens)}`.padStart(8));
-		const dt = diff.deltaTokens;
-		const delta =
-			dt > 0
-				? th.fg("success", `Δ+${fmtK(dt)}`.padStart(8))
-				: dt < 0
-					? th.fg("warning", `Δ-${fmtK(-dt)}`.padStart(8))
-					: th.fg("dim", "Δ0".padStart(8));
-		// Чип кэша — цвет по prefixRatio (см. cacheLevel): тёплый ≥70%, частичный ≥40%.
-		const level = cacheLevel(diff.prefixRatio);
-		const color: string =
-			prev === undefined ? "dim" : level === "warm" ? "accent" : level === "partial" ? "warning" : "error";
-		const cache = chip(th, prev === undefined ? "⌁—" : `⌁${Math.round(diff.prefixRatio * 100)}%`, { fg: color });
-		const hit = cacheHitRatio(curr.tokens);
-		const hitTxt = hit === null ? "" : th.fg("dim", `hit ${Math.round(hit * 100)}%`);
-		return `${cursor} ${idx} ${clock} ${model} ${prompt} ${delta} ${cache}${hitTxt ? ` ${hitTxt}` : ""}`;
-	}
-
-	/** Детальный дифф выбранного хода: diffLines (B5) над подписями prev→curr. */
-	private pushDiffDetail(out: string[], kinds: string[]): void {
-		const th = this.theme;
-		const { prev, curr, diff } = this.model.history.diffAt(this.diffSel);
-		out.push(
-			"",
-			` ${th.fg("toolTitle", `Ход T${curr.turnIndex}`)} ${th.fg(
-				"dim",
-				prev ? `— дифф контекста с T${prev.turnIndex}` : "— первый ход в буфере (весь контекст новый)",
-			)}`,
-		);
-		kinds.push(".", "t");
-		const s = diff.summary;
-		const meta = [
-			`${curr.messageSignature.length} сообщений`,
-			`+${s.added} −${s.removed} ~${s.modified}`,
-			`prefix ${Math.round(diff.prefixRatio * 100)}% (~${fmtK(diff.prefixTokens)} tok)`,
-			`Δ${diff.deltaTokens >= 0 ? "+" : ""}${fmtK(diff.deltaTokens)} tok`,
-		].join(" · ");
-		out.push(` ${th.fg("dim", meta)}`);
-		kinds.push(".");
-		if (prev && s.changedBlocks === 0) {
-			out.push(th.fg("dim", "  контекст не изменился — дифф пуст"));
-			kinds.push(".");
-			return;
-		}
-		const rows = filterRows(diffLines(prev?.messageSignature ?? [], curr.messageSignature), 1);
-		// Страховка на случай большого перкроя (например, после компакции):
-		const CAP = 300;
-		for (const row of rows.slice(0, CAP)) this.pushDiffRow(row, out, kinds);
-		if (rows.length > CAP) {
-			out.push(th.fg("dim", `  ⋮ ещё ${rows.length - CAP} строк`));
-			kinds.push(".");
-		}
-	}
-
-	/** Одна display-строка диффа в терминал; modify раскрывается в пару «−~/+». */
-	private pushDiffRow(row: DiffDisplayRow, out: string[], kinds: string[]): void {
-		const th = this.theme;
-		if (row.type === "separator") {
-			out.push(th.fg("dim", "  ⋮"));
-			kinds.push(".");
-			return;
-		}
-		if (row.type === "equal") {
-			out.push(`  ${th.fg("dim", row.text)}`);
-			kinds.push(".");
-			return;
-		}
-		if (row.type === "modify") {
-			// До/после спаренной пары: warning слева, success справа, жирным — изменившиеся части.
-			this.pushGuttered(row.text, row.segments, "~", "warning", "R", out, kinds);
-			this.pushGuttered(row.afterText ?? "", row.afterSegments ?? [], "+", "success", "U", out, kinds);
-			return;
-		}
-		if (row.type === "insert") {
-			this.pushGuttered(row.text, row.segments, "+", "success", "U", out, kinds);
-		} else {
-			this.pushGuttered(row.text, row.segments, "-", "error", "E", out, kinds);
-		}
-	}
-
-	private pushGuttered(
-		text: string,
-		segments: DiffRow["segments"],
-		gutter: string,
-		color: DiffColor,
-		kind: string,
-		out: string[],
-		kinds: string[],
-	): void {
-		const row: DiffRow = { type: gutter === "+" ? "insert" : gutter === "~" ? "modify" : "delete", text, segments };
-		const body = renderDiffRow(row, this.theme, { ...diffKindColors, [row.type]: color });
-		out.push(` ${gutter} ${body}`);
-		kinds.push(kind);
-	}
-
-	private buildLines(width: number): string[] {
-		const th = this.theme;
-		const out: string[] = [];
-		const kinds: string[] = [];
-		const m = this.model;
-		this.builtRunning = false;
-		if (this.summary) {
-			this.matchStarts = [];
-			this.lineKinds = kinds;
-			return this.summaryLines(width, kinds);
-		}
-		const matchStarts: number[] = [];
-		for (const it of m.items) {
-			if (!this.matches(it)) continue;
-			matchStarts.push(out.length);
-			out.push(th.fg("borderMuted", "  │"));
-			kinds.push(".");
-			if (it.kind === "user") {
-				out.push(`  ${th.fg("accent", "●")} ${th.fg("userMessageText", it.text)}`);
-				kinds.push("U");
-			} else if (it.kind === "bash") {
-				const bad = it.exitCode !== undefined && it.exitCode !== 0;
-				const mark = bad ? ` ${th.fg("error", `exit ${it.exitCode}`)}` : "";
-				out.push(`  ${th.fg("bashMode", "$")} ${th.fg("dim", it.command)}${mark}`);
-				kinds.push(bad ? "E" : "B");
-			} else if (it.kind === "marker") {
-				out.push(`  ${th.fg("muted", `├ ${it.icon} ${it.text}`)}`);
-				kinds.push(".");
-			} else if (it.kind === "child") {
-				this.childLines(it, width, out, kinds);
-			} else {
-				this.cardLines(it, width, out, kinds);
-			}
-		}
-		if (out.length === 0) {
-			out.push(th.fg("dim", m.items.length === 0 ? "  ждём первую запись сессии…" : "  под фильтр ничего не попало"));
-			kinds.push(".");
-		}
-		this.matchStarts = matchStarts;
-		this.lineKinds = kinds;
+		out.lines.push("", th.fg("dim", ` ${actionHint(this.kb, "ext.trace.models")} — вернуться · esc — сбросить всё`));
+		out.kinds.push(".", ".");
 		return out;
 	}
 }

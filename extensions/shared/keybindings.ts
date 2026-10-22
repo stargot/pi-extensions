@@ -51,6 +51,14 @@ declare module "@earendil-works/pi-tui" {
 		"ext.trace.seekForward": true;
 		"ext.trace.live": true;
 		"ext.trace.restart": true;
+		"ext.trace.viewFlow": true;
+		"ext.trace.viewTimeline": true;
+		"ext.trace.viewContext": true;
+		"ext.trace.prevEra": true;
+		"ext.trace.nextEra": true;
+		"ext.trace.prevTurn": true;
+		"ext.trace.nextTurn": true;
+		"ext.trace.inspector": true;
 	}
 }
 
@@ -83,6 +91,15 @@ export const EXT_KEYBINDINGS: Record<ExtAction, KeybindingDefinition> = {
 	"ext.trace.seekForward": { defaultKeys: "right", description: "Seek forward 5s" },
 	"ext.trace.live": { defaultKeys: "l", description: "Jump to live edge" },
 	"ext.trace.restart": { defaultKeys: "r", description: "Restart replay" },
+	// trace/graph.ts — виды и выбор хода
+	"ext.trace.viewFlow": { defaultKeys: "1", description: "Flow view" },
+	"ext.trace.viewTimeline": { defaultKeys: "2", description: "Timeline view" },
+	"ext.trace.viewContext": { defaultKeys: "3", description: "Context view" },
+	"ext.trace.prevEra": { defaultKeys: "[", description: "Previous prompt era" },
+	"ext.trace.nextEra": { defaultKeys: "]", description: "Next prompt era" },
+	"ext.trace.prevTurn": { defaultKeys: ",", description: "Previous turn" },
+	"ext.trace.nextTurn": { defaultKeys: ".", description: "Next turn" },
+	"ext.trace.inspector": { defaultKeys: "i", description: "Toggle inspector" },
 };
 
 /**
