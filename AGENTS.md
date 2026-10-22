@@ -4,7 +4,7 @@ pi-extensions — personal pi package: extensions for the pi coding agent.
 TypeScript, ESM, Node >= 22.19.0 (`engines`). Peer dependencies:
 `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` (`^1.0.0`),
 `typebox`. pi loads every file listed under the `"pi".extensions` key in
-package.json (11 entry points).
+package.json (10 entry points).
 
 ## Layout
 

@@ -38,7 +38,6 @@
 			"./extensions/bg-jobs/index.ts",
 			"./extensions/edit-guard/index.ts",
 			"./extensions/env-guard/index.ts",
-			"./extensions/payload-capture/index.ts",
 			"./extensions/prompt-snippets/index.ts",
 			"./extensions/recall/index.ts",
 			"./extensions/trace/index.ts",

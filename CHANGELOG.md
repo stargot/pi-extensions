@@ -79,6 +79,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   usage — кандидат на удаление по итогам фидбека); сняты каталоги
   `extensions/<name>/` с тестами, записи в `pi.extensions`, npm-скрипт
   `stats` и упоминания в README и THIRD_PARTY_NOTICES.
+- **payload-capture**: расширение удалено из пакета — сняты каталог
+  `extensions/payload-capture/` с тестами и запись в `pi.extensions`.
 - **web**: провайдер LangSearch удалён — `web_search` работает только через
   DuckDuckGo; сняты `providers/langsearch.ts` с тестом, переключатель
   `PI_WEB_SEARCH_PROVIDER` и `LANGSEARCH_API_KEY` (выбор провайдера и
