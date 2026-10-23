@@ -16,7 +16,7 @@
 
 ## Совместимость
 
-- pi >= 1.0.0, Node >= 22.19.0 (peerDependencies `@earendil-works/pi-coding-agent` и
+- pi >= 1.0.0, Node >= 22.18.0 (peerDependencies `@earendil-works/pi-coding-agent` и
   `@earendil-works/pi-tui` закреплены на `^1.0.0`).
 - pi 1.0.0 по умолчанию использует fullscreen TUI и тему «system» — расширения пакета
   проверены в этом режиме (ручной чеклист — финальный гейт релиза).
