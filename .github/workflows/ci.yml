@@ -8,13 +8,15 @@ on:
 jobs:
   check:
     # The package is developed on Windows (pwsh/WezTerm panes, taskkill
-    # tree-kills) — gate on the platform it actually targets.
-    runs-on: windows-latest
+    # tree-kills) — gate on the platform it actually targets. The repo is
+    # public and git consumers do run it on Linux, so gate both platforms.
     strategy:
       fail-fast: false
       matrix:
         # 22.18 is the engines floor (unflagged type stripping); 24 is current LTS.
+        os: [windows-latest, ubuntu-latest]
         node: ["22.18", "24"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
