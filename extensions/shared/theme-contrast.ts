@@ -18,15 +18,16 @@
  * проверяет тест extensions/shared/test/theme-contrast.test.ts; печатную таблицу
  * даёт scripts/visual-audit.mjs (ручной запуск, в npm test не входит).
  */
-import { Theme } from "@earendil-works/pi-coding-agent";
+import { Theme, type ThemeAppearance } from "@earendil-works/pi-coding-agent";
+import { getTerminalColorMode } from "@earendil-works/pi-tui";
+import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
-// Глубокие импорты в dist pi: публичный экспорт пакета не отдаёт loadThemeFromPath
-// и generateSystemThemeColors, а считать контраст нужно именно их цветами.
-import {
-	generateSystemThemeColors,
-	wcagContrast,
-} from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/system-theme.js";
-import { loadThemeFromPath } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+// Движок системной темы и wcagContrast — вендоренная копия system-theme.js из pi
+// (extensions/shared/vendor/pi-system-theme.js): публичный экспорт пакета их не
+// отдаёт, а deep-импорт из node_modules ломает git-потребителей — pi прокидывает
+// хост-пакет только по корневому спецификатору. Лоадер тем ниже — суть
+// loadThemeFromPath из theme.js pi (не входит в публичный экспорт).
+import { generateSystemThemeColors, wcagContrast } from "./vendor/pi-system-theme.js";
 
 /** Токены ThemeBg pi 1.0.0 — для разбора системной темы на fg/bg-слоты. */
 const BACKGROUND_TOKENS = new Set([
@@ -60,6 +61,99 @@ function piThemesDir(): string {
 		new URL("../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/", import.meta.url),
 	);
 }
+
+// --- Вендоренный лоадер тем: суть loadThemeFromPath из pi ------------------
+// Минимальная копия конвейера loadThemeFromPath из
+// @earendil-works/pi-coding-agent 1.0.0 (dist/modes/interactive/theme/theme.js,
+// MIT): stripBom (utils/text.js) → parse c проверкой "colors" →
+// resolveVarRefs/resolveThemeColors → withThemeColorFallbacks → splitThemeColors
+// (тот же BACKGROUND_TOKENS, что и выше) → new Theme с живым color mode, как
+// createTheme без явного mode. Поведение идентично оригиналу; при обновлении pi
+// сверять с theme.js (публичный экспорт loadThemeFromPath не отдаёт).
+// Хук themeJsonValidator из parseThemeJson pi осознанно опущен: он ставится только
+// CLI-рантаймом pi (main.js) и в процессе аудита никогда не установлен — не потерять
+// это допущение при будущем пере-вливании лоадера из theme.js.
+
+/** Формат theme JSON (docs/themes.md pi), насколько его читает лоадер. */
+interface ThemeJson {
+	name?: string;
+	appearance?: ThemeAppearance;
+	vars?: Record<string, string | number>;
+	colors: Record<string, string | number>;
+}
+
+/** UTF-8 BOM (stripBom в utils/text.js pi). */
+function stripBom(content: string): string {
+	return content.startsWith("\uFEFF") ? content.slice(1) : content;
+}
+
+function resolveVarRefs(
+	value: string | number,
+	vars: Record<string, string | number>,
+	visited = new Set<string>(),
+): string | number {
+	if (typeof value === "number" || value === "" || value.startsWith("#") || /^ok(lch|hsl)\(/i.test(value)) {
+		return value;
+	}
+	if (visited.has(value)) {
+		throw new Error(`Circular variable reference detected: ${value}`);
+	}
+	if (!(value in vars)) {
+		throw new Error(`Variable reference not found: ${value}`);
+	}
+	visited.add(value);
+	return resolveVarRefs(vars[value], vars, visited);
+}
+
+function resolveThemeColors(
+	colors: Record<string, string | number>,
+	vars: Record<string, string | number> = {},
+): Record<string, string | number> {
+	const resolved: Record<string, string | number> = {};
+	for (const [key, value] of Object.entries(colors)) {
+		resolved[key] = resolveVarRefs(value, vars);
+	}
+	return resolved;
+}
+
+function withThemeColorFallbacks(colors: Record<string, string | number>): Record<string, string | number> {
+	return {
+		...colors,
+		scrollbarTrack: colors.scrollbarTrack ?? colors.muted,
+		scrollbarThumb: colors.scrollbarThumb ?? colors.text,
+		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
+		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
+		searchMatchText: colors.searchMatchText ?? colors.text,
+	};
+}
+
+/** Тема из JSON-файла — эквивалент loadThemeFromPath(themePath) без явного mode; экспорт для тестов. */
+export function loadThemeFromPath(themePath: string): Theme {
+	const content = fs.readFileSync(themePath, "utf-8");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripBom(content));
+	} catch (error) {
+		// Сообщение как в parseThemeJsonContent pi (theme.js); label = путь файла темы.
+		throw new Error(`Failed to parse theme ${themePath}: ${error}`);
+	}
+	if (typeof parsed !== "object" || parsed === null || !("colors" in parsed)) {
+		throw new Error(`Invalid theme "${themePath}": expected an object with a "colors" map.`);
+	}
+	const themeJson = parsed as ThemeJson;
+	const resolved = resolveThemeColors(withThemeColorFallbacks(themeJson.colors), themeJson.vars);
+	const fgColors: Record<string, string | number> = {};
+	const bgColors: Record<string, string | number> = {};
+	for (const [key, value] of Object.entries(resolved)) {
+		(BACKGROUND_TOKENS.has(key) ? bgColors : fgColors)[key] = value;
+	}
+	return new Theme(fgColors as never, bgColors as never, getTerminalColorMode(), {
+		name: themeJson.name,
+		sourcePath: themePath,
+		appearance: themeJson.appearance,
+	});
+}
+// --- Конец вендоренного лоадера --------------------------------------------
 
 /** System-тема из опорных цветов терминала (оба облика). */
 function systemTheme(appearance: Appearance): AuditTheme {

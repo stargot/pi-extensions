@@ -8,7 +8,10 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { auditPairs, CONTRAST_PAIRS, loadAuditThemes, pairRatio } from "../theme-contrast.ts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { auditPairs, CONTRAST_PAIRS, loadAuditThemes, loadThemeFromPath, pairRatio } from "../theme-contrast.ts";
 
 const themes = loadAuditThemes();
 
@@ -84,6 +87,74 @@ test("system-тема реально сгенерирована из палит�
 			return a.r !== b.r || a.g !== b.g || a.b !== b.b;
 		});
 		assert.ok(differs, `system/${sys.appearance} совпала с ${builtin.name} канал в канал`);
+	}
+});
+
+test("loadThemeFromPath: пустой файл — обёртка «Failed to parse theme <путь>» как в pi", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-shared-theme-"));
+	try {
+		const path = join(root, "empty.json");
+		writeFileSync(path, "");
+		assert.throws(
+			() => loadThemeFromPath(path),
+			(error: Error) => {
+				assert.ok(
+					error.message.startsWith(`Failed to parse theme ${path}: `),
+					`неожиданное сообщение: ${error.message}`,
+				);
+				return true;
+			},
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("loadThemeFromPath: битый JSON — то же сообщение parseThemeJsonContent из pi", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-shared-theme-"));
+	try {
+		const path = join(root, "broken.json");
+		writeFileSync(path, '{"colors": {"text": ');
+		assert.throws(
+			() => loadThemeFromPath(path),
+			(error: Error) => {
+				assert.ok(
+					error.message.startsWith(`Failed to parse theme ${path}: `),
+					`неожиданное сообщение: ${error.message}`,
+				);
+				return true;
+			},
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("loadThemeFromPath: BOM-префикс срезается, тема грузится (stripBom pi)", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-shared-theme-"));
+	try {
+		const path = join(root, "bom.json");
+		// Минимальный набор: токены-якоря фолбэков withThemeColorFallbacks обязательны,
+		// иначе resolveVarRefs получит undefined (то же поведение, что у лоадера pi).
+		writeFileSync(
+			path,
+			'\ufeff{"name":"bom","appearance":"dark","colors":{"text":"#ffffff","muted":"#cccccc","thinkingXhigh":"#dddddd","selectedBg":"#333333"}}',
+		);
+		const theme = loadThemeFromPath(path);
+		assert.equal(theme.name, "bom");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("loadThemeFromPath: отсутствующий var-ref — «Variable reference not found»", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-shared-theme-"));
+	try {
+		const path = join(root, "varref.json");
+		writeFileSync(path, '{"colors":{"text":"accent"},"vars":{}}');
+		assert.throws(() => loadThemeFromPath(path), /Variable reference not found: accent/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
 	}
 });
 
