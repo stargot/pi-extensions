@@ -9,7 +9,7 @@ watch'и, миграции, длинные тесты — запускаются
 Вдохновлено контуром `process` пакета
 [pi-background-tasks](https://www.npmjs.com/package/pi-background-tasks),
 урезано до нужного и переложено на конвенции пакета. Спека:
-[docs/specs/2026-10-01-bg-shell-jobs-spec.md](../../docs/specs/2026-10-01-bg-shell-jobs-spec.md).
+[docs/specs/2026-10-01-bg-jobs.md](../../docs/specs/2026-10-01-bg-jobs.md).
 
 ## Инструменты и команды
 

@@ -183,6 +183,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   temp-каталоги через `rmTemp` с ретраями — транзиентные Windows-ошибки
   EPERM/EBUSY при удалении больше не роняют прогон.
 
+### Docs
+
+- Новый протокол ведения документации `docs/README.md`: типы доков
+  (adr / spec / research), обязательные машиночитаемые заголовки
+  (type/status/date/last-verified), нейминг, индекс docs/ и аудит на каждом
+  minor-релизе; корневые файлы (README, TODO.md, CHANGELOG, AGENTS.md)
+  подчинены протоколу, backlog канонически живёт в корневом `TODO.md`.
+- **docs**: ADR слияния prime-protocol в subagents перенесён в
+  `docs/decisions/2026-10-21-prime-subagents-merge.md`, статус accepted.
+- **docs**: спека bg-jobs переименована в `docs/specs/2026-10-01-bg-jobs.md`,
+  статус приведён к реальности — implemented.
+- Единый backlog: живые пункты из `docs/RESEARCH.md` и
+  `docs/better-ui-analyse.md` перенесены в корневой `TODO.md` (обе заметки
+  удалены), пункты о уже удалённых расширениях не переносились.
+- Починены ссылки из кода и README расширений: допустимы только ADR и
+  implemented-спеки; ссылки на удалённые research-заметки вычищены.
+
 ## [0.10.0] — 2026-10-16
 
 ### Removed

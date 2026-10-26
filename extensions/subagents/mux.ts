@@ -151,7 +151,7 @@ export interface DeliveryResult {
 }
 
 /**
- * Deliver a steering message to a pane (ADR-1 in docs/herdr-agent-surface-backlog.md):
+ * Deliver a steering message to a pane (ADR-1; see "Agent-surface (herdr)" in extensions/subagents/README.md):
  * herdr goes through `agent prompt` — a blocked child refuses the text BEFORE
  * it is typed, and ok means the child was seen working|settling, so nothing
  * drops silently; wezterm keeps the plain sendText. The herdr branch never
@@ -169,7 +169,7 @@ export async function deliverMessage(paneId: string, text: string): Promise<Deli
 }
 
 /**
- * Set the stable pane label (ADR-3 in docs/herdr-agent-surface-backlog.md):
+ * Set the stable pane label (ADR-3; see "Agent-surface (herdr)" in extensions/subagents/README.md):
  * herdr renames the pane's agent — plain sanitized label first, one
  * `-<id8>`-suffixed retry on refusal/collision, then a silent give-up;
  * wezterm has no agent names, so it is a no-op. Never throws: labeling is

@@ -104,7 +104,7 @@ export function resolveInterrupt(interrupt: boolean | undefined, stalled: boolea
 
 /**
  * Human-readable tool-error text for a failed `agent prompt` delivery, named
- * after the outcome herdr reported (ADR-1 in docs/herdr-agent-surface-backlog.md).
+ * after the outcome herdr reported (ADR-1; see "Agent-surface (herdr)" in extensions/subagents/README.md).
  * Same "Could not deliver the message" house style as the pane-gone error in
  * index.ts, but each outcome tells its own story and what to do next:
  * refused_blocked — the text was rejected BEFORE reaching the pane (the child

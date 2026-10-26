@@ -1,7 +1,8 @@
 # ADR: слияние prime-protocol в subagents как внутренний policy-модуль
 
-- **Статус:** черновик, на ревью пользователем перед исполнением
-- **Дата:** 2026-10-21
+> **type:** adr · **status:** accepted · **date:** 2026-10-21 · **last-verified:** 2026-10-25
+> **supersedes:** — · **superseded-by:** — · **see-also:** CHANGELOG «Unreleased»
+
 - **Автор идеи:** Ivan Sinyavskiy (stargot)
 - **Режим:** ADR (проектные решения; нарезку на файлы/коммиты делает planner)
 - **База:** пакет 0.10.0, Node ≥ 22.19.0, pi ≥ 1.0.0 (peer `@earendil-works/pi-coding-agent`)
@@ -66,8 +67,8 @@ child-side auto-exit (`subagent-done.ts`), readonly-guard детей.
    `message_update`, `tool_execution_start|update|end`, `agent_end`) — это
    **child-side** слой (auto-exit + heartbeat в детской сессии), он не дублирует
    prime в main; проблема — дубль layer'ов в **основной** сессии и дублированный
-   child-detect (`PI_SUBAGENT_SESSION` знают оба расширения; docs/RESEARCH.md:75
-   фиксирует это как «конвенцию между расширениями»).
+   child-detect (`PI_SUBAGENT_SESSION` знают оба расширения; «конвенция между
+   расширениями» — формулировка из удалённого research-дока, см. git history).
 3. **~2K токенов протокола в каждой главной сессии всегда.** prime.md 5.2K chars +
    таблица ~18 строк + правило ≈ 6.9K chars ≈ 1.7–2K токенов — даже когда
    оркестрация не нужна (правка одного файла, вопрос по коду). Выключить сегодня
@@ -286,8 +287,8 @@ trace) не меняются — см. ADR-7.
 они живут в детских процессах и не образуют дубль в main.
 
 **Отвергнутая альтернатива:** общая подписка через «шину событий» между двумя
-расширениями (docs/RESEARCH.md:75 предлагает `pi.events`) — у pi нет
-меж-extension шины; слияние делает её ненужной здесь.
+расширениями (`pi.events` — идея из удалённого research-дока, см. git
+history) — у pi нет меж-extension шины; слияние делает её ненужной здесь.
 
 **Последствия.** Инвариант I6: в основной сессии ровно по одному обработчику
 каждого события на всё расширение. Порядок инъекции: prime-override
@@ -472,9 +473,9 @@ toggle-файл, виджет; **одновременно** убрать `./exte
 `extensions/subagents/README.md` (раздел «Prime policy»: инъекция, бюджеты,
 `/prime`, `/solo`, `.pi/prime.json`, child-семантика); CHANGELOG.md под
 Unreleased (minor: −1 расширение, +`/prime`); проверить упоминания:
-`docs/RESEARCH.md:75` (конвенция `PI_SUBAGENT_SESSION` между расширениями —
-теперь внутренняя), README других расширений, `docs/` grep'ом по
-`prime-protocol`.
+удалённый research-док (см. git history; конвенция `PI_SUBAGENT_SESSION`
+между расширениями — теперь внутренняя), README других расширений, `docs/`
+grep'ом по `prime-protocol`.
 *Приёмка:* check зелёный; `grep -r "prime-protocol" extensions/ scripts/
 package.json` пуст; в docs/ и CHANGELOG остаются только исторические упоминания.
 
@@ -544,4 +545,5 @@ package.json` пуст; в docs/ и CHANGELOG остаются только ис
 - Тесты: 19 старых сохраняются (адаптированные) + новые на toggle/off/on;
   существующие 257 не регрессируют.
 - Удаляется целиком `extensions/prime-protocol/`; `pi.extensions` −1 entry;
-  CHANGELOG (Unreleased), README subagents, `docs/RESEARCH.md:75`.
+  CHANGELOG (Unreleased), README subagents, удалённый research-док
+  (см. git history).

@@ -154,8 +154,9 @@ export function parsePaneListIds(out: string): string[] {
 // ── Agent prompt parsing (exported for tests; shapes captured from 0.9.1) ──
 
 /**
- * Outcome of a `herdr agent prompt` delivery attempt (ADR-1 in
- * docs/herdr-agent-surface-backlog.md). "delivered" = herdr accepted the
+ * Outcome of a `herdr agent prompt` delivery attempt (ADR-1; see the
+ * "Agent-surface (herdr)" section in extensions/subagents/README.md).
+ * "delivered" = herdr accepted the
  * submission and observed the child settle; every failure names its story:
  * refused_blocked (child sits in an approval UI, text rejected before
  * delivery), stalled (child never showed working|blocked after acceptance),
@@ -586,7 +587,7 @@ export function parseAgentStatus(out: string, exitCode: number): string | null {
 	return typeof status === "string" && status.length > 0 ? status : null;
 }
 
-// ── Done waiter (ADR-2 in docs/herdr-agent-surface-backlog.md) ──
+// ── Done waiter (ADR-2; see "Agent-surface (herdr)" in extensions/subagents/README.md) ──
 
 /**
  * Two hours: a leak-proof net, not a working assumption. The waiter is killed
