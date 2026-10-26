@@ -86,6 +86,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/), versioning: semver.
   `stats` и упоминания в README и THIRD_PARTY_NOTICES.
 - **payload-capture**: расширение удалено из пакета — сняты каталог
   `extensions/payload-capture/` с тестами и запись в `pi.extensions`.
+- **prompt-snippets**: расширение удалено из пакета — сняты каталог
+  `extensions/prompt-snippets/`, запись в `pi.extensions`, env-ручка
+  `PI_SNIPPETS_DIR` и упоминания в README.
+- **docs**: `THIRD_PARTY_NOTICES.md` удалён вместе с единственным сторонним
+  расширением (prompt-snippets), на которое он ссылался.
 - **web**: провайдер LangSearch удалён — `web_search` работает только через
   DuckDuckGo; сняты `providers/langsearch.ts` с тестом, переключатель
   `PI_WEB_SEARCH_PROVIDER` и `LANGSEARCH_API_KEY` (выбор провайдера и
