@@ -32,11 +32,14 @@
 |---|---|
 | `PI_CODING_AGENT_DIR` | Каталог агента вместо `~/.pi/agent` — sessions, recall, trace, skill-auditor |
 | `PI_SUBAGENT_ALLOWED` | subagents: allowlist имён агентов для спавна |
+| `PI_SUBAGENT_READONLY` | subagents: при значении `1` в дочерней сессии включается read-only-гард — блокируются `edit`/`write` и мутирующие shell-команды (агент может только читать и отчитываться) |
 | `PI_TASK_BATCH_DEPTH` | subagents: глубина вложенных батчей — задаётся самим расширением дочерним процессам |
+| `PI_SUBAGENT_SUMMARY_CHARS` | subagents: лимит усечения итога ребёнка и вывода каждой задачи `task_batch`, положительное целое, по умолчанию 8000 символов (в `task_batch` инфорсится по байтам UTF-8); невалидное значение молча даёт дефолт |
 | `PI_SUBAGENT_NAME` / `PI_SUBAGENT_AGENT` / `PI_SUBAGENT_ID` / `PI_SUBAGENT_SESSION` / `PI_SUBAGENT_AUTO_EXIT` / `PI_SUBAGENT_ACTIVITY_FILE` | subagents: контекст ребёнка — задаётся расширением при спавне |
 | `HERDR_ENV` / `HERDR_PANE_ID` / `HERDR_WORKSPACE_ID` | subagents: детект запуска под herdr — задаёт сам herdr |
 | `WEZTERM_PANE` | subagents: детект запуска в панели WezTerm — задаёт WezTerm |
 | `PI_WEB_BRIDGE_PORT` / `PI_WEB_BRIDGE_PORTS` | web bridge: порт или диапазон портов (по умолчанию 8790–8799) |
+| `PI_BROWSER_ENABLED` | браузерные инструменты (`browser_*`): при значении `1` стартуют включёнными — задаётся расширением subagents при спавне ребёнка с браузерными тулами в allowlist (ребёнок не может сам набрать `/browser on`) |
 | `PI_WEB_BRIDGE_TOKEN` / `PI_WEB_BRIDGE_TOKEN_FILE` | web bridge: токен аутентификации или файл с ним |
 | `HOME` / `USERPROFILE` | Домашний каталог (нативные) — subagents |
 | `PI_TRACE_MODE` | Только тесты trace: `live` / `replay` |
