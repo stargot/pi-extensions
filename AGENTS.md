@@ -12,11 +12,11 @@ package.json (9 entry points).
 - `extensions/shared/` — modules shared across extensions, with its own `test/`
 - `scripts/` — dev CLIs (`smoke.mjs`, `visual-audit.mjs`)
 - `docs/` — documentation protocol (`docs/README.md`: index, lifecycle, naming, audit), `docs/decisions/` — ADRs, `docs/specs/` — design specs
-- `CHANGELOG.md` (Keep a Changelog, semver), `biome.json`, `.github/workflows/ci.yml`
+- `CHANGELOG.md` (собственный формат четырёх групп New/Add/Fixed/Removed, semver), `biome.json`, `.github/workflows/ci.yml`
 
 ## Commands
 
-- `npm run check` — gate: `lint` + `format-check` + `type` + `test`; CI runs exactly this on windows-latest (Node 22.18/24 matrix)
+- `npm run check` — gate: `lint` + `format-check` + `type` + `test`; CI runs exactly this on windows-latest and ubuntu-latest (Node 22.18/24 matrix)
 - `npm test` — `node --test extensions/**/test/*.test.ts`
 - `npm run lint` / `npm run format` — Biome over `extensions` and `scripts`
 - `npm run type` — `tsc --noEmit`

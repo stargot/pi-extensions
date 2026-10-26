@@ -7,26 +7,21 @@
 | [ask-user-question](extensions/ask-user-question/) | — | Инструмент структурированного вопроса к пользователю: опции с описаниями, multiSelect, свободный ввод |
 | [bg-jobs](extensions/bg-jobs/) | `bg_run`, `bg_status`, `bg_logs`, `bg_kill`, `/bg`, `/jobs`, `/logs`, `/kill` | Фоновые shell-джобы без блокировки хода: durable-лог в `.pi/jobs/`, wake-ход модели с итогом (exit code + хвост), kill дерева процессов, переживание /reload, виджет running/done (Windows + pwsh; БЕЗ песочницы) |
 | [edit-guard](extensions/edit-guard/) | — | Страховка инструмента edit: спасает правки от несовпадений BOM/CRLF/пробелов/отступов и лёгкого дрейфа текста, блокирует ненадёжные с перечнем строк и сниппетами |
-| [env-guard](extensions/env-guard/) | `/env-guard` (opt. `rescan`) | Гард секретов: собирает значения из `.env`-семейства и `process.env`, блокирует доступ модели к env-файлам и командам с именами секретных переменных, редактирует значения во вводе, аргументах инструментов, результатах и готовых сообщениях; `/env-guard` показывает статистику, `/env-guard rescan` пересканирует источники |
+| [env-guard](extensions/env-guard/) | `/env-guard`, `/env-guard rescan` | Маскировка секретов в транскрипте сессии: собирает значения из `.env`-семейства вверх по дереву и `process.env` (по паттерну имени секрета), переписывает их маркерами `[REDACTED:<KEY>]` в input, результатах инструментов и сообщениях; блокирует доступ к `.env`-файлам |
 | [recall](extensions/recall/) | `/recall` | Полнотекстовый поиск по всем сессиям всех проектов с переходом в найденную сессию |
-| [trace](extensions/trace/) | `/trace`, `/trace web`, `/trace on`, `/trace off` | Живой flow-граф сессии: карточки ходов, чипы инструментов, маркеры на таймлайне; строка состояния над редактором; плюс CLI и веб-вьюер |
-| [skill-auditor](extensions/skill-auditor/) | `/audit` | Read-only аудит скиллов: валидность frontmatter (зеркало фактического поведения pi), роутинг description, битые ссылки и сироты, карта скоупов user vs project; `/audit go` отправляет отчёт модели на семантический разбор (только рекомендации) |
-| [subagents](extensions/subagents/) | `subagent`, `task_batch`, `/subagent`, `/workers`, `/prime`, `/solo` | Субагенты: интерактивные в терминальных панелях — WezTerm или herdr (спавн/steer+interrupt/resume/cancel, живой статус) + headless-батчи single/parallel/chain (Windows + pwsh); глобальный индекс живых воркеров; prime-политика основной сессии — протокол оркестратора (инжект prime-промпта + dispatch-таблица объединённого пула, опт-аут `dispatch: false`), бюджеты 3/3/3, виджет, переключатель `/prime` с состоянием в `.pi/prime.json` |
-| [web](extensions/web/) | `web_search`, `web_fetch`, `/bridge` | Веб-поиск DuckDuckGo без API-ключей: структурированные запросы (точные фразы/исключения/сайт), таймаут и ретрай; плюс fetch страницы → markdown (Readability/Turndown, PDF, текст, браузерный мост pi-web-companion для JS-rendered, SSRF-гард). На основе расширения Eero Alvar (amosblomqvist) |
+| [trace](extensions/trace/) | `/trace`, `/trace web`, `/trace on`, `/trace off` | Живой flow-граф сессии: карточки ходов, чипы инструментов, маркеры на таймлайне, строка состояния над редактором; плюс CLI и веб-вьюер |
+| [skill-auditor](extensions/skill-auditor/) | `/audit`, `/audit go` | Read-only аудит скиллов: валидность frontmatter, роутинг description, битые ссылки и сироты, карта скоупов user vs project; `/audit go` отправляет отчёт модели на семантический разбор |
+| [subagents](extensions/subagents/) | `subagent`, `task_batch`, `/subagent`, `/workers`, `/prime`, `/solo` | Субагенты: интерактивные в терминальных панелях — WezTerm или herdr (спавн/steer+interrupt/resume/cancel) + headless-батчи single/parallel/chain (Windows + pwsh); глобальный индекс воркеров; prime-политика — протокол оркестратора с dispatch-таблицей, бюджеты 3/3/3, виджет |
+| [web](extensions/web/) | `web_search`, `web_fetch`, `/bridge` | Веб-поиск DuckDuckGo без API-ключей: структурированные запросы (точные фразы/исключения/сайт), таймаут и ретрай; fetch страницы → markdown (Readability/Turndown, PDF, браузерный мост pi-web-companion для JS-rendered, SSRF-гард) |
 
 ## Совместимость
 
-- pi >= 1.0.0, Node >= 22.18.0 (peerDependencies `@earendil-works/pi-coding-agent` и
-  `@earendil-works/pi-tui` закреплены на `^1.0.0`).
-- pi 1.0.0 по умолчанию использует fullscreen TUI и тему «system» — расширения пакета
-  проверены в этом режиме (ручной чеклист — финальный гейт релиза).
+- pi >= 1.0.0, Node >= 22.18.0 (peerDependencies `@earendil-works/pi-coding-agent` и `@earendil-works/pi-tui` на `^1.0.0`).
+- pi 1.0.0 — fullscreen TUI, тема «system»; расширения пакета проверены в этом режиме (ручной чеклист — финальный гейт релиза).
 
 ## Environment variables
 
-Расширения читают переменные окружения напрямую; `web` при старте подхватывает `.env` из
-рабочего каталога и вверх по дереву (уже установленные переменные не перезаписывает;
-`.env` в gitignored). `env-guard` сканирует весь `process.env` на секреты — именованных
-переменных не читает.
+Расширения читают переменные окружения напрямую; `web` при старте подхватывает `.env` из рабочего каталога и вверх по дереву (установленные переменные не перезаписывает, `.env` в gitignored). `env-guard` сканирует весь `process.env` на секреты — именованных переменных не читает.
 
 | Переменная | Назначение |
 |---|---|
@@ -44,13 +39,11 @@
 | `HOME` / `USERPROFILE` | Домашний каталог (нативные) — subagents |
 | `PI_TRACE_MODE` | Только тесты trace: `live` / `replay` |
 
-## Запуск
-
-Требования к pi и Node — в разделе «Совместимость».
+## Разработка
 
 ```bash
 npm run check    # гейт: lint + format-check + type + test (то же гоняет CI)
-npm test         # тесты всех расширений
+npm test         # тесты всех расширений (node --test)
 npm run format   # отформатировать код (biome)
 npm run coverage # покрытие по файлам (вне гейта)
 npm run smoke    # проверить, что расширения грузятся в pi
@@ -64,7 +57,9 @@ npm run smoke    # проверить, что расширения грузят�
 pi install git:github.com/stargot/pi-extensions
 ```
 
-Чтобы применить правки: `git push` из этого репозитория, затем `pi update --extensions` — pi подтянет клон до актуального состояния и при необходимости прогонит `npm install`. Если пакет установлен на закреплённый ref (`@тег` или коммит), обновление не сдвигает его — переместить на новый ref можно повторной установкой: `pi install git:github.com/stargot/pi-extensions@<ref>`.
+Обновление: `git push` из этого репозитория, затем `pi update --extensions` — pi подтянет клон и при необходимости прогонит `npm install`. Закреплённый ref (`@тег` или коммит) обновление не сдвигает — нужен реинсталл: `pi install git:github.com/stargot/pi-extensions@<ref>`.
+
+### CLI без pi
 
 Каждое расширение работает и без pi — через CLI:
 
